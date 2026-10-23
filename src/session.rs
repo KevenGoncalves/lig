@@ -219,6 +219,9 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     };
     drop(pair.slave);
     let shell_pid = child.process_id();
+    let _mirror = shell_pid.and_then(|pid| {
+        crate::mirror::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
+    });
 
     let reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;

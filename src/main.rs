@@ -10,6 +10,7 @@ mod exec;
 mod help;
 mod icons;
 mod keys;
+mod mirror;
 mod osc;
 mod parser;
 mod popup;
@@ -51,6 +52,9 @@ enum Cmd {
         /// Start it as a login shell
         #[arg(long)]
         login: bool,
+        /// Spaces added by the zellij re-exec: room for the mirrored argv
+        #[arg(hide = true, value_parser = parse_pad)]
+        pad: Option<String>,
     },
     /// Print shell integration code for fish, zsh, or bash
     Init {
@@ -105,6 +109,15 @@ enum Cmd {
         #[arg(value_enum, default_value_t = ConfigCmd::Default)]
         what: ConfigCmd,
     },
+}
+
+/// The hidden `lig shell` pad: only spaces, so `lig shell typo` is still an error.
+fn parse_pad(s: &str) -> std::result::Result<String, String> {
+    if !s.is_empty() && s.bytes().all(|b| b == b' ') {
+        Ok(s.to_string())
+    } else {
+        Err(format!("unexpected argument '{s}'"))
+    }
 }
 
 #[derive(Args)]
@@ -546,10 +559,39 @@ fn default_shell() -> PathBuf {
     std::env::var_os("SHELL").map(PathBuf::from).filter(|p| Path::new(p).exists()).unwrap_or_else(|| "/bin/zsh".into())
 }
 
+/// Bytes of padding the zellij re-exec appends to `lig shell`'s argv.
+const ARGV_PAD: usize = 4096;
+
+/// Should `lig shell` re-exec itself with a pad positional, so the zellij
+/// mirror has room for long command lines (see `mirror`)? Detection uses the
+/// positional, never an env var, so a nested lig does not inherit it.
+fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let padded = args.iter().skip(2).any(|a| !a.is_empty() && a.as_bytes().iter().all(|&b| b == b' '));
+    zellij && !no_mirror && args.get(1).is_some_and(|a| a == "shell") && !padded
+}
+
 fn main() -> Result<()> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let zellij = std::env::var_os("ZELLIJ").is_some();
+    if needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("/proc/self/exe")
+            .arg0(&args[0])
+            .args(&args[1..])
+            .arg(" ".repeat(ARGV_PAD))
+            .exec();
+        log(&format!("mirror: re-exec with argv padding failed: {err}; continuing unpadded"));
+    }
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Shell { shell, login } => {
+        Cmd::Shell { shell, login, pad } => {
+            if pad.is_some() {
+                // Re-exec'd through /proc/self/exe, which names the process "exe"; restore
+                // "lig" for ps, htop, pgrep -x and killall. Main thread, before any other.
+                // SAFETY: PR_SET_NAME reads a NUL-terminated string of at most 16 bytes.
+                unsafe { libc::prctl(libc::PR_SET_NAME, c"lig".as_ptr()) };
+            }
             icons::detect_in_background();
             let code = session::run(shell.unwrap_or_else(default_shell), login)?;
             std::process::exit(code);
@@ -594,6 +636,36 @@ fn main() -> Result<()> {
 mod shell_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn os(v: &[&str]) -> Vec<std::ffi::OsString> {
+        v.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn needs_reexec_only_for_shell_in_zellij() {
+        let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh"]);
+        assert!(needs_reexec(&a, true, false));
+        assert!(!needs_reexec(&a, false, false));
+        assert!(!needs_reexec(&a, true, true));
+        assert!(!needs_reexec(&os(&["lig", "doctor"]), true, false));
+    }
+
+    #[test]
+    fn shell_pad_accepts_only_spaces() {
+        let pad = " ".repeat(4096);
+        assert!(Cli::try_parse_from(["lig", "shell", "--shell", "/usr/bin/zsh", pad.as_str()]).is_ok());
+        assert!(Cli::try_parse_from(["lig", "shell"]).is_ok());
+        assert!(Cli::try_parse_from(["lig", "shell", "typo"]).is_err());
+        assert!(Cli::try_parse_from(["lig", "shell", " x "]).is_err());
+        assert!(Cli::try_parse_from(["lig", "shell", ""]).is_err());
+    }
+
+    #[test]
+    fn needs_reexec_false_when_padded() {
+        let pad = " ".repeat(4096);
+        let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh", &pad]);
+        assert!(!needs_reexec(&a, true, false));
+    }
 
     /// `specs/lig/lig.json` completes lig itself: every command and flag of
     /// the CLI must be in it.
