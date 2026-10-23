@@ -417,6 +417,46 @@ fn update(source: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// The doctor line for the zellij mirror. `read` returns the lig shell's
+/// `/proc/<pid>/cmdline`, already polled for a while.
+fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
+    if !zellij {
+        return "[off ] zellij mirror: not in zellij".into();
+    }
+    if no_mirror {
+        return "[off ] zellij mirror: LIG_NO_MIRROR set".into();
+    }
+    if lig_pid.is_none() {
+        return "[off ] zellij mirror: not in a lig pane".into();
+    }
+    match lig_pid.and_then(|_| read()) {
+        Some(c) if shows_doctor(&c) => format!("[ok  ] zellij mirror: on, argv area {} bytes", c.len()),
+        _ => "[off ] zellij mirror: not mirroring (see LIG_LOG)".into(),
+    }
+}
+
+/// Does a mirrored cmdline read `lig doctor` (argv[0] may be a full path)?
+fn shows_doctor(cmdline: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let mut args = cmdline.split(|&b| b == 0);
+    let lig =
+        args.next().is_some_and(|a| Path::new(std::ffi::OsStr::from_bytes(a)).file_name() == Some("lig".as_ref()));
+    lig && args.next() == Some(b"doctor")
+}
+
+/// Poll `/proc/<pid>/cmdline` every 100 ms for up to 1.5 s, until it shows `lig doctor`.
+fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
+    let mut last = None;
+    for _ in 0..15 {
+        last = std::fs::read(format!("/proc/{pid}/cmdline")).ok();
+        if last.as_deref().is_some_and(shows_doctor) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    last
+}
+
 fn doctor() -> Result<()> {
     let ok = |b: bool| if b { "ok  " } else { "FAIL" };
     for shell in [ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish] {
@@ -448,6 +488,16 @@ fn doctor() -> Result<()> {
     println!("[{}] engine: `git ` → {n} suggestions", ok(n > 0));
     let n = e.complete("ls --", &env, true, false).items.len();
     println!("[{}] --help parsing: `ls --` → {n} suggestions", ok(n > 0));
+    let lig_pid = std::env::var("LIG_PID").ok().and_then(|v| v.parse::<u32>().ok());
+    println!(
+        "{}",
+        mirror_status(
+            lig_pid,
+            std::env::var_os("ZELLIJ").is_some(),
+            std::env::var_os("LIG_NO_MIRROR").is_some(),
+            || lig_pid.and_then(read_lig_cmdline),
+        )
+    );
     Ok(())
 }
 
@@ -648,6 +698,54 @@ mod shell_tests {
         assert!(!needs_reexec(&a, false, false));
         assert!(!needs_reexec(&a, true, true));
         assert!(!needs_reexec(&os(&["lig", "doctor"]), true, false));
+    }
+
+    #[test]
+    fn mirror_status_off_outside_zellij() {
+        assert_eq!(mirror_status(Some(1), false, false, || None), "[off ] zellij mirror: not in zellij");
+    }
+
+    #[test]
+    fn mirror_status_off_when_disabled() {
+        assert_eq!(mirror_status(Some(1), true, true, || None), "[off ] zellij mirror: LIG_NO_MIRROR set");
+    }
+
+    #[test]
+    fn mirror_status_on_when_cmdline_shows_doctor() {
+        let mut area = b"lig\0doctor\0".to_vec();
+        area.resize(4105, 0);
+        assert_eq!(
+            mirror_status(Some(1), true, false, || Some(area.clone())),
+            "[ok  ] zellij mirror: on, argv area 4105 bytes"
+        );
+    }
+
+    #[test]
+    fn mirror_status_on_with_full_lig_path() {
+        let mut area = b"/usr/bin/lig\0doctor\0".to_vec();
+        area.resize(4105, 0);
+        assert_eq!(
+            mirror_status(Some(1), true, false, || Some(area.clone())),
+            "[ok  ] zellij mirror: on, argv area 4105 bytes"
+        );
+        let other = b"/usr/bin/liggy\0doctor\0".to_vec();
+        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+        let other = b"lig\0doctors\0".to_vec();
+        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+    }
+
+    #[test]
+    fn mirror_status_not_mirroring() {
+        let orig = b"lig\0shell\0--shell\0/usr/bin/zsh\0".to_vec();
+        let want = "[off ] zellij mirror: not mirroring (see LIG_LOG)";
+        assert_eq!(mirror_status(Some(1), true, false, || Some(orig.clone())), want);
+        assert_eq!(mirror_status(Some(1), true, false, || None), want);
+    }
+
+    #[test]
+    fn mirror_status_without_lig_pid_is_not_a_lig_pane() {
+        let want = "[off ] zellij mirror: not in a lig pane";
+        assert_eq!(mirror_status(None, true, false, || panic!("read without LIG_PID")), want);
     }
 
     #[test]
