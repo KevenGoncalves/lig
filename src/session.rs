@@ -219,6 +219,9 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     };
     drop(pair.slave);
     let shell_pid = child.process_id();
+    let _mirror = shell_pid.and_then(|pid| {
+        crate::mirror::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
+    });
 
     let reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;
@@ -363,10 +366,10 @@ fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
 /// `$(git …)` only inherit that).
 fn foreign_program(shell: u32, tty: &Path) -> bool {
     let stat = |pid: u32| -> Option<(String, i64)> {
-        let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        let (head, rest) = s.rsplit_once(')')?;
-        let comm = head.split_once('(')?.1.to_string();
-        let pgrp = rest.split_whitespace().nth(2)?.parse().ok()?;
+        let s = crate::procfs::stat(pid)?;
+        let fields = crate::procfs::stat_fields(&s)?;
+        let comm = s[..s.rfind(')')?].split_once('(')?.1.to_string();
+        let pgrp = fields.get(2)?.parse().ok()?;
         Some((comm, pgrp))
     };
     let mut todo = children(shell);

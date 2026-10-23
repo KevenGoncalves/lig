@@ -10,9 +10,11 @@ mod exec;
 mod help;
 mod icons;
 mod keys;
+mod mirror;
 mod osc;
 mod parser;
 mod popup;
+mod procfs;
 mod session;
 mod spec;
 mod specs;
@@ -50,6 +52,9 @@ enum Cmd {
         /// Start it as a login shell
         #[arg(long)]
         login: bool,
+        /// Spaces added by the zellij re-exec: room for the mirrored argv
+        #[arg(hide = true, value_parser = parse_pad)]
+        pad: Option<String>,
     },
     /// Print shell integration code for fish, zsh, or bash
     Init {
@@ -104,6 +109,15 @@ enum Cmd {
         #[arg(value_enum, default_value_t = ConfigCmd::Default)]
         what: ConfigCmd,
     },
+}
+
+/// The hidden `lig shell` pad: only spaces, so `lig shell typo` is still an error.
+fn parse_pad(s: &str) -> std::result::Result<String, String> {
+    if !s.is_empty() && s.bytes().all(|b| b == b' ') {
+        Ok(s.to_string())
+    } else {
+        Err(format!("unexpected argument '{s}'"))
+    }
 }
 
 #[derive(Args)]
@@ -403,6 +417,46 @@ fn update(source: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// The doctor line for the zellij mirror. `read` returns the lig shell's
+/// `/proc/<pid>/cmdline`, already polled for a while.
+fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
+    if !zellij {
+        return "[off ] zellij mirror: not in zellij".into();
+    }
+    if no_mirror {
+        return "[off ] zellij mirror: LIG_NO_MIRROR set".into();
+    }
+    if lig_pid.is_none() {
+        return "[off ] zellij mirror: not in a lig pane".into();
+    }
+    match lig_pid.and_then(|_| read()) {
+        Some(c) if shows_doctor(&c) => format!("[ok  ] zellij mirror: on, argv area {} bytes", c.len()),
+        _ => "[off ] zellij mirror: not mirroring (see LIG_LOG)".into(),
+    }
+}
+
+/// Does a mirrored cmdline read `lig doctor` (argv[0] may be a full path)?
+fn shows_doctor(cmdline: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let mut args = cmdline.split(|&b| b == 0);
+    let lig =
+        args.next().is_some_and(|a| Path::new(std::ffi::OsStr::from_bytes(a)).file_name() == Some("lig".as_ref()));
+    lig && args.next() == Some(b"doctor")
+}
+
+/// Poll `/proc/<pid>/cmdline` every 100 ms for up to 1.5 s, until it shows `lig doctor`.
+fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
+    let mut last = None;
+    for _ in 0..15 {
+        last = std::fs::read(format!("/proc/{pid}/cmdline")).ok();
+        if last.as_deref().is_some_and(shows_doctor) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    last
+}
+
 fn doctor() -> Result<()> {
     let ok = |b: bool| if b { "ok  " } else { "FAIL" };
     for shell in [ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish] {
@@ -434,6 +488,16 @@ fn doctor() -> Result<()> {
     println!("[{}] engine: `git ` → {n} suggestions", ok(n > 0));
     let n = e.complete("ls --", &env, true, false).items.len();
     println!("[{}] --help parsing: `ls --` → {n} suggestions", ok(n > 0));
+    let lig_pid = std::env::var("LIG_PID").ok().and_then(|v| v.parse::<u32>().ok());
+    println!(
+        "{}",
+        mirror_status(
+            lig_pid,
+            std::env::var_os("ZELLIJ").is_some(),
+            std::env::var_os("LIG_NO_MIRROR").is_some(),
+            || lig_pid.and_then(read_lig_cmdline),
+        )
+    );
     Ok(())
 }
 
@@ -545,10 +609,39 @@ fn default_shell() -> PathBuf {
     std::env::var_os("SHELL").map(PathBuf::from).filter(|p| Path::new(p).exists()).unwrap_or_else(|| "/bin/zsh".into())
 }
 
+/// Bytes of padding the zellij re-exec appends to `lig shell`'s argv.
+const ARGV_PAD: usize = 4096;
+
+/// Should `lig shell` re-exec itself with a pad positional, so the zellij
+/// mirror has room for long command lines (see `mirror`)? Detection uses the
+/// positional, never an env var, so a nested lig does not inherit it.
+fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let padded = args.iter().skip(2).any(|a| !a.is_empty() && a.as_bytes().iter().all(|&b| b == b' '));
+    zellij && !no_mirror && args.get(1).is_some_and(|a| a == "shell") && !padded
+}
+
 fn main() -> Result<()> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let zellij = std::env::var_os("ZELLIJ").is_some();
+    if needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new("/proc/self/exe")
+            .arg0(&args[0])
+            .args(&args[1..])
+            .arg(" ".repeat(ARGV_PAD))
+            .exec();
+        log(&format!("mirror: re-exec with argv padding failed: {err}; continuing unpadded"));
+    }
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Shell { shell, login } => {
+        Cmd::Shell { shell, login, pad } => {
+            if pad.is_some() {
+                // Re-exec'd through /proc/self/exe, which names the process "exe"; restore
+                // "lig" for ps, htop, pgrep -x and killall. Main thread, before any other.
+                // SAFETY: PR_SET_NAME reads a NUL-terminated string of at most 16 bytes.
+                unsafe { libc::prctl(libc::PR_SET_NAME, c"lig".as_ptr()) };
+            }
             icons::detect_in_background();
             let code = session::run(shell.unwrap_or_else(default_shell), login)?;
             std::process::exit(code);
@@ -593,6 +686,84 @@ fn main() -> Result<()> {
 mod shell_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    fn os(v: &[&str]) -> Vec<std::ffi::OsString> {
+        v.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn needs_reexec_only_for_shell_in_zellij() {
+        let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh"]);
+        assert!(needs_reexec(&a, true, false));
+        assert!(!needs_reexec(&a, false, false));
+        assert!(!needs_reexec(&a, true, true));
+        assert!(!needs_reexec(&os(&["lig", "doctor"]), true, false));
+    }
+
+    #[test]
+    fn mirror_status_off_outside_zellij() {
+        assert_eq!(mirror_status(Some(1), false, false, || None), "[off ] zellij mirror: not in zellij");
+    }
+
+    #[test]
+    fn mirror_status_off_when_disabled() {
+        assert_eq!(mirror_status(Some(1), true, true, || None), "[off ] zellij mirror: LIG_NO_MIRROR set");
+    }
+
+    #[test]
+    fn mirror_status_on_when_cmdline_shows_doctor() {
+        let mut area = b"lig\0doctor\0".to_vec();
+        area.resize(4105, 0);
+        assert_eq!(
+            mirror_status(Some(1), true, false, || Some(area.clone())),
+            "[ok  ] zellij mirror: on, argv area 4105 bytes"
+        );
+    }
+
+    #[test]
+    fn mirror_status_on_with_full_lig_path() {
+        let mut area = b"/usr/bin/lig\0doctor\0".to_vec();
+        area.resize(4105, 0);
+        assert_eq!(
+            mirror_status(Some(1), true, false, || Some(area.clone())),
+            "[ok  ] zellij mirror: on, argv area 4105 bytes"
+        );
+        let other = b"/usr/bin/liggy\0doctor\0".to_vec();
+        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+        let other = b"lig\0doctors\0".to_vec();
+        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+    }
+
+    #[test]
+    fn mirror_status_not_mirroring() {
+        let orig = b"lig\0shell\0--shell\0/usr/bin/zsh\0".to_vec();
+        let want = "[off ] zellij mirror: not mirroring (see LIG_LOG)";
+        assert_eq!(mirror_status(Some(1), true, false, || Some(orig.clone())), want);
+        assert_eq!(mirror_status(Some(1), true, false, || None), want);
+    }
+
+    #[test]
+    fn mirror_status_without_lig_pid_is_not_a_lig_pane() {
+        let want = "[off ] zellij mirror: not in a lig pane";
+        assert_eq!(mirror_status(None, true, false, || panic!("read without LIG_PID")), want);
+    }
+
+    #[test]
+    fn shell_pad_accepts_only_spaces() {
+        let pad = " ".repeat(4096);
+        assert!(Cli::try_parse_from(["lig", "shell", "--shell", "/usr/bin/zsh", pad.as_str()]).is_ok());
+        assert!(Cli::try_parse_from(["lig", "shell"]).is_ok());
+        assert!(Cli::try_parse_from(["lig", "shell", "typo"]).is_err());
+        assert!(Cli::try_parse_from(["lig", "shell", " x "]).is_err());
+        assert!(Cli::try_parse_from(["lig", "shell", ""]).is_err());
+    }
+
+    #[test]
+    fn needs_reexec_false_when_padded() {
+        let pad = " ".repeat(4096);
+        let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh", &pad]);
+        assert!(!needs_reexec(&a, true, false));
+    }
 
     /// `specs/lig/lig.json` completes lig itself: every command and flag of
     /// the CLI must be in it.

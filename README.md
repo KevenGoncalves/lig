@@ -157,6 +157,36 @@ eval (lig init fish post | string collect)
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
 
+## zellij
+
+Inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
+bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
+mirrors the foreground app into its own command line and working directory, once a
+second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
+idle shell as a plain pane) with the right folder, and restores it that way.
+
+```bash
+lig doctor                  # "[ok  ] zellij mirror: on" inside zellij
+LIG_NO_MIRROR=1 zellij      # turn the mirror off; autocomplete still works
+```
+
+Outside zellij nothing changes. `LIG_DISABLE=1` turns lig off entirely. Shells, wrappers
+(`env`, `nohup`, `timeout`, ...) and commands that are risky to rerun (`sudo`, `rm`, `mv`,
+`dd`, `kill`, `git`, ...) are saved as a plain shell.
+
+**Never resurrect with `zellij attach --force-run-commands`.** zellij's resurrect prompt
+waits for ENTER in each command pane, and that is the safety net.
+
+Known limitations:
+
+- `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
+  `killall <app>` and `pgrep -x <app>` don't, because lig's process name stays `lig`.
+  `htop` shows the pane as the app.
+- A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
+- A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
+  Harmless apart from how `ps` shows lig.
+- A restored app runs with the zellij server's `PATH`, like plain zellij.
+
 ## Usage
 
 Type as usual and the popup appears with suggestions for what you're typing.
@@ -331,6 +361,7 @@ python3 tests/fish_pty.py       # PTY tests: fish, then bash/zsh, tmux, the tria
 python3 tests/shell_smoke.py
 python3 tests/tmux_placement.py
 python3 tests/trial_launcher.py
+python3 tests/zellij_mirror.py  # the zellij mirror (needs zsh, not zellij)
 tools/update-fig-specs.sh       # regenerate specs/fig/ from withfig/autocomplete
 ```
 
