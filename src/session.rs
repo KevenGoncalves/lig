@@ -363,10 +363,10 @@ fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
 /// `$(git …)` only inherit that).
 fn foreign_program(shell: u32, tty: &Path) -> bool {
     let stat = |pid: u32| -> Option<(String, i64)> {
-        let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        let (head, rest) = s.rsplit_once(')')?;
-        let comm = head.split_once('(')?.1.to_string();
-        let pgrp = rest.split_whitespace().nth(2)?.parse().ok()?;
+        let s = crate::procfs::stat(pid)?;
+        let fields = crate::procfs::stat_fields(&s)?;
+        let comm = s[..s.rfind(')')?].split_once('(')?.1.to_string();
+        let pgrp = fields.get(2)?.parse().ok()?;
         Some((comm, pgrp))
     };
     let mut todo = children(shell);

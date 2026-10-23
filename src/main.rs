@@ -13,6 +13,7 @@ mod keys;
 mod osc;
 mod parser;
 mod popup;
+mod procfs;
 mod session;
 mod spec;
 mod specs;
