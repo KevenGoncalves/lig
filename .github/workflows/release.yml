@@ -71,18 +71,13 @@ jobs:
           mkdir -p "dist/$name"
           cp target/${{ matrix.target }}/release/lig README.md LICENSE "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
-          # The bare binary under a name without the version, so that
-          # releases/latest/download/lig-<target> always gets the newest one.
-          cp target/${{ matrix.target }}/release/lig "dist/lig-${{ matrix.target }}"
-          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" \
-            && sha256sum "lig-${{ matrix.target }}" > "lig-${{ matrix.target }}.sha256")
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.sha256
-            dist/lig-${{ matrix.target }}
 
   release:
     needs: build
@@ -101,7 +96,11 @@ jobs:
         run: |
           ls -l dist
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # Re-run: replace the files of the existing release.
+            # Re-run: the release keeps exactly the files of this build. Remove
+            # any other file (left by an older run), then replace the rest.
+            for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
+              [ -e "dist/$asset" ] || gh release delete-asset "$TAG" "$asset" --yes
+            done
             gh release upload "$TAG" dist/* --clobber
           else
             gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
