@@ -1,5 +1,6 @@
 //! `~/.config/lig/config.toml`
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -17,8 +18,31 @@ pub fn config_path() -> PathBuf {
 #[derive(Default)]
 pub struct Config {
     pub ui: Ui,
+    /// Override any color of the theme.
+    pub colors: Colors,
     pub keys: Keys,
     pub behavior: Behavior,
+    /// Icon overrides by name: a kind or icon name (`folder`, `git-branch`;
+    /// `lig icons` lists them), `"*.rs"` for files by extension, or a file name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub icons: BTreeMap<String, IconOverride>,
+}
+
+/// An `[icons]` entry: just a glyph (`folder = "📁"`), or a glyph and/or a
+/// color (`option = { color = "214" }`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum IconOverride {
+    Glyph(String),
+    Style(IconStyle),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IconStyle {
+    pub glyph: Option<String>,
+    /// `"#rrggbb"`, a 256-color number, or `"default"`.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +78,9 @@ pub struct Ui {
     /// `default`, `catppuccin`, `nord`, `dracula`, `gruvbox`, `tokyonight`,
     /// `light` or `terminal` (your terminal's own colors).
     pub theme: String,
-    /// Override any color of the theme.
+    /// The `[colors]` section, kept here for drawing (see [`Config::load`]).
+    /// `[ui.colors]` is still read for older configs, but no longer written.
+    #[serde(skip_serializing)]
     pub colors: Colors,
 }
 
@@ -116,6 +142,26 @@ pub struct Colors {
     pub scrollbar_thumb: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub info_fg: Option<String>,
+}
+
+impl Colors {
+    /// These colors, with `older`'s where these are unset.
+    fn or(self, older: Colors) -> Colors {
+        Colors {
+            bg: self.bg.or(older.bg),
+            fg: self.fg.or(older.fg),
+            selected_bg: self.selected_bg.or(older.selected_bg),
+            selected_fg: self.selected_fg.or(older.selected_fg),
+            description_fg: self.description_fg.or(older.description_fg),
+            selected_description_fg: self.selected_description_fg.or(older.selected_description_fg),
+            match_fg: self.match_fg.or(older.match_fg),
+            border_fg: self.border_fg.or(older.border_fg),
+            border_bg: self.border_bg.or(older.border_bg),
+            scrollbar_fg: self.scrollbar_fg.or(older.scrollbar_fg),
+            scrollbar_thumb: self.scrollbar_thumb.or(older.scrollbar_thumb),
+            info_fg: self.info_fg.or(older.info_fg),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,8 +292,12 @@ impl Config {
     pub fn load() -> Config {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str(&text) {
-                Ok(c) => c,
+            Ok(text) => match toml::from_str::<Config>(&text) {
+                Ok(mut c) => {
+                    // `[colors]`, over the older `[ui.colors]`; drawing reads them from `ui`.
+                    c.ui.colors = c.colors.clone().or(std::mem::take(&mut c.ui.colors));
+                    c
+                }
                 Err(e) => {
                     eprintln!("lig: ignoring {}: {e}", path.display());
                     Config::default()

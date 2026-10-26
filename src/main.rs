@@ -554,23 +554,29 @@ fn list_specs() {
     eprintln!("{} commands ({} lig + {} fig spec files embedded)", all.len(), specs::LIG.count(), specs::FIG.count());
 }
 
-/// `lig icons`: every icon in the current mode, with its Unicode fallback.
+/// `lig icons`: every icon in the current mode, with its name for `[icons]`
+/// and its Unicode fallback.
 fn list_icons() {
     icons::detect();
-    let style = config::Config::load().ui.icons;
+    let cfg = config::Config::load();
+    icons::set_overrides(&cfg.icons);
+    let style = cfg.ui.icons;
     let nerd = icons::use_nerd(&style);
     println!("icons = \"{style}\" → using {}\n", if nerd { "Nerd Font glyphs" } else { "Unicode symbols" });
     let fallback = icons::legend(false);
-    for (i, (g, c, what)) in icons::legend(nerd).into_iter().enumerate() {
-        let alt = fallback.get(i).filter(|_| nerd).map_or(String::new(), |(ug, _, _)| format!("   (unicode: {ug})"));
-        println!("  \x1b[{c}m{g}\x1b[0m  {what}{alt}");
+    for (i, (g, c, name, what)) in icons::legend(nerd).into_iter().enumerate() {
+        let alt = fallback.get(i).filter(|_| nerd).map_or(String::new(), |(ug, ..)| format!("   (unicode: {ug})"));
+        println!("  \x1b[{c}m{g}\x1b[0m  {name:<12} {what}{alt}");
     }
+    println!("\nChange any of them in the [icons] section of {}.", config::config_path().display());
 }
 
 /// `lig preview`: sample popups with the config, overridden by the flags.
 fn preview(args: PreviewArgs) {
     icons::detect();
-    let mut ui = config::Config::load().ui;
+    let cfg = config::Config::load();
+    icons::set_overrides(&cfg.icons);
+    let mut ui = cfg.ui;
     ui.theme = args.theme.unwrap_or(ui.theme);
     ui.border = args.border.unwrap_or(ui.border);
     ui.density = args.density.unwrap_or(ui.density);

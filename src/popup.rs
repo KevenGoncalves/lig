@@ -197,7 +197,14 @@ pub fn layout_at(
     }
     let style = style(ui);
     let b = u16::from(style.border.is_some());
-    let icon_w: u16 = if ui.icons == "none" { 0 } else { 1 + style.icon_gap };
+    // The icon column fits the widest icon shown (emoji from `[icons]` take two columns).
+    let icon_w: u16 = if ui.icons == "none" {
+        0
+    } else {
+        let nerd = crate::icons::use_nerd(&ui.icons);
+        let widest = items.iter().map(|s| crate::icons::glyph(s.kind, s.icon, &s.label, nerd).0.width()).max();
+        widest.unwrap_or(1).clamp(1, 2) as u16 + style.icon_gap
+    };
     // Without a border the scrollbar takes its own column.
     let bar = 1 - b;
     let chrome_w = 2 * b + style.pad_l + style.pad_r + icon_w + bar;

@@ -4,8 +4,11 @@
 //! (`fc-list`, checked once in the background); set `icons = "nerd"` when the
 //! terminal provides them some other way.
 
+use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use crate::config::IconOverride;
 use crate::spec::{Icon, Kind};
 
 const UNKNOWN: u8 = 0;
@@ -39,8 +42,109 @@ pub fn use_nerd(style: &str) -> bool {
 
 const GREY: &str = "38;5;244";
 
-/// `(glyph, SGR color)` for a suggestion.
+/// `[icons]` overrides by normalized name: `(glyph, SGR color)`, each optional.
+type Overrides = HashMap<String, (Option<&'static str>, Option<&'static str>)>;
+
+static OVERRIDES: OnceLock<Overrides> = OnceLock::new();
+
+/// The name of a suggestion kind in `[icons]`.
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Command => "command",
+        Kind::Subcommand => "subcommand",
+        Kind::Option => "option",
+        Kind::Arg => "arg",
+        Kind::File => "file",
+        Kind::Folder => "folder",
+        Kind::Shortcut => "shortcut",
+        Kind::Info => "loading",
+        Kind::Execute => "enter",
+        Kind::Back => "back",
+    }
+}
+
+const KINDS: [Kind; 10] = [
+    Kind::Command,
+    Kind::Subcommand,
+    Kind::Option,
+    Kind::Arg,
+    Kind::File,
+    Kind::Folder,
+    Kind::Shortcut,
+    Kind::Info,
+    Kind::Execute,
+    Kind::Back,
+];
+
+/// An `[icons]` key as looked up: lowercase; `_` as `-` in names (`git_branch`).
+fn normalize(key: &str) -> String {
+    let k = key.trim().to_lowercase();
+    if k.contains('.') { k } else { k.replace('_', "-") }
+}
+
+/// Use the `[icons]` section of the config (call once, before drawing).
+/// Unknown names are reported; file names are taken as they are.
+pub fn set_overrides(icons: &BTreeMap<String, IconOverride>) {
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let mut map = Overrides::new();
+    for (key, value) in icons {
+        let name = normalize(key);
+        let known = KINDS.iter().any(|k| kind_name(*k) == name)
+            || Icon::from_name(&name).is_some()
+            || name.contains('.')
+            || key.starts_with(|c: char| c.is_uppercase());
+        if !known {
+            eprintln!("lig: unknown icon {key:?} in [icons] (`lig icons` lists the names)");
+            continue;
+        }
+        let (glyph, color) = match value {
+            IconOverride::Glyph(g) => (Some(g.clone()), None),
+            IconOverride::Style(s) => (s.glyph.clone(), s.color.clone()),
+        };
+        map.insert(name, (glyph.map(leak), color.map(|c| leak(crate::config::sgr_color(&c, 38)))));
+    }
+    let _ = OVERRIDES.set(map);
+}
+
+/// `(glyph, SGR color)` for a suggestion: the built-in one, then the
+/// `[icons]` overrides from general to specific (kind, icon, `*.ext`, file name).
 pub fn glyph(kind: Kind, icon: Option<Icon>, label: &str, nerd: bool) -> (&'static str, &'static str) {
+    let built_in = default_glyph(kind, icon, label, nerd);
+    match OVERRIDES.get() {
+        Some(map) if !map.is_empty() => apply(map, kind, icon, label, built_in),
+        _ => built_in,
+    }
+}
+
+fn apply(
+    map: &Overrides,
+    kind: Kind,
+    icon: Option<Icon>,
+    label: &str,
+    (mut glyph, mut color): (&'static str, &'static str),
+) -> (&'static str, &'static str) {
+    let mut keys = vec![kind_name(kind).to_string()];
+    if let Some(i) = icon {
+        keys.push(i.name().to_string());
+    }
+    if kind == Kind::File {
+        let name = label.to_lowercase();
+        if let Some((_, ext)) = name.rsplit_once('.') {
+            keys.push(format!("*.{ext}"));
+        }
+        keys.push(name);
+    }
+    for key in keys {
+        if let Some((g, c)) = map.get(&key) {
+            glyph = g.unwrap_or(glyph);
+            color = c.unwrap_or(color);
+        }
+    }
+    (glyph, color)
+}
+
+/// The built-in `(glyph, SGR color)` for a suggestion.
+fn default_glyph(kind: Kind, icon: Option<Icon>, label: &str, nerd: bool) -> (&'static str, &'static str) {
     if nerd {
         if let Some(i) = icon {
             return nerd_icon(i);
@@ -182,8 +286,8 @@ fn file_icon(name: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// Every icon, for `lig icons`: `(glyph, color, what)`.
-pub fn legend(nerd: bool) -> Vec<(&'static str, &'static str, String)> {
+/// Every icon, for `lig icons`: `(glyph, color, name in [icons], what)`.
+pub fn legend(nerd: bool) -> Vec<(&'static str, &'static str, String, String)> {
     let kinds = [
         (Kind::Command, "command"),
         (Kind::Subcommand, "subcommand"),
@@ -227,11 +331,11 @@ pub fn legend(nerd: bool) -> Vec<(&'static str, &'static str, String)> {
     for (k, what) in kinds {
         let label = if k == Kind::File { "x" } else { "" };
         let (g, c) = glyph(k, None, label, nerd);
-        out.push((g, c, what.to_string()));
+        out.push((g, c, kind_name(k).to_string(), what.to_string()));
     }
     for (i, what) in icons {
         let (g, c) = glyph(Kind::Arg, Some(i), "", nerd);
-        out.push((g, c, what.to_string()));
+        out.push((g, c, i.name().to_string(), what.to_string()));
     }
     if nerd {
         for f in [
@@ -249,7 +353,8 @@ pub fn legend(nerd: bool) -> Vec<(&'static str, &'static str, String)> {
             "Cargo.lock",
         ] {
             let (g, c) = glyph(Kind::File, None, f, true);
-            out.push((g, c, format!("file: {f}")));
+            let key = f.rsplit_once('.').map_or(f.to_string(), |(_, e)| format!("*.{e}"));
+            out.push((g, c, key, format!("file: {f}")));
         }
     }
     out
@@ -268,5 +373,24 @@ mod tests {
         assert_eq!(glyph(Kind::Option, None, "-v", false).0, "◆");
         assert_eq!(glyph(Kind::Arg, Some(Icon::Npm), "react", false).0, "◈");
         assert!(use_nerd("nerd") && !use_nerd("unicode") && !use_nerd("none"));
+    }
+
+    #[test]
+    fn overrides_go_from_general_to_specific() {
+        let mut map = Overrides::new();
+        map.insert("file".into(), (None, Some("38;5;1")));
+        map.insert("*.rs".into(), (Some("R"), None));
+        map.insert("dockerfile".into(), (Some("D"), Some("38;5;2")));
+        map.insert("git-branch".into(), (Some("B"), None));
+        let get = |kind, icon, label: &str| apply(&map, kind, icon, label, default_glyph(kind, icon, label, true));
+        // `*.rs` sets the glyph, `file` the color of every file.
+        assert_eq!(get(Kind::File, None, "main.rs"), ("R", "38;5;1"));
+        assert_eq!(get(Kind::File, None, "notes.md").1, "38;5;1");
+        assert_eq!(get(Kind::File, None, "Dockerfile"), ("D", "38;5;2"));
+        // An icon name keeps the built-in color; untouched kinds stay built-in.
+        assert_eq!(get(Kind::Arg, Some(Icon::GitBranch), "main"), ("B", "38;5;208"));
+        assert_eq!(get(Kind::Option, None, "-v"), default_glyph(Kind::Option, None, "-v", true));
+        assert_eq!(normalize("Git_Branch"), "git-branch");
+        assert_eq!(normalize("*.RS"), "*.rs");
     }
 }

@@ -1,4 +1,4 @@
-//! Popup color themes: presets plus per-color overrides from `[ui.colors]`.
+//! Popup color themes: presets plus per-color overrides from `[colors]`.
 
 use crate::config::{Colors, Ui, sgr_color};
 

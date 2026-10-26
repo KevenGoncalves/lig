@@ -237,6 +237,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         parser.process(format!("\x1b[{};{}H", row.min(rows), col.min(cols)).as_bytes());
     }
     let cfg = Config::load();
+    crate::icons::set_overrides(&cfg.icons);
 
     let (tx, rx) = unbounded::<Event>();
     if !typeahead.is_empty() {

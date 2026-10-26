@@ -234,7 +234,7 @@ width = "auto"             # or columns (60), or "50%" of the terminal
 height = 8                 # max rows, or "30%"
 description_position = "right"   # or "bottom": a frame under the list
 
-[ui.colors]                # override single theme colors: "#rrggbb", 0-255, or "default"
+[colors]                   # override single theme colors: "#rrggbb", 0-255, or "default"
 # bg = "#1e1e2e"
 
 [keys]                     # any key: run `lig keys` to see a key's name
@@ -258,13 +258,25 @@ files_first_commands = ["code", "nvim", "…"]  # list files before options (edi
 escape sequence (`"\\x1b[1;5C"`). Run `lig keys` and press a key to see its name. Keys your
 terminal keeps for itself (often Ctrl+Tab) never reach the shell.
 
+**Icons** can be changed one by one in an `[icons]` section, by name (`lig icons` lists
+them all): a glyph, a color, or both. Colors take the same forms as `[colors]`.
+
+```toml
+[icons]
+folder = "📁"                                    # just the glyph
+git-branch = { glyph = "", color = "#f39c12" }  # glyph and color
+option = { color = "214" }                       # just the color
+"*.rs" = "🦀"                                    # files by extension
+"Dockerfile" = "🐳"                              # a file by name
+```
+
 **Try styles** without editing the file:
 
 ```bash
 lig preview --all                                   # every theme
 lig preview --theme nord --density compact --border square
 lig preview --description bottom --width 60
-lig icons                                           # every icon Lig uses
+lig icons                                           # every icon Lig uses, with its name
 ```
 
 Changes apply to new terminal tabs.
