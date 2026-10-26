@@ -279,7 +279,8 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         navigated: false,
         just_accepted: false,
         close_after_insert: false,
-        shown: false,
+        shown: None,
+        stale_since: None,
         manual: false,
         loading: None,
         pending_enter: None,
@@ -554,8 +555,10 @@ struct Session {
     just_accepted: bool,
     /// Keep the popup closed for the line the accepted insert produces.
     close_after_insert: bool,
-    /// The last render showed suggestions.
-    shown: bool,
+    /// Where the last render showed suggestions.
+    shown: Option<Rect>,
+    /// Since when the popup shows suggestions for an older line (see `render`).
+    stale_since: Option<Instant>,
     /// The popup was asked for with the toggle key (until the line is run).
     manual: bool,
     /// (line, message, since) while slower suggestions are being fetched.
@@ -598,6 +601,9 @@ impl Session {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             if let Some(w) = self.loading_wake() {
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
+            if let Some(w) = self.keep_wake() {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             if let Some(t) = self.pending_enter {
@@ -697,7 +703,7 @@ impl Session {
 
     /// A popup with suggestions is on screen (keys go to it).
     fn popup_open(&self) -> bool {
-        self.visible() && self.shown
+        self.visible() && self.shown.is_some()
     }
 
     fn fish_stale(&self) -> bool {
@@ -705,14 +711,12 @@ impl Session {
     }
 
     fn visible(&self) -> bool {
-        !self.fish_stale()
-            && self.editing
-            && !self.hidden
-            && !self.items.is_empty()
-            && self.items_line == self.line
-            && self.dismissed.as_deref() != Some(self.line.as_str())
-            && !self.parser.screen().alternate_screen()
-            && !self.foreign
+        !self.fish_stale() && self.items_line == self.line && self.drawable()
+    }
+
+    /// Nothing hides the suggestions, though they may be for an older line.
+    fn drawable(&self) -> bool {
+        self.can_show() && !self.items.is_empty() && self.dismissed.as_deref() != Some(self.line.as_str())
     }
 
     // ------------------------------------------------------------ events
@@ -927,6 +931,11 @@ impl Session {
         let (line, _, since) = self.loading.as_ref()?;
         let at = *since + LOADING_DELAY;
         (*line == self.line && Instant::now() < at).then_some(at)
+    }
+
+    /// When to wake up to take down suggestions kept for an older line.
+    fn keep_wake(&self) -> Option<Instant> {
+        self.shown.and(self.stale_since).map(|since| since + LOADING_DELAY)
     }
 
     fn request(&mut self) {
@@ -1260,8 +1269,19 @@ impl Session {
             w.extend_from_slice(&stuck);
             self.parser.process(&stuck);
         }
+        let fresh = self.visible();
+        if fresh {
+            self.stale_since = None;
+        }
+        // The shell's new line (fish) or its suggestions are on their way: keep the popup that is
+        // up for a moment, rather than blink it off and on with each key. Keys still only act on
+        // current suggestions (`popup_open`).
+        let keep = !fresh
+            && self.shown.is_some()
+            && self.drawable()
+            && self.stale_since.get_or_insert_with(Instant::now).elapsed() < LOADING_DELAY;
         // Either the suggestions, or a one-line "Searching…" message.
-        let message = self.loading_message().map(|label| {
+        let message = self.loading_message().filter(|_| !keep).map(|label| {
             // Placed like a suggestion for the word being typed.
             let word = self.line.chars().rev().take_while(|c| !c.is_whitespace()).count();
             Suggestion {
@@ -1276,7 +1296,7 @@ impl Session {
             }
         });
         let is_message = message.is_some();
-        let shown: Vec<Suggestion> = if self.visible() { self.items.clone() } else { message.into_iter().collect() };
+        let shown: Vec<Suggestion> = if fresh || keep { self.items.clone() } else { message.into_iter().collect() };
         let mut layout = self.popup_layout(&shown);
         let known_from = self.known_from();
         if let Some(l) = &layout
@@ -1302,6 +1322,10 @@ impl Session {
                 layout = None;
             }
         }
+        // Kept suggestions stay put: their anchor (`delete`) is for the old line.
+        if keep && let (Some(l), Some(old)) = (layout.as_mut(), self.shown) {
+            l.rect.col = old.col.min(self.parser.screen().size().1.saturating_sub(l.rect.width));
+        }
         if std::env::var_os("LIG_LOG").is_some() {
             crate::log(&format!(
                 "render editing={} hidden={} items={} current={} alternate={} cursor={:?} size={:?} rect={:?}",
@@ -1317,7 +1341,7 @@ impl Session {
         }
         // What the user sees; it stays set across the brief erase/redraw
         // around shell output.
-        self.shown = layout.is_some() && !is_message;
+        self.shown = layout.as_ref().filter(|_| !is_message).map(|l| l.rect);
         match (&layout, self.drawn) {
             (Some(l), Some(old)) if l.rect == old => {}
             _ => self.erase(&mut w),

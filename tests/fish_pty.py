@@ -388,6 +388,23 @@ end
         finally:
             fish.close()
 
+    def test_typing_keeps_the_popup_on_screen(self):
+        fish = Fish(wrapped=True)
+        try:
+            start = len(fish.output)
+            fish.send('git ch')
+            fish.wait_text('checkout', start)
+            start = len(fish.output)
+            fish.send('e')
+            fish.read(.3)
+            # Every frame lig finishes after the key still has the popup in it.
+            frames = fish.output[start:].split(b'\x1b[?2026l')[:-1]
+            self.assertTrue(frames)
+            for frame in frames:
+                self.assertIn('╭'.encode(), frame)
+        finally:
+            fish.close()
+
 @unittest.skipUnless(FISH, 'fish is unavailable')
 class CliTests(unittest.TestCase):
     def test_noninteractive_config_continues_after_the_hook(self):
