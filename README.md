@@ -45,6 +45,7 @@ that works in any terminal: it draws the popup inside the terminal itself.
   `--help` or man page.
 - Knows your **aliases, functions and builtins** (`gco ` completes like `git checkout `).
 - **zsh, bash and fish**, including fish started inside another shell.
+- Works inside **tmux** and **zellij**; zellij panes are restored with the app that ran in them.
 - Nerd Font icons, themes, configurable size, and any keys you like.
 - Runs locally: no daemon, no account, no telemetry.
 
@@ -116,8 +117,9 @@ Then import the module, enable it, and optionally also configure it:
 }
 ```
 
-Lig is added to every home-manager managed shell. To leave one out, for example for `fish`, set
-`programs.lig.enableZshIntegration = false`.
+Lig is added to every shell home-manager manages. To leave one out, set its option to
+`false`: `programs.lig.enableFishIntegration`, `enableZshIntegration` or
+`enableBashIntegration`.
 
 To update Lig, update your Nix flake and rebuild instead of using `lig update`.
 
@@ -156,36 +158,6 @@ eval (lig init fish post | string collect)
   it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
-
-## zellij
-
-Inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
-bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
-mirrors the foreground app into its own command line and working directory, once a
-second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
-idle shell as a plain pane) with the right folder, and restores it that way.
-
-```bash
-lig doctor                  # "[ok  ] zellij mirror: on" inside zellij
-LIG_NO_MIRROR=1 zellij      # turn the mirror off; autocomplete still works
-```
-
-Outside zellij nothing changes. `LIG_DISABLE=1` turns lig off entirely. Shells, wrappers
-(`env`, `nohup`, `timeout`, ...) and commands that are risky to rerun (`sudo`, `rm`, `mv`,
-`dd`, `kill`, `git`, ...) are saved as a plain shell.
-
-**Never resurrect with `zellij attach --force-run-commands`.** zellij's resurrect prompt
-waits for ENTER in each command pane, and that is the safety net.
-
-Known limitations:
-
-- `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
-  `killall <app>` and `pgrep -x <app>` don't, because lig's process name stays `lig`.
-  `htop` shows the pane as the app.
-- A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
-- A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
-  Harmless apart from how `ps` shows lig.
-- A restored app runs with the zellij server's `PATH`, like plain zellij.
 
 ## Usage
 
@@ -237,6 +209,13 @@ description_position = "right"   # or "bottom": a frame under the list
 [colors]                   # override single theme colors: "#rrggbb", 0-255, or "default"
 # bg = "#1e1e2e"
 
+[icons]                    # change single icons by name (`lig icons` lists them)
+# folder = "📁"                                    # just the glyph
+# git-branch = { glyph = "", color = "#f39c12" }  # glyph and color, colors as in [colors]
+# option = { color = "214" }                       # just the color
+# "*.rs" = "🦀"                                    # files by extension
+# "Dockerfile" = "🐳"                              # a file by name
+
 [keys]                     # any key: run `lig keys` to see a key's name
 accept = ["enter"]
 next = ["tab", "down", "ctrl-n"]
@@ -258,17 +237,8 @@ files_first_commands = ["code", "nvim", "…"]  # list files before options (edi
 escape sequence (`"\\x1b[1;5C"`). Run `lig keys` and press a key to see its name. Keys your
 terminal keeps for itself (often Ctrl+Tab) never reach the shell.
 
-**Icons** can be changed one by one in an `[icons]` section, by name (`lig icons` lists
-them all): a glyph, a color, or both. Colors take the same forms as `[colors]`.
-
-```toml
-[icons]
-folder = "📁"                                    # just the glyph
-git-branch = { glyph = "", color = "#f39c12" }  # glyph and color
-option = { color = "214" }                       # just the color
-"*.rs" = "🦀"                                    # files by extension
-"Dockerfile" = "🐳"                              # a file by name
-```
+**Icons** apply from general to specific: `file = { color = "1" }` colors every file, and
+`"*.rs"` then sets the glyph for Rust files only. Unknown names are reported.
 
 **Try styles** without editing the file:
 
@@ -343,6 +313,36 @@ when Lig asks after each key. To accept a suggestion, Lig sends a private key th
 function binds to edit the line. Slow sources (commands, network) run in the background, so
 the popup never blocks typing.
 
+## zellij
+
+Inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
+bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
+mirrors the foreground app into its own command line and working directory, once a
+second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
+idle shell as a plain pane) with the right folder, and restores it that way.
+
+```bash
+lig doctor                  # "[ok  ] zellij mirror: on" inside zellij
+LIG_NO_MIRROR=1 zellij      # turn the mirror off; autocomplete still works
+```
+
+Outside zellij nothing changes. `LIG_DISABLE=1` turns lig off entirely. Shells, wrappers
+(`env`, `nohup`, `timeout`, ...) and commands that are risky to rerun (`sudo`, `rm`, `mv`,
+`dd`, `kill`, `git`, ...) are saved as a plain shell.
+
+**Never resurrect with `zellij attach --force-run-commands`.** zellij's resurrect prompt
+waits for ENTER in each command pane, and that is the safety net.
+
+Known limitations:
+
+- `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
+  `killall <app>` and `pgrep -x <app>` don't, because lig's process name stays `lig`.
+  `htop` shows the pane as the app.
+- A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
+- A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
+  Harmless apart from how `ps` shows lig.
+- A restored app runs with the zellij server's `PATH`, like plain zellij.
+
 ## Troubleshooting
 
 | Problem | Try |
@@ -389,6 +389,7 @@ specs/fig/            converted withfig/autocomplete specs (generated)
 build.rs              embeds both spec folders, compressed, into the binary
 tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
+flake.nix, nix/       the Nix flake and home-manager module
 .github/workflows/    release builds
 assets/               the logo
 ```
@@ -398,8 +399,13 @@ live value, write a generator in `src/specs/gens.rs` and register its id in `bui
 
 ## Credits and license
 
-Fish support was contributed by [@techwizrd](https://github.com/techwizrd) in
-[#6](https://github.com/KevenGoncalves/lig/pull/6).
+Thanks to the contributors:
+
+- [@techwizrd](https://github.com/techwizrd): fish support ([#6](https://github.com/KevenGoncalves/lig/pull/6)).
+- [@mawkler](https://github.com/mawkler): the Nix flake and home-manager module
+  ([#9](https://github.com/KevenGoncalves/lig/pull/9), [#10](https://github.com/KevenGoncalves/lig/pull/10)),
+  and telling Ctrl+M from Ctrl+J ([#12](https://github.com/KevenGoncalves/lig/pull/12)).
+- [@nadelacruz-00](https://github.com/nadelacruz-00): the zellij mirror ([#11](https://github.com/KevenGoncalves/lig/pull/11)).
 
 The specs in `specs/fig/` come from [withfig/autocomplete](https://github.com/withfig/autocomplete),
 © Hercules Labs Inc. and contributors, MIT licensed (see [`specs/fig/LICENSE`](specs/fig/LICENSE)).
