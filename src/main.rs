@@ -92,11 +92,14 @@ enum Cmd {
     },
     /// Check the installation
     Doctor,
-    /// Update lig: pull its source and reinstall it with cargo
+    /// Update lig to the latest release on GitHub
     Update {
-        /// The source checkout to build (default: where this lig was built from)
+        /// Only check whether a newer release is available
         #[arg(long)]
-        source: Option<PathBuf>,
+        check: bool,
+        /// Reinstall even if this is already the latest release
+        #[arg(long)]
+        force: bool,
     },
     /// List every icon (in the mode you use, next to its Unicode fallback)
     Icons,
@@ -363,58 +366,104 @@ fn uninstall(shell: ShellKind) -> Result<()> {
     Ok(())
 }
 
-/// Where this binary was built from; `lig update` rebuilds it from there.
-const SOURCE_DIR: &str = env!("CARGO_MANIFEST_DIR");
-
-/// Run a command, showing its output; fail if it fails.
+/// Run a command, showing its errors; fail if it fails.
 fn run(cmd: &mut std::process::Command) -> Result<()> {
     let status = cmd.status().with_context(|| format!("running {:?}", cmd.get_program()))?;
     anyhow::ensure!(status.success(), "{:?} failed ({status})", cmd.get_program());
     Ok(())
 }
 
-/// `lig update`: pull the source checkout (when it tracks a remote branch) and
-/// `cargo install` it. Without a checkout, install from the repository.
-fn update(source: Option<PathBuf>) -> Result<()> {
+/// A version as numbers, for comparing (`v1.0.10` > `1.0.9`).
+fn version_key(v: &str) -> Vec<u64> {
+    v.trim_start_matches('v').split(['.', '-']).map_while(|p| p.parse().ok()).collect()
+}
+
+/// `lig update`: install the latest GitHub release over this binary. Uses
+/// the static (musl) build, which runs on any Linux; checks its sha256.
+fn update(check: bool, force: bool) -> Result<()> {
     use std::process::Command;
-    let old = env!("CARGO_PKG_VERSION");
-    let dir = source.unwrap_or_else(|| PathBuf::from(SOURCE_DIR));
-    let mut install = Command::new("cargo");
-    install.args(["install", "--locked"]);
-    if dir.join("Cargo.toml").exists() {
-        let git = |args: &[&str]| Command::new("git").arg("-C").arg(&dir).args(args).output();
-        let upstream = git(&["rev-parse", "--abbrev-ref", "@{upstream}"]).ok().filter(|o| o.status.success());
-        match upstream {
-            Some(o) => {
-                let branch = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                println!("lig: pulling {branch} into {}", dir.display());
-                run(Command::new("git").arg("-C").arg(&dir).args(["pull", "--ff-only"]))?;
-            }
-            None => println!("lig: {} doesn't track a remote branch; building it as it is", dir.display()),
-        }
-        println!("lig: building and installing from {}", dir.display());
-        install.arg("--path").arg(&dir);
-    } else {
-        let repo = env!("CARGO_PKG_REPOSITORY");
-        println!("lig: {} isn't there anymore; installing from {repo}", dir.display());
-        install.args(["--git", repo]);
+    let current = env!("CARGO_PKG_VERSION");
+    let repo = env!("CARGO_PKG_REPOSITORY").trim_start_matches("https://github.com/");
+    let curl = |args: &[&str]| -> Result<String> {
+        let out = Command::new("curl")
+            .args(["-fsSL", "--connect-timeout", "10", "--max-time", "60"])
+            .args(args)
+            .output()
+            .context("running curl (is it installed?)")?;
+        anyhow::ensure!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr).trim());
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+
+    let release: serde_json::Value = serde_json::from_str(
+        &curl(&[
+            "-H",
+            "Accept: application/vnd.github+json",
+            &format!("https://api.github.com/repos/{repo}/releases/latest"),
+        ])
+        .context("looking up the latest release")?,
+    )?;
+    let tag = release["tag_name"].as_str().context("the latest release has no tag")?;
+    let latest = tag.trim_start_matches('v');
+    if version_key(latest) <= version_key(current) && !force {
+        let note = if version_key(latest) < version_key(current) { " (newer than the latest release)" } else { "" };
+        println!("lig: {current} is up to date{note}.");
+        return Ok(());
     }
-    run(&mut install)?;
-    // The freshly installed binary, where cargo put it.
-    let bin = std::env::var_os("CARGO_INSTALL_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("CARGO_HOME").map(PathBuf::from))
-        .or_else(|| dirs::home_dir().map(|h| h.join(".cargo")))
-        .unwrap_or_default()
-        .join("bin/lig");
-    let new = std::process::Command::new(&bin)
-        .arg("--version")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_start_matches("lig ").to_string())
-        .unwrap_or_else(|_| "?".into());
-    let what = if new == old { format!("reinstalled {new}") } else { format!("updated {old} → {new}") };
-    println!("lig: {what}. Open a new terminal tab to use it (open tabs keep the old version).");
+    if check {
+        println!("lig: {latest} is available (you have {current}). Run `lig update` to install it.");
+        return Ok(());
+    }
+
+    let arch = match std::env::consts::ARCH {
+        a @ ("x86_64" | "aarch64") => a,
+        other => anyhow::bail!("there's no prebuilt lig for {other}; build it from source instead"),
+    };
+    let name = format!("lig-{latest}-{arch}-unknown-linux-musl");
+    let asset = |file: &str| {
+        release["assets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|a| a["name"] == file)
+            .and_then(|a| a["browser_download_url"].as_str().map(str::to_string))
+    };
+    let archive = format!("{name}.tar.gz");
+    let url = asset(&archive).with_context(|| format!("{tag} has no {archive}"))?;
+    let sum_url = asset(&format!("{archive}.sha256")).with_context(|| format!("{tag} has no checksum"))?;
+
+    // Next to the binary being replaced, so the final rename stays on one filesystem.
+    let target = std::env::current_exe()?.canonicalize()?;
+    let dir = target.parent().context("lig has no parent folder")?;
+    let work = tempfile_dir(dir).with_context(|| {
+        format!("can't write to {} (install the update with sudo, or as the owner of that folder)", dir.display())
+    })?;
+    let result = (|| -> Result<()> {
+        println!("lig: downloading {archive}");
+        run(Command::new("curl").args(["-fsSL", "--max-time", "300", "-o"]).arg(work.join(&archive)).arg(&url))?;
+        std::fs::write(work.join(format!("{archive}.sha256")), curl(&[&sum_url])?)?;
+        run(Command::new("sha256sum").args(["--quiet", "-c", &format!("{archive}.sha256")]).current_dir(&work))
+            .context("the download doesn't match its checksum")?;
+        run(Command::new("tar").args(["xzf", &archive]).current_dir(&work))?;
+        let new = work.join(&name).join("lig");
+        let version = Command::new(&new).arg("--version").output().context("the new lig doesn't run")?;
+        anyhow::ensure!(version.status.success(), "the new lig doesn't run");
+        std::fs::rename(&new, &target).with_context(|| format!("replacing {}", target.display()))?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    result?;
+    let what =
+        if latest == current { format!("reinstalled {latest}") } else { format!("updated {current} → {latest}") };
+    println!("lig: {what} ({}). Open a new terminal tab to use it (open tabs keep the old version).", target.display());
     Ok(())
+}
+
+/// A new, empty folder inside `parent`.
+fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
+    let dir = parent.join(format!(".lig-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir(&dir)?;
+    Ok(dir)
 }
 
 /// The doctor line for the zellij mirror. `read` returns the lig shell's
@@ -676,7 +725,7 @@ fn main() -> Result<()> {
         }
         Cmd::Complete { cwd, aliases, line } => complete(&line, cwd, aliases)?,
         Cmd::Doctor => doctor()?,
-        Cmd::Update { source } => update(source)?,
+        Cmd::Update { check, force } => update(check, force)?,
         Cmd::Icons => list_icons(),
         Cmd::Keys => keys::show(&keys::Bindings::new(&config::Config::load().keys))?,
         Cmd::Preview(args) => preview(args),
@@ -769,6 +818,14 @@ mod shell_tests {
         let pad = " ".repeat(4096);
         let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh", &pad]);
         assert!(!needs_reexec(&a, true, false));
+    }
+
+    #[test]
+    fn release_versions_compare_as_numbers() {
+        assert!(version_key("v1.0.10") > version_key("1.0.9"));
+        assert!(version_key("v1.1.0") > version_key("1.0.99"));
+        assert_eq!(version_key("v1.0.5"), version_key("1.0.5"));
+        assert!(version_key("2.0.0-rc1") > version_key("1.9.9"));
     }
 
     /// `specs/lig/lig.json` completes lig itself: every command and flag of

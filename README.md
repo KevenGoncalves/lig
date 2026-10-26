@@ -150,10 +150,10 @@ eval (lig init fish post | string collect)
 
 ### Update and remove
 
-- **Update**: `lig update` pulls the latest changes into the folder you built from and
-  reinstalls it (`--source <dir>` for another checkout). With a prebuilt binary, download
-  the new release instead. Then open a new terminal tab: a tab keeps the version it
-  started with.
+- **Update**: `lig update` installs the latest release from GitHub over the current
+  binary (the static build, checked against its sha256). `lig update --check` only tells
+  you whether there's a newer one. Then open a new terminal tab: a tab keeps the version
+  it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
 

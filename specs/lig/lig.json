@@ -297,15 +297,15 @@
     },
     {
       "name": "update",
-      "description": "Update lig: pull its source and reinstall it with cargo",
+      "description": "Update lig to the latest release on GitHub",
       "options": [
         {
-          "name": "--source",
-          "description": "The source checkout to build (default: where this lig was built from)",
-          "args": {
-            "name": "dir",
-            "template": "folders"
-          }
+          "name": "--check",
+          "description": "Only check whether a newer release is available"
+        },
+        {
+          "name": "--force",
+          "description": "Reinstall even if this is already the latest release"
         },
         {
           "name": [
