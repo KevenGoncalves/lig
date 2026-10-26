@@ -69,15 +69,13 @@ Download the archive for your machine from the
 To install the latest release for your machine into `~/.local/bin`:
 
 ```bash
-version=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/KevenGoncalves/lig/releases/latest)
-version=${version##*/v}
-name=lig-$version-$(uname -m)-unknown-linux-musl
-curl -fLO "https://github.com/KevenGoncalves/lig/releases/download/v$version/$name.tar.gz"
-tar xzf "$name.tar.gz"
-install -Dm755 "$name/lig" ~/.local/bin/lig
+curl -fLo ~/.local/bin/lig --create-dirs https://github.com/KevenGoncalves/lig/releases/latest/download/lig-$(uname -m)-unknown-linux-musl
+chmod +x ~/.local/bin/lig
 ```
 
-Each archive has a `.sha256` file next to it to check the download with `sha256sum -c`.
+Each release also has the binaries on their own, without the version in their name
+(`lig-x86_64-unknown-linux-musl`, …), which is what the link above uses. Every file has a
+`.sha256` next to it to check the download with `sha256sum -c`.
 
 ### From source
 
