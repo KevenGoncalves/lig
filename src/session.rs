@@ -286,6 +286,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         manual: false,
         loading: None,
         pending_enter: None,
+        enter_after: None,
         deferred: vec![],
         dismissed: None,
         drawn: None,
@@ -402,6 +403,19 @@ fn children(pid: u32) -> Vec<u32> {
         .filter_map(|t| std::fs::read_to_string(t.path().join("children")).ok())
         .flat_map(|s| s.split_whitespace().filter_map(|p| p.parse().ok()).collect::<Vec<u32>>())
         .collect()
+}
+
+/// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain
+/// character (arrows, Backspace, shortcuts…).
+fn push_typed(typed: &mut Option<String>, key: &Key) {
+    match (&key.code, key.ctrl || key.alt) {
+        (keys::Code::Char(c), false) => {
+            if let Some(t) = typed {
+                t.push(*c);
+            }
+        }
+        _ => *typed = None,
+    }
 }
 
 /// Whether Enter picks the selected suggestion (instead of running the line).
@@ -567,6 +581,10 @@ struct Session {
     pending_enter: Option<Instant>,
     /// That Enter and the input after it, replayed in order.
     deferred: Vec<u8>,
+    /// For an Enter typed right after other keys (one input chunk): the line
+    /// before them, and the line they make if they're plain characters. Enter
+    /// waits until the shell reports it (see [`Session::enter_ready`]).
+    enter_after: Option<(String, Option<String>)>,
     /// The popup was closed for this line; it reopens when the line changes.
     dismissed: Option<String>,
     /// Where the popup is drawn.
@@ -753,6 +771,7 @@ impl Session {
         self.mark_dirty();
         if self.pending_enter.is_some()
             && !self.fish_stale()
+            && self.enter_ready()
             && (self.hidden || (self.loading.is_none() && self.items_line == self.line))
         {
             self.render();
@@ -894,6 +913,7 @@ impl Session {
                 self.manual = false;
                 self.loading = None;
                 if self.pending_enter.take().is_some() {
+                    self.enter_after = None;
                     let data = std::mem::take(&mut self.deferred);
                     self.write_pty(&data);
                 }
@@ -985,6 +1005,7 @@ impl Session {
         if self.pending_enter.take().is_none() {
             return;
         }
+        self.enter_after = None;
         self.loading = None;
         let data = std::mem::take(&mut self.deferred);
         if self.fish_stale() {
@@ -1002,7 +1023,7 @@ impl Session {
         }
         let fin = loading.is_none();
         self.apply_done(line, items, loading);
-        if fin && self.pending_enter.is_some() && !self.fish_stale() {
+        if fin && self.pending_enter.is_some() && !self.fish_stale() && self.enter_ready() {
             self.render();
             self.resolve_pending_enter();
         }
@@ -1048,9 +1069,24 @@ impl Session {
         // stale until the shell redraws: the rest of the chunk goes through as is
         // (pastes, fast macros).
         let mut passthrough = false;
+        // What the keys sent to the shell in this chunk type, if they're all
+        // plain characters.
+        let mut typed: Option<String> = Some(String::new());
         for (n, (raw, key)) in keys.iter().enumerate() {
             let (raw, key) = (*raw, key.clone());
             if passthrough {
+                // Enter right after keys this chunk sent (`mv a.txt Doc` and
+                // Enter typed fast): the line isn't updated yet. Hold Enter
+                // until the shell reports it and its suggestions are ready.
+                if key == Key::ENTER && self.enter_can_wait() {
+                    let expected = typed.take().map(|t| format!("{}{t}", self.line));
+                    self.enter_after = Some((self.line.clone(), expected));
+                    self.pending_enter = Some(Instant::now());
+                    let rest: usize = keys[n..].iter().map(|(r, _)| r.len()).sum();
+                    self.deferred = data[data.len() - rest..].to_vec();
+                    break;
+                }
+                push_typed(&mut typed, &key);
                 fwd.extend_from_slice(raw);
                 continue;
             }
@@ -1072,6 +1108,7 @@ impl Session {
                 // Keys the shell uses for history and its own completion.
                 self.shell_nav =
                     [Key::UP, Key::DOWN, Key::ctrl('p'), Key::ctrl('n'), Key::TAB, Key::SHIFT_TAB].contains(&key);
+                push_typed(&mut typed, &key);
                 fwd.extend_from_slice(raw);
                 passthrough = true;
                 continue;
@@ -1110,6 +1147,8 @@ impl Session {
                 Some(Action::Accept) => {
                     self.just_accepted = true;
                     passthrough = true;
+                    // The insertion changes the line in ways not worth predicting.
+                    typed = None;
                     self.accept_selected(&mut fwd);
                     redraw = true;
                 }
@@ -1141,6 +1180,25 @@ impl Session {
     /// The popup may be shown now (the shell is editing a line, nothing hides it).
     fn can_show(&self) -> bool {
         self.editing && !self.hidden && !self.parser.screen().alternate_screen() && !self.foreign
+    }
+
+    /// Enter may be held back to act on up-to-date suggestions.
+    fn enter_can_wait(&self) -> bool {
+        self.can_show()
+            && self.pending_enter.is_none()
+            && self.bindings.action(&Key::ENTER) == Some(Action::Accept)
+            && self.cfg.behavior.enter_accepts != "never"
+    }
+
+    /// A held Enter may go on: the shell has reported the line typed before it
+    /// (or hides the popup).
+    fn enter_ready(&self) -> bool {
+        match &self.enter_after {
+            _ if self.hidden => true,
+            None => true,
+            Some((_, Some(expected))) => self.line == *expected,
+            Some((before, None)) => self.line != *before,
+        }
     }
 
     /// Enter while this line's suggestions are still loading waits for them
