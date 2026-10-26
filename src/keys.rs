@@ -63,7 +63,7 @@ impl Key {
             if self.ctrl {
                 let base = match c.to_ascii_lowercase() {
                     'i' => Some(Code::Tab),
-                    'm' | 'j' => Some(Code::Enter),
+                    'm' => Some(Code::Enter),
                     '[' => Some(Code::Esc),
                     '@' => Some(Code::Char(' ')),
                     _ => None,
@@ -239,7 +239,7 @@ fn one(s: &[u8]) -> (usize, Key) {
         0x1b => escape_sequence(s),
         0x00 => (1, Key::ctrl(' ')),
         b'\t' => (1, Key::TAB),
-        b'\r' | b'\n' => (1, Key::ENTER),
+        b'\r' => (1, Key::ENTER),
         0x7f => (1, Key::plain(Code::Backspace)),
         c @ 0x01..=0x1a => (1, Key::ctrl((b'a' + c - 1) as char)),
         c @ 0x1c..=0x1f => (1, Key::ctrl((b'\\' + c - 0x1c) as char)),
@@ -464,6 +464,7 @@ mod tests {
         );
         // Kitty's protocol and xterm's modifyOtherKeys.
         assert_eq!(keys(b"\x1b[9;5u\x1b[27;5;9~\x1b[97;7u\x1b[65;2u"), ["ctrl-tab", "ctrl-tab", "ctrl-alt-a", "A"]);
+        assert_eq!(keys(b"\r\n\x1b[106;5u\x1b[109;5u"), ["enter", "ctrl-j", "ctrl-j", "enter"]);
         // Unknown sequences keep their bytes.
         assert_eq!(keys(b"\x1b[99;3x"), ["\\x1b[99;3x"]);
     }
@@ -476,6 +477,8 @@ mod tests {
         assert_eq!(k("shift-a"), k("A"));
         assert_eq!(k("backtab"), Key::SHIFT_TAB);
         assert_eq!(k("ctrl-i"), Key::TAB);
+        assert_eq!(k("ctrl-m"), Key::ENTER);
+        assert_ne!(k("ctrl-j"), Key::ENTER);
         assert_eq!(k("meta-shift-page-up"), split(b"\x1b[5;4~")[0].1);
         assert_eq!(k("ctrl--"), k("ctrl-minus"));
         assert_eq!(k("\\x1b[A"), Key::UP);
