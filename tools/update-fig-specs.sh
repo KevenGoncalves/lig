@@ -27,7 +27,7 @@ xargs node_modules/.bin/esbuild --bundle --format=iife --global-name=__lig_modul
 
 cd "$ROOT"
 rm -rf specs/fig
-cargo run --release -p figconv -- "$WORK/build" specs/fig
+cargo run --release -p figconv --example figconv -- "$WORK/build" specs/fig
 cp "$WORK/src-repo/LICENSE" specs/fig/LICENSE
 cp "$WORK/REVISION" specs/fig/REVISION
 echo "specs/fig updated from $(cat "$WORK/REVISION")"
