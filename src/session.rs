@@ -924,7 +924,12 @@ impl Session {
                 self.dismissed = None;
             }
             Msg::Path(p) => self.env.path = Some(p),
-            Msg::Cwd(c) => self.env.cwd = PathBuf::from(c),
+            Msg::Cwd(c) => {
+                // Follow the inner shell so hosts that read our cwd from `/proc` see the shell's
+                // directory
+                let _ = std::env::set_current_dir(&c);
+                self.env.cwd = PathBuf::from(c);
+            }
             Msg::Aliases(a) => self.env.aliases = std::sync::Arc::new(a.into_iter().collect()),
             Msg::Functions(f) => self.env.functions = std::sync::Arc::new(f),
             Msg::Builtins(b) => self.env.builtins = std::sync::Arc::new(b),
