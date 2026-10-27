@@ -56,8 +56,17 @@ package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 ### Prebuilt binary
 
-Download the archive for your machine from the
-[latest release](https://github.com/KevenGoncalves/lig/releases/latest):
+```bash
+curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
+```
+
+The script downloads the latest release for your machine (x86_64 or ARM64, the static
+build that runs on any Linux), checks it against its sha256, and puts `lig` in
+`~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
+release (`… | LIG_VERSION=1.0.5 sh`).
+
+To download it yourself, each [release](https://github.com/KevenGoncalves/lig/releases/latest)
+has these archives, each with a `.sha256`:
 
 | Archive | Runs on |
 | --- | --- |
@@ -65,16 +74,6 @@ Download the archive for your machine from the
 | `lig-<version>-aarch64-unknown-linux-musl.tar.gz` | any ARM64 Linux (static binary) |
 | `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
 | `lig-<version>-aarch64-unknown-linux-gnu.tar.gz` | ARM64 with glibc 2.35+ |
-
-To install the latest release for your machine into `~/.local/bin`:
-
-```bash
-v=$(curl -fsSLo /dev/null -w '%{url_effective}' https://github.com/KevenGoncalves/lig/releases/latest); v=${v##*/v}
-curl -fL https://github.com/KevenGoncalves/lig/releases/download/v$v/lig-$v-$(uname -m)-unknown-linux-musl.tar.gz | tar xz
-install -Dm755 lig-$v-$(uname -m)-unknown-linux-musl/lig ~/.local/bin/lig
-```
-
-Every archive has a `.sha256` next to it to check the download with `sha256sum -c`.
 
 ### From source
 
@@ -390,6 +389,7 @@ build.rs              embeds both spec folders, compressed, into the binary
 tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
+install.sh            the installer attached to every release
 .github/workflows/    release builds
 assets/               the logo
 ```
