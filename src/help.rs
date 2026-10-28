@@ -1,10 +1,6 @@
-//! Specs for commands without a built-in one, derived from their `--help`
-//! output or man page.
-//!
-//! `--help` is only run for executables that are ELF binaries or
-//! python/node/ruby scripts (argument parsers there handle `--help` before
-//! doing anything), with no stdin and no display, and the output is cached on
-//! disk per executable version. Everything else falls back to the man page.
+//! Specs for commands without a built-in one, parsed from `--help` or the man page.
+//! `--help` is only run (no stdin, no display) for ELF binaries and python/node/ruby scripts,
+//! whose argument parsers handle it before doing anything; output is cached per executable version.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -38,7 +34,6 @@ pub struct HelpLoader {
     mem: HashMap<String, Option<Arc<Subcommand>>>,
 }
 
-/// Where the raw `--help` texts are cached.
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("lig").join("help")
 }
@@ -48,7 +43,6 @@ fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
 }
 
-/// The executable `name` resolves to on `path`.
 fn which(name: &str, path: &str) -> Option<PathBuf> {
     if name.contains('/') {
         return Some(PathBuf::from(name));
@@ -150,8 +144,7 @@ impl HelpLoader {
         Lookup::Found(spec)
     }
 
-    /// The help text: `--help` output if that parses into something, else
-    /// the man page (top-level commands only), else nothing.
+    /// `--help` output if it parses into something, else the man page (top-level commands only).
     fn fetch(&self, argv: &[String], exe: &Path, cwd: &Path, env: &[(String, String)]) -> String {
         let mut vars = env.to_vec();
         for (k, v) in [
@@ -187,7 +180,6 @@ impl HelpLoader {
     }
 }
 
-/// Leading whitespace of a line, in bytes.
 fn indent(l: &str) -> usize {
     l.len() - l.trim_start().len()
 }
@@ -203,7 +195,6 @@ fn split_gap(t: &str) -> (&str, &str) {
     (t, "")
 }
 
-/// Looks like an option name: `-x`, `--long-name`.
 fn valid_flag(n: &str) -> bool {
     let body = n.trim_start_matches('-');
     let dashes = n.len() - body.len();
@@ -325,13 +316,11 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
 
     let mut options: Vec<Opt> = vec![];
     let mut subs: Vec<(Vec<String>, String)> = vec![];
-    // Positional arguments (`Arguments:`, `positional arguments:`).
     let mut args: Vec<crate::spec::Arg> = vec![];
     let mut in_args = false;
     let mut arg_indent: Option<usize> = None;
     let mut in_commands = false;
-    // Indentation of the items in the current commands section (set by the
-    // first one); prose and wrapped descriptions are indented differently.
+    // Indent of the current commands section's items (set by the first); prose is indented differently.
     let mut item_indent: Option<usize> = None;
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim();
@@ -431,9 +420,7 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
     Some(spec)
 }
 
-/// A positional argument from an `Arguments:` item: `[SHELL]`, `<FILE>...`,
-/// `{start,stop}`, `name`; values from `[possible values: a, b]` in its
-/// description (clap).
+/// A positional from an `Arguments:` item: `[SHELL]`, `<FILE>...`, `{start,stop}`, `name`.
 fn parse_positional(left: &str, desc: &str) -> Option<crate::spec::Arg> {
     if left.contains(char::is_whitespace) || left.starts_with('-') || left.is_empty() {
         return None;
@@ -468,7 +455,7 @@ mod tests {
         assert!(s.args[0].is_optional && s.args[0].template.is_empty());
         let vals: Vec<&str> = s.args[0].suggestions.iter().map(|x| x.meta.names[0].as_str()).collect();
         assert_eq!(vals, ["fish", "zsh", "bash"]);
-        // argparse, with a wrapped description and a repeatable path.
+        // argparse
         let text = "usage: tool [-h] {start,stop} paths [paths ...]\n\npositional arguments:\n  {start,stop}  What to do\n  <DIR>...      Folders to watch, one\n                or more\n\noptions:\n  -h, --help    show help\n";
         let s = parse(text, &["tool".into()]).unwrap();
         assert_eq!(s.args.len(), 2, "{:?}", s.args.iter().map(|a| &a.name).collect::<Vec<_>>());

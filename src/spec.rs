@@ -1,12 +1,7 @@
-//! Completion spec model.
-//!
-//! The shape follows Fig's spec format (subcommands / options / args /
-//! generators), but everything is plain Rust: built-in specs are written with
-//! the small builder DSL below (see `src/specs/`), generators are Rust
-//! closures, and user specs are static JSON/TOML files.
+//! Completion spec model, shaped like Fig's spec format, with a builder DSL
+//! and a JSON/TOML reader/writer.
 
-// The builder methods form the spec-authoring API; not all are used by the
-// built-in specs.
+// The builder DSL is a public authoring API; not every method is used.
 #![allow(dead_code)]
 
 use std::path::Path;
@@ -169,8 +164,7 @@ pub struct Subcommand {
     pub additional_suggestions: Vec<SuggestionDef>,
     pub load_spec: Option<LoadSpec>,
     pub directives: Option<Directives>,
-    /// lig: replace the converted withfig spec for this command instead of
-    /// merging with it (it describes an incompatible older version).
+    /// lig: replace the converted withfig spec instead of merging with it (`skipFigSpec`).
     pub skip_fig_spec: bool,
 }
 
@@ -217,7 +211,6 @@ pub enum Trigger {
     Prefix(usize),
 }
 
-/// Context handed to generator functions.
 pub struct GenCtx<'a> {
     pub cwd: &'a Path,
     pub env: &'a [(String, String)],
@@ -246,7 +239,6 @@ impl GenCtx<'_> {
             .unwrap_or_default()
     }
 
-    /// Whether one of these flags was typed.
     pub fn has_flag(&self, names: &[&str]) -> bool {
         self.tokens.iter().any(|t| names.contains(&t.as_str()))
     }
@@ -284,8 +276,11 @@ pub enum GenSource {
     /// A native generator, referenced from specs as `{"builtin": "<id>"}`.
     Rust(Box<GenFn>),
     /// Run a command (argv, or a shell string) and shape its output.
-    Script { argv: Vec<String>, shell: Option<String>, output: Output },
-    /// A fixed list.
+    Script {
+        argv: Vec<String>,
+        shell: Option<String>,
+        output: Output,
+    },
     Static(Vec<SuggestionDef>),
 }
 
@@ -331,7 +326,6 @@ impl std::fmt::Debug for Generator {
 }
 
 impl Subcommand {
-    /// The subcommand typed as `name` (any of its names).
     pub fn find_subcommand(&self, name: &str) -> Option<&Arc<Subcommand>> {
         self.subcommands.iter().find(|s| s.meta.names.iter().any(|n| n == name))
     }
@@ -342,7 +336,7 @@ impl Subcommand {
 }
 
 impl Opt {
-    /// The option needs a value (`-o FILE`), so the next token is that value.
+    /// The option needs a value (`-o FILE`).
     pub fn takes_arg(&self) -> bool {
         self.args.first().is_some_and(|a| !a.is_optional)
     }
@@ -351,7 +345,6 @@ impl Opt {
 // ---------------------------------------------------------------- output shaping
 
 impl Output {
-    /// Turn a command's stdout into suggestions.
     pub fn suggestions(&self, out: &str) -> Vec<SuggestionDef> {
         match self {
             Output::Lines { split_on, skip, field } => out
@@ -410,9 +403,8 @@ fn json_text(v: Option<&Value>) -> String {
 }
 
 impl JsonTemplate {
-    /// Fill template `t` for one `item` of the collection at path `base`
-    /// (`key`: its key, when the collection is an object). Paths outside the
-    /// collection are read from `root`.
+    /// Fill `t` for one `item` (with `key` for objects) of the collection at
+    /// `base`; paths outside the collection are read from `root`.
     fn render(t: &str, root: &Value, base: &str, key: Option<&str>, item: &Value) -> String {
         let mut out = String::new();
         for (i, part) in t.split(TAG).enumerate() {
@@ -434,10 +426,8 @@ impl JsonTemplate {
         out.trim().to_string()
     }
 
-    /// One suggestion per item of the iterated collection (or one in all, if
-    /// no path iterates).
+    /// One suggestion per item of the iterated collection (one in all if no path iterates).
     fn items(&self, root: &Value, out: &mut Vec<SuggestionDef>) {
-        // The collection being iterated, from the first path that iterates.
         let base = self
             .name
             .split(TAG)
@@ -517,12 +507,10 @@ pub fn arg(name: &str) -> Arg {
     Arg { name: name.into(), options_can_break_variadic: true, ..Default::default() }
 }
 
-/// A suggestion for generators and static lists.
 pub fn sug(name: impl Into<String>) -> SuggestionDef {
     SuggestionDef { meta: Meta { names: vec![name.into()], ..Default::default() }, kind: None }
 }
 
-/// A generator backed by a Rust function.
 pub fn gen_fn(id: &str, f: impl Fn(&GenCtx) -> Vec<SuggestionDef> + Send + Sync + 'static) -> Generator {
     Generator {
         id: id.into(),
@@ -595,7 +583,6 @@ impl Subcommand {
         self.additional_suggestions.push(s.kind(Kind::Shortcut));
         self
     }
-    /// Take the details from `<argv> --help` when this subcommand is entered.
     pub fn help_from(mut self, argv: &[&str]) -> Self {
         self.load_spec = Some(LoadSpec::Help(argv.iter().map(|s| s.to_string()).collect()));
         self
@@ -687,7 +674,6 @@ impl Generator {
         self.query_term = Some(chars.into());
         self
     }
-    /// The generator matches against the current token itself.
     pub fn unfiltered(mut self) -> Self {
         self.filter = false;
         self
@@ -958,7 +944,6 @@ pub fn from_value(v: &Value) -> Subcommand {
             .filter_map(suggestion)
             .collect(),
         load_spec: string(v, "loadSpec").map(LoadSpec::Name).or_else(|| {
-            // lig: take the details from `<argv> --help` when entered.
             let argv = names(v.get("loadHelp"));
             (!argv.is_empty()).then_some(LoadSpec::Help(argv))
         }),
@@ -990,7 +975,6 @@ fn arg_from(v: &Value) -> Arg {
         is_variadic: flag(v, "isVariadic"),
         options_can_break_variadic: v.get("optionsCanBreakVariadicArg").and_then(Value::as_bool).unwrap_or(true),
         is_command: flag(v, "isCommand"),
-        // lig: suggest command names without switching to their spec (`which`).
         command_names: flag(v, "commandNames"),
         suggestions: one_or_many(v.get("suggestions")).into_iter().filter_map(suggestion).collect(),
         template: templates(v.get("template"))
@@ -1067,7 +1051,6 @@ mod tests {
             t("\u{1}$.Buckets[*].Name\u{1}", Some("in \u{1}$.Buckets[*].Region\u{1} of \u{1}$.Owner.ID\u{1}"), false)
                 .suggestions(out);
         assert_eq!(names(r), [("a".into(), Some("in eu of me".into())), ("b".into(), Some("in us of me".into()))]);
-        // Arrays of strings, object keys/values, JSON lines.
         assert_eq!(
             names(t("\u{1}$.ids[*]\u{1}", None, false).suggestions(r#"{"ids":["x",2]}"#)),
             [("x".into(), None), ("2".into(), None)]

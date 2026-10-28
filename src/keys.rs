@@ -1,10 +1,5 @@
-//! Terminal input as keys, key names for the `[keys]` config, and the
-//! bindings between them.
-//!
-//! A key is a base key plus Ctrl/Alt/Shift. Names look like `ctrl-n`,
-//! `alt-shift-up`, `f5` or `ctrl-pagedown`; anything else a terminal sends can
-//! be bound by its escape sequence (`\x1b[…`). `lig keys` prints the name of
-//! each key you press.
+//! Terminal input as keys, key names for the `[keys]` config, and the bindings between them.
+//! Names look like `ctrl-n` or `alt-shift-up`; any other sequence is bound by its escape (`\x1b[…`).
 
 use std::io::{Read, Write};
 
@@ -55,9 +50,8 @@ impl Key {
         Key { code: Code::Char(c), ctrl: true, alt: false, shift: false }
     }
 
-    /// One spelling per key, so what the terminal sends and what the config
-    /// names compare equal: `ctrl-i` is Tab and `ctrl-A` is `ctrl-a` (that's
-    /// all most terminals can send), `shift-a` is `A`.
+    /// One spelling per key so terminal input and config names compare equal:
+    /// `ctrl-i` is Tab, `ctrl-A` is `ctrl-a`, `shift-a` is `A`.
     fn normalized(mut self) -> Key {
         if let Code::Char(c) = self.code {
             if self.ctrl {
@@ -83,7 +77,7 @@ impl Key {
         self
     }
 
-    /// The name [`Key::parse_name`] reads back (`ctrl-alt-x`, `shift-up`, `f5`).
+    /// The name [`Key::parse_name`] reads back.
     pub fn name(&self) -> String {
         let base = match &self.code {
             Code::Char(' ') => "space".to_string(),
@@ -363,7 +357,6 @@ fn utf8_len(s: &[u8]) -> usize {
     }
 }
 
-/// Position of `n` in `h`.
 fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
 }
@@ -405,14 +398,12 @@ impl Bindings {
         Bindings(v)
     }
 
-    /// The action bound to `key`, if any.
     pub fn action(&self, key: &Key) -> Option<Action> {
         self.0.iter().find(|(k, _)| k == key).map(|(_, a)| *a)
     }
 }
 
-/// `lig keys`: the name of each key you press and what it's bound to, to
-/// find what to write in the config. `q` or Ctrl-C quits.
+/// `lig keys`: prints each pressed key's name and binding; `q` or Ctrl-C quits.
 pub fn show(bindings: &Bindings) -> std::io::Result<()> {
     use nix::sys::termios::{SetArg, cfmakeraw, tcgetattr, tcsetattr};
     let stdin = std::io::stdin();
@@ -462,10 +453,8 @@ mod tests {
             keys(b"\x1b[1;5C\x1b[1;2A\x1b[6~\x1b[15~\x1bOP\x1b[3;3~\x1b\x18"),
             ["ctrl-right", "shift-up", "pagedown", "f5", "f1", "alt-delete", "ctrl-alt-x"]
         );
-        // Kitty's protocol and xterm's modifyOtherKeys.
         assert_eq!(keys(b"\x1b[9;5u\x1b[27;5;9~\x1b[97;7u\x1b[65;2u"), ["ctrl-tab", "ctrl-tab", "ctrl-alt-a", "A"]);
         assert_eq!(keys(b"\r\n\x1b[106;5u\x1b[109;5u"), ["enter", "ctrl-j", "ctrl-j", "enter"]);
-        // Unknown sequences keep their bytes.
         assert_eq!(keys(b"\x1b[99;3x"), ["\\x1b[99;3x"]);
     }
 

@@ -1,8 +1,5 @@
 //! lig: Fig-style autocomplete for zsh, bash, and fish, in any terminal.
-//!
-//! `lig shell` ([`session`]) runs the shell in a PTY and draws the popup;
-//! [`engine`] turns a command line into suggestions using the specs
-//! ([`spec`], [`specs`]), `--help` output ([`help`]) and generators.
+//! `lig shell` ([`session`]) runs the shell in a PTY and draws the popup; [`engine`] makes the suggestions.
 
 mod config;
 mod engine;
@@ -183,7 +180,6 @@ impl ShellKind {
         }
     }
 
-    /// The rc file lig is installed into.
     fn rc(self) -> PathBuf {
         match self {
             ShellKind::Fish => {
@@ -235,7 +231,6 @@ pub fn log(msg: &str) {
     }
 }
 
-/// This executable's path, for the shell scripts to run.
 fn exe() -> String {
     std::env::current_exe()
         .ok()
@@ -244,7 +239,6 @@ fn exe() -> String {
         .unwrap_or_else(|| "lig".into())
 }
 
-/// `lig init`: the integration script for `shell`.
 fn init_script(shell: ShellKind, part: Part) -> String {
     let (pre, post) = match shell {
         ShellKind::Fish => (PRE_FISH, POST_FISH),
@@ -267,7 +261,6 @@ const PRE_END: &str = "# <<< lig pre <<<";
 const POST_BEGIN: &str = "# >>> lig post >>>";
 const POST_END: &str = "# <<< lig post <<<";
 
-/// `text` without the lines from `begin` to `end` (inclusive).
 fn strip_block(text: &str, begin: &str, end: &str) -> String {
     let mut out = String::new();
     let mut skipping = false;
@@ -284,7 +277,7 @@ fn strip_block(text: &str, begin: &str, end: &str) -> String {
     out
 }
 
-/// Resolve fish's XDG configuration directory.
+/// A relative `$XDG_CONFIG_HOME` is ignored.
 fn fish_rc(xdg: Option<PathBuf>, home: PathBuf) -> PathBuf {
     xdg.filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config")).join("fish/config.fish")
 }
@@ -330,7 +323,7 @@ fn installed_text(shell: ShellKind, old: &str, bin: &str) -> Result<String> {
     ))
 }
 
-/// Add managed blocks and retain a backup of the existing file.
+/// Backs up the original rc file once, as `<rc>.lig-backup`.
 fn install_at(shell: ShellKind, rc: &Path, bin: &str) -> Result<()> {
     let old = match std::fs::read_to_string(rc) {
         Ok(s) => s,
@@ -366,7 +359,6 @@ fn uninstall(shell: ShellKind) -> Result<()> {
     Ok(())
 }
 
-/// Run a command, showing its errors; fail if it fails.
 fn run(cmd: &mut std::process::Command) -> Result<()> {
     let status = cmd.status().with_context(|| format!("running {:?}", cmd.get_program()))?;
     anyhow::ensure!(status.success(), "{:?} failed ({status})", cmd.get_program());
@@ -378,8 +370,7 @@ fn version_key(v: &str) -> Vec<u64> {
     v.trim_start_matches('v').split(['.', '-']).map_while(|p| p.parse().ok()).collect()
 }
 
-/// `lig update`: install the latest GitHub release over this binary. Uses
-/// the static (musl) build, which runs on any Linux; checks its sha256.
+/// Installs the static (musl) release build, which runs on any Linux, after checking its sha256.
 fn update(check: bool, force: bool) -> Result<()> {
     use std::process::Command;
     let current = env!("CARGO_PKG_VERSION");
@@ -458,7 +449,6 @@ fn update(check: bool, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// A new, empty folder inside `parent`.
 fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
     let dir = parent.join(format!(".lig-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -466,8 +456,7 @@ fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// The doctor line for the zellij mirror. `read` returns the lig shell's
-/// `/proc/<pid>/cmdline`, already polled for a while.
+/// `read` returns the lig shell's `/proc/<pid>/cmdline`, already polled.
 fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
     if !zellij {
         return "[off ] zellij mirror: not in zellij".into();
@@ -484,7 +473,6 @@ fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl
     }
 }
 
-/// Does a mirrored cmdline read `lig doctor` (argv[0] may be a full path)?
 fn shows_doctor(cmdline: &[u8]) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let mut args = cmdline.split(|&b| b == 0);
@@ -493,7 +481,7 @@ fn shows_doctor(cmdline: &[u8]) -> bool {
     lig && args.next() == Some(b"doctor")
 }
 
-/// Poll `/proc/<pid>/cmdline` every 100 ms for up to 1.5 s, until it shows `lig doctor`.
+/// Polls for up to 1.5 s, until the mirror shows `lig doctor`.
 fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
     let mut last = None;
     for _ in 0..15 {
@@ -550,7 +538,6 @@ fn doctor() -> Result<()> {
     Ok(())
 }
 
-/// `lig complete`: print what the popup would show for `line`.
 fn complete(line: &str, cwd: Option<PathBuf>, aliases: Vec<String>) -> Result<()> {
     let cwd = match cwd {
         Some(c) => c,
@@ -584,7 +571,6 @@ fn complete(line: &str, cwd: Option<PathBuf>, aliases: Vec<String>) -> Result<()
     Ok(())
 }
 
-/// `lig specs list`: every command with a spec, and where it comes from.
 fn list_specs() {
     let mut all: BTreeMap<String, &str> = BTreeMap::new();
     for c in specs::FIG.names() {
@@ -603,8 +589,6 @@ fn list_specs() {
     eprintln!("{} commands ({} lig + {} fig spec files embedded)", all.len(), specs::LIG.count(), specs::FIG.count());
 }
 
-/// `lig icons`: every icon in the current mode, with its name for `[icons]`
-/// and its Unicode fallback.
 fn list_icons() {
     icons::detect();
     let cfg = config::Config::load();
@@ -620,7 +604,6 @@ fn list_icons() {
     println!("\nChange any of them in the [icons] section of {}.", config::config_path().display());
 }
 
-/// `lig preview`: sample popups with the config, overridden by the flags.
 fn preview(args: PreviewArgs) {
     icons::detect();
     let cfg = config::Config::load();
@@ -667,9 +650,8 @@ fn default_shell() -> PathBuf {
 /// Bytes of padding the zellij re-exec appends to `lig shell`'s argv.
 const ARGV_PAD: usize = 4096;
 
-/// Should `lig shell` re-exec itself with a pad positional, so the zellij
-/// mirror has room for long command lines (see `mirror`)? Detection uses the
-/// positional, never an env var, so a nested lig does not inherit it.
+/// Re-exec `lig shell` with a pad positional so the zellij mirror has room for long
+/// command lines. Detected by the positional, not an env var, so a nested lig doesn't inherit it.
 fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let padded = args.iter().skip(2).any(|a| !a.is_empty() && a.as_bytes().iter().all(|&b| b == b' '));
@@ -692,8 +674,7 @@ fn main() -> Result<()> {
     match cli.cmd {
         Cmd::Shell { shell, login, pad } => {
             if pad.is_some() {
-                // Re-exec'd through /proc/self/exe, which names the process "exe"; restore
-                // "lig" for ps, htop, pgrep -x and killall. Main thread, before any other.
+                // The /proc/self/exe re-exec names the process "exe"; restore "lig" before spawning threads.
                 // SAFETY: PR_SET_NAME reads a NUL-terminated string of at most 16 bytes.
                 unsafe { libc::prctl(libc::PR_SET_NAME, c"lig".as_ptr()) };
             }
@@ -828,8 +809,6 @@ mod shell_tests {
         assert!(version_key("2.0.0-rc1") > version_key("1.9.9"));
     }
 
-    /// `specs/lig/lig.json` completes lig itself: every command and flag of
-    /// the CLI must be in it.
     #[test]
     fn lig_spec_matches_the_cli() {
         use clap::CommandFactory;
@@ -892,7 +871,6 @@ mod shell_tests {
         let body = "# user config\nset -g thing 'hello'\n\n";
         std::fs::write(&rc, body).unwrap();
         let backup = rc.with_file_name("config.fish.lig-backup");
-        // A backup from the first existing-file install must not be overwritten.
         let existing_backup = std::fs::read(&backup).unwrap();
         std::fs::set_permissions(&rc, std::fs::Permissions::from_mode(0o600)).unwrap();
         install_at(ShellKind::Fish, &rc, "/tmp/lig").unwrap();

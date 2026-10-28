@@ -2,8 +2,7 @@
 
 use crate::config::{Colors, Ui, sgr_color};
 
-/// A preset. Colors are a 0-255 palette index, `#rrggbb`, or `default`
-/// (the terminal's own color).
+/// A preset. Colors are a 0-255 palette index, `#rrggbb`, or `default` (the terminal's own).
 struct Palette {
     bg: &'static str,
     fg: &'static str,

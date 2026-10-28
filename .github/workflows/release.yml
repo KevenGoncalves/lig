@@ -1,12 +1,9 @@
-# Build Lig for Linux and publish a GitHub release when a version tag is pushed:
+# Pushing a version tag builds lig and publishes a GitHub release:
 #
 #   git tag -a v1.0.4 -m "1.0.4" && git push origin v1.0.4
 #
-# Each release gets the versioned archives with their checksums, and install.sh
-# (`curl -fsSL …/releases/latest/download/install.sh | sh`).
-#
-# glibc builds run on older Ubuntu, so they work on glibc 2.35+ (Ubuntu 22.04,
-# Debian 12, …); musl builds are static and run on any Linux.
+# Assets: glibc (2.35+) and static musl archives for x86_64/aarch64, their
+# checksums, and install.sh.
 name: Release
 
 on:
@@ -96,8 +93,7 @@ jobs:
         with:
           path: source
       - name: Add the install script, with this release's version
-        # Same name in every release, so releases/latest/download/install.sh
-        # always installs the latest one.
+        # Same name in every release, so releases/latest/download/install.sh works.
         run: sed "s/@VERSION@/${TAG#v}/" source/install.sh > dist/install.sh
       - name: Publish the release
         env:
@@ -106,8 +102,7 @@ jobs:
         run: |
           ls -l dist
           if gh release view "$TAG" >/dev/null 2>&1; then
-            # Re-run: the release keeps exactly the files of this build. Remove
-            # any other file (left by an older run), then replace the rest.
+            # Re-run: drop assets this build didn't produce, replace the rest.
             for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
               [ -e "dist/$asset" ] || gh release delete-asset "$TAG" "$asset" --yes
             done

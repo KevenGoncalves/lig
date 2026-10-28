@@ -231,7 +231,6 @@ class FishTests(unittest.TestCase):
         self.fish.send(b'\x1b[D' * 4)
         self.fish.insert('0;0;"café;🙂"\n')
         self.assertIn('B;14;echo "café;🙂"\ntail'.encode(), self.fish.snapshot())
-        # Delimiter bytes in the buffer cannot terminate OSC messages.
         self.fish.send(b'\x03')
         self.fish.insert('0;0;echo A\x07B\x1bC')
         self.assertIn(b'B;10;echo A B C', self.fish.snapshot())
@@ -265,7 +264,6 @@ end
             fish.close()
 
     def test_fish_started_inside_another_shell(self):
-        # `fish` typed in a zsh tab gets its own lig and completes as usual.
         zsh = os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh')
         if not zsh:
             self.skipTest('zsh is unavailable')
@@ -359,7 +357,7 @@ end
             fish.send(b'\r')
             buffer = fish.buffer()
             self.assertTrue(buffer.endswith(' tail'), buffer)
-            # Let fish itself parse the accepted arguments, without running cat.
+            # Let fish parse the arguments without running cat.
             parsed = subprocess.run([FISH, '--no-config', '-c', f'set -l args {buffer[4:]}; printf "%s\\n" $args'],
                                     env=fish.env, check=True, capture_output=True).stdout.decode().splitlines()
             self.assertEqual(parsed, [str(target), 'tail'])
@@ -376,8 +374,7 @@ end
             self.assertIn(b'checkout', plain)
             fish.send(b'\x1b')  # dismiss
             fish.send(b'\x00')  # manual toggle
-            # Tab selects; Enter accepts without execution. Print the reader buffer
-            # through a custom binding, avoiding reliance on rendered screen text.
+            # Tab selects; Enter accepts without running the command.
             fish.send(b'\t')
             fish.send(b'\r')
             self.assertEqual(fish.buffer(), 'git cherry-pick')

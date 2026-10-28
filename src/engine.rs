@@ -43,7 +43,6 @@ pub struct Completion {
     pub loading: Option<String>,
 }
 
-/// What the shell told us about its environment.
 #[derive(Debug, Clone, Default)]
 pub struct ShellEnv {
     pub cwd: PathBuf,
@@ -84,20 +83,16 @@ struct Cx<'a> {
     cands: Vec<Cand>,
     /// Generators and `--help` may run (second pass); otherwise only caches are used.
     run_generators: bool,
-    /// Something was skipped that the second pass would run.
     incomplete: bool,
-    /// What that is, for the "loading" message.
     loading: Option<String>,
     /// The popup was asked for (Ctrl+Space).
     manual: bool,
-    /// Offer `.` (the current folder) with paths: for option values and
-    /// subcommand arguments (`cargo install --path .`, `docker build .`), not
-    /// a command's own argument (`cd .`, or `cat .` picked by Enter).
+    /// Offer `.` with paths: for option values and subcommand arguments
+    /// (`cargo install --path .`), not a command's own argument (`cd .`).
     offer_dot: bool,
     /// The command whose arguments are being completed (`nvim` in `sudo nvim `).
     command: String,
-    /// The path argument has no generated values (branches, packages…): `.`,
-    /// Enter and Back may be offered without crowding them out (`git checkout`).
+    /// The argument has no generated values, so `.`, Enter and Back don't crowd them out.
     only_paths: bool,
 }
 
@@ -112,8 +107,7 @@ impl Cx<'_> {
         (self.cl.current.value.clone(), self.cl.current.raw.chars().count())
     }
 
-    /// Add a candidate matched against `query`; accepting it replaces the
-    /// last `delete` characters.
+    /// Add a candidate matched against `query`; accepting it replaces the last `delete` characters.
     fn push(&mut self, meta: &spec::Meta, kind: Kind, suffix: &str, query: &str, delete: usize) -> &mut Cand {
         let mut c = cand(meta, kind, suffix);
         c.query = query.to_string();
@@ -164,7 +158,6 @@ pub struct Engine {
     last_results: HashMap<String, Vec<SuggestionDef>>,
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
-    /// Commands that have a spec.
     spec_cmds: Option<Arc<HashSet<String>>>,
 }
 
@@ -187,14 +180,9 @@ impl Engine {
         }
     }
 
-    /// Complete `line` (the text left of the cursor). With
-    /// `run_generators == false` nothing is executed (only cached generator
-    /// and `--help` results are used) and `incomplete` tells whether running
-    /// them could add more.
-    ///
-    /// `manual` is set when the popup was asked for (Ctrl+Space): command
-    /// names and empty words are completed even when the config says not to
-    /// pop up for them automatically.
+    /// Complete `line` (the text left of the cursor). Without `run_generators` only
+    /// caches are used and `incomplete` tells whether running could add more.
+    /// `manual` (Ctrl+Space) completes command names and empty words regardless of config.
     pub fn complete(&mut self, line: &str, env: &ShellEnv, run_generators: bool, manual: bool) -> Completion {
         let mut cl = parser::parse(line);
         expand_aliases(&mut cl, env);
@@ -239,21 +227,15 @@ impl Engine {
 
     // ------------------------------------------------------------ walking
 
-    /// Follow the typed tokens through the spec (subcommands, options and
-    /// their arguments), then suggest what fits the word under the cursor.
+    /// Follow the typed tokens through the spec, then suggest what fits the word under the cursor.
     fn walk(&mut self, root: Arc<Subcommand>, cx: &mut Cx<'_>) {
         let tokens: Vec<Token> = cx.cl.tokens[1..].to_vec();
-        // The (sub)command the tokens have reached.
         let mut node = root;
-        // Options of parent commands that still apply.
         let mut persistent: Vec<Arc<Opt>> = vec![];
-        // Options already on the line.
         let mut used: Vec<Arc<Opt>> = vec![];
-        // The positional argument the next value fills.
         let mut arg_idx = 0usize;
         // A positional value was typed: no more subcommands.
         let mut saw_positional = false;
-        // After `--` everything is a positional value.
         let mut no_more_opts = false;
         // An option still waiting for its argument number `k`.
         let mut pending: Option<(Arc<Opt>, usize)> = None;
@@ -376,8 +358,7 @@ impl Engine {
                 self.arg_suggestions(a, cx, &q, d);
             }
         }
-        // Options are offered when nothing else is, and next to plain file
-        // arguments (`java ` → `-jar`, `-cp`, … then files).
+        // Options are offered when nothing else is, and next to plain file arguments (`java ` → `-jar`).
         let files_only = arg.as_ref().is_some_and(|a| {
             a.suggestions.is_empty()
                 && a.generators.is_empty()
@@ -503,8 +484,7 @@ impl Engine {
         let key = format!("{}\0{}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"), trigger_key);
         let ttl = g.cache_ttl.unwrap_or(Duration::from_millis(self.cfg.generator_cache_ms));
 
-        // Same generator and context, any trigger state: the last results,
-        // shown (filtered) while fresh ones are fetched.
+        // Same generator and context, any trigger state: shown while fresh results are fetched.
         let context = format!("{}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"));
         let defs = match self.gen_cache.get(&key) {
             Some((t, defs)) if t.elapsed() < ttl => defs.clone(),
@@ -550,7 +530,6 @@ impl Engine {
         }
     }
 
-    /// Files and folders for the word under the cursor.
     fn files(&mut self, cx: &mut Cx<'_>, folders_only: bool) {
         if folders_only && cx.only_paths {
             folder_navigation(cx);
@@ -687,14 +666,12 @@ impl Engine {
 
     /// Filter the candidates by what's typed, rank them and build the suggestions.
     fn finish(&self, cx: Cx<'_>) -> Vec<Suggestion> {
-        /// A candidate that matched.
         struct Scored {
             /// From [`match_tier`]: 0 exact, 1 prefix, 2 fuzzy.
             tier: u8,
             priority: f64,
             /// Index in `cx.cands` (spec order breaks ties).
             idx: usize,
-            /// The name to insert.
             name: String,
         }
 
@@ -781,8 +758,7 @@ impl Engine {
     }
 }
 
-/// For a folder argument: "Enter" (run the line) once a folder is complete
-/// (`cd src/`), then "Back" (one folder up), like Fig.
+/// For a folder argument: "Enter" once a folder is complete (`cd src/`), then "Back" (one folder up).
 fn folder_navigation(cx: &mut Cx<'_>) {
     // Not next to subcommands (`opencode [directory]`): they matter more.
     if cx.cands.iter().any(|c| c.kind == Kind::Subcommand) {
@@ -801,7 +777,6 @@ fn folder_navigation(cx: &mut Cx<'_>) {
         };
         cx.push(&meta, Kind::Execute, "", "", 0).unfiltered = true;
     }
-    // The same path one folder up (`../` from nothing).
     if (cur.value.is_empty() || cur.value.ends_with('/'))
         && !cx.cands.iter().any(|c| c.kind == Kind::Back)
         && let Some(up) = parent_path(&cur.raw)
@@ -819,7 +794,6 @@ fn folder_navigation(cx: &mut Cx<'_>) {
     }
 }
 
-/// The icon for what a generator produces (by its id).
 fn generator_icon(id: &str) -> Option<Icon> {
     let (ns, what) = id.split_once(':').unwrap_or((id, ""));
     Some(match (ns, what) {
@@ -869,7 +843,6 @@ fn parent_path(raw: &str) -> Option<String> {
     })
 }
 
-/// The message shown while a generator runs.
 fn loading_label(id: &str) -> String {
     match id {
         "online:npm" => "Searching npm",
@@ -1085,12 +1058,10 @@ mod tests {
         assert_eq!(r, vec![("--color".into(), "--color=".into(), 3)]);
         let r = labels(&mut e, &env, "tool --color=a");
         assert_eq!(r, vec![("always".into(), "always ".into(), 1), ("auto".into(), "auto ".into(), 1)]);
-        // Persistent option offered under a subcommand; generator output.
         let r = labels(&mut e, &env, "tool build -");
         assert!(r.iter().any(|x| x.0 == "-v, --verbose"));
         let r = labels(&mut e, &env, "tool -v build ");
         assert_eq!(r.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), ["alpha", "beta"]);
-        // insertValue with {cursor}.
         let c = e.complete("tool commit -", &env, true, false);
         assert_eq!((c.items[0].insert.as_str(), c.items[0].back), ("-m ''", 1));
     }
@@ -1107,7 +1078,6 @@ mod tests {
                 ("file.txt".into(), "file.txt ".into(), 0)
             ]
         );
-        // `.` for option values and subcommand arguments, not the command's own.
         assert_eq!(labels(&mut e, &env, "tool edit ")[0].0, ".");
         assert!(labels(&mut e, &env, "tool -o .").is_empty());
         e.insert_spec(cmd("view", "").arg(arg("file").files()));
@@ -1135,7 +1105,6 @@ mod tests {
         assert_eq!(r, vec![("hello".into(), "hello ".into(), 1)]);
         let r = labels(&mut e, &env, "mytool hi w");
         assert_eq!(r, vec![("world".into(), "world ".into(), 1)]);
-        // `tool run <command …>` switches to the other command's spec.
         let r = labels(&mut e, &env, "tool run mytool he");
         assert_eq!(r[0].0, "hello");
     }
@@ -1153,10 +1122,8 @@ mod tests {
     fn converted_and_merged_specs() {
         let (mut e, env) = engine();
         assert_eq!(labels(&mut e, &env, "brew ins")[0].0, "install");
-        // aws → loadSpec "aws/s3"; heroku → newest versioned spec.
         assert!(labels(&mut e, &env, "aws s3 ").iter().any(|r| r.0 == "cp"));
         assert!(!labels(&mut e, &env, "heroku ").is_empty());
-        // git: Rust spec merged with the converted one.
         let r = labels(&mut e, &env, "git rebase --");
         assert!(r.iter().any(|x| x.0 == "--autosquash"));
         assert!(r.iter().any(|x| x.0 == "--keep-base"), "{r:?}");
@@ -1171,22 +1138,17 @@ mod tests {
         ]));
         env.functions = Arc::new(vec!["toolfn".to_string()]);
         env.builtins = Arc::new(vec!["exit".to_string()]);
-        // Command names only when asked for (Ctrl+Space), also after `sudo`.
         assert!(labels(&mut e, &env, "exi").is_empty());
         assert_eq!(e.complete("exi", &env, true, true).items[0].label, "exit");
         assert!(labels(&mut e, &env, "sudo exi").is_empty());
         assert!(labels(&mut e, &env, "sudo -u root exi").is_empty());
         assert_eq!(e.complete("sudo exi", &env, true, true).items[0].label, "exit");
-        // An alias expands to its command (and its flags count as used).
         let r = labels(&mut e, &env, "t b");
         assert_eq!(r[0].0, "build");
         assert!(!labels(&mut e, &env, "t build -").iter().any(|x| x.0 == "-v, --verbose"));
-        // Self-referencing aliases don't loop.
         assert!(labels(&mut e, &env, "loop ").is_empty());
-        // Aliases and functions are command names.
         let r: Vec<String> = e.complete("t", &env, true, true).items.into_iter().map(|s| s.label).collect();
         assert!(r.iter().any(|x| x == "t") && r.iter().any(|x| x == "toolfn"));
-        // Options come before files for a plain file argument.
         let r = labels(&mut e, &env, "mytool hello ");
         assert_eq!(r[0].0, "world");
         let r = labels(&mut e, &env, "tool edit ");
@@ -1202,12 +1164,10 @@ mod tests {
         file_arg.template = vec![Template::Filepaths, Template::Folders];
         e.insert_spec(cmd("nvim", "").opts([opt("-R", "Read-only")]).arg(file_arg.clone()));
         e.insert_spec(cmd("java", "").opts([opt("-jar", "Run a jar")]).arg(file_arg));
-        // An editor: files and folders, then its options; no Back for a file argument.
         let r = labels(&mut e, &env, "nvim ");
         let kinds: Vec<&str> = r.iter().map(|x| x.0.as_str()).collect();
         assert_eq!(kinds, ["sub dir/", "file.txt", "-R"]);
         assert!(labels(&mut e, &env, "sudo nvim ").first().is_some_and(|x| x.0 == "sub dir/"));
-        // Other commands keep options first.
         assert_eq!(labels(&mut e, &env, "java ")[0].0, "-jar");
     }
 
@@ -1219,11 +1179,9 @@ mod tests {
         e.insert_spec(tool());
         let r = labels(&mut e, &env, "tool b");
         assert_eq!(r[0], ("build".into(), "build".into(), 1));
-        // Options neither; separators that belong to the value stay.
         assert_eq!(labels(&mut e, &env, "tool build --verb")[0].1, "--verbose");
         assert_eq!(labels(&mut e, &env, "tool --out")[0].1, "--output");
         assert_eq!(labels(&mut e, &env, "tool --c")[0].1, "--color=");
-        // Nothing to offer for a word that's fully typed, option or not.
         assert!(labels(&mut e, &env, "tool -o").is_empty());
         assert!(labels(&mut e, &env, "tool bench").is_empty());
         assert_eq!(labels(&mut e, &env, "tool -o su")[0].1, "sub\\ dir/");
@@ -1238,11 +1196,9 @@ mod tests {
         assert_eq!(c.items[0].kind, Kind::Execute);
         assert_eq!(c.items[0].label, "Enter");
         assert_eq!(c.items[0].description, "Run `go-to sub\\ dir/`");
-        // Then "Back", one folder up.
         assert_eq!((c.items[1].kind, c.items[1].insert.as_str(), c.items[1].delete), (Kind::Back, "", 9));
         let c = e.complete("go-to ", &env, true, false);
         assert_eq!((c.items[0].kind, c.items[0].insert.as_str()), (Kind::Back, "../"));
-        // Not before a directory is complete, and not for file arguments.
         assert!(e.complete("go-to su", &env, true, false).items.iter().all(|s| s.kind != Kind::Execute));
         assert!(e.complete("tool -o sub\\ dir/", &env, true, false).items.iter().all(|s| s.kind != Kind::Execute));
     }
@@ -1272,7 +1228,6 @@ mod tests {
     #[test]
     fn builtin_php() {
         let (mut e, env) = engine();
-        // The interpreter's options and the artisan subcommand.
         assert!(labels(&mut e, &env, "php --i").iter().any(|r| r.0 == "--ini"));
         assert!(labels(&mut e, &env, "php art").iter().any(|r| r.0 == "artisan"));
     }

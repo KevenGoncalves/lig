@@ -1,5 +1,4 @@
-//! Spec archives embedded by `build.rs`; specs are inflated one at a time on
-//! first use.
+//! Spec archives embedded by `build.rs`, inflated one spec at a time on first use.
 
 use std::collections::HashMap;
 use std::io::Read;

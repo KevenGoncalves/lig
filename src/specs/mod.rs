@@ -1,13 +1,6 @@
-//! Built-in completion specs, all JSON:
-//!
-//! * `specs/lig/`: hand-written, with native generators referenced by id
-//!   (`{"builtin": "git:branches"}`, see `gens.rs`).
-//! * `specs/fig/`: ~1500 converted from withfig/autocomplete.
-//!
-//! Where both have a command they are merged: the lig spec wins, the
-//! converted one fills in the options and subcommands it lacks. Commands
-//! with neither get a spec parsed from `--help` / man (`help.rs`); user
-//! JSON/TOML specs in `~/.config/lig/specs/` override everything.
+//! Built-in JSON specs: hand-written in `specs/lig/` (generators by id, see `gens.rs`) and
+//! ~1500 converted from withfig/autocomplete in `specs/fig/`. When both exist they are merged,
+//! the lig spec winning; user specs in `~/.config/lig/specs/` override both.
 
 pub mod archive;
 pub mod gens;
@@ -52,8 +45,7 @@ pub fn merge(base: &Subcommand, extra: &Subcommand) -> Subcommand {
     if out.args.is_empty() {
         out.args = extra.args.clone();
     } else {
-        // Same position: keep ours, add their values (e.g. Fig's list of
-        // popular pip packages next to our PyPI generator).
+        // Same position: keep ours, add their values (e.g. Fig's popular pip packages).
         for (i, ea) in extra.args.iter().enumerate().take(out.args.len()) {
             out.args[i] = std::sync::Arc::new(merge_arg(&out.args[i], ea));
         }
@@ -67,8 +59,7 @@ pub fn merge(base: &Subcommand, extra: &Subcommand) -> Subcommand {
     out
 }
 
-/// Merge two specs' argument at the same position: `base`'s, plus the
-/// suggestions and generators only `extra` has.
+/// `base`'s argument plus the suggestions and generators only `extra` has.
 fn merge_arg(base: &crate::spec::Arg, extra: &crate::spec::Arg) -> crate::spec::Arg {
     let mut out = base.clone();
     for s in &extra.suggestions {
@@ -76,8 +67,7 @@ fn merge_arg(base: &crate::spec::Arg, extra: &crate::spec::Arg) -> crate::spec::
             out.suggestions.push(s.clone());
         }
     }
-    // Our templates say exactly which paths fit (`cd`: folders only); theirs
-    // only count when we have none.
+    // Our templates are precise (`cd`: folders only); theirs only count when we have none.
     if out.template.is_empty() {
         out.template = extra.template.clone();
     }
@@ -102,7 +92,6 @@ mod tests {
         let install = m.find_subcommand("install").unwrap();
         assert_eq!(install.args[0].suggestions.len(), 2);
         assert_eq!(install.args[0].template.len(), 1);
-        // Folders only stays folders only.
         let cd = cmd("cd", "").arg(arg("dir").folders());
         let fig_cd = cmd("cd", "").arg(arg("dir").files());
         assert_eq!(super::merge(&cd, &fig_cd).args[0].template, [crate::spec::Template::Folders]);
@@ -110,8 +99,7 @@ mod tests {
         assert!(m.find_subcommand("freeze").is_some());
     }
 
-    /// Every hand-written spec loads, survives a JSON round trip unchanged
-    /// (no unknown or misspelled keys), and only uses generators that exist.
+    /// Specs round-trip through JSON unchanged (no unknown keys) and use only existing generators.
     #[test]
     fn lig_specs_are_valid() {
         let names: Vec<&str> = super::lig_names().collect();

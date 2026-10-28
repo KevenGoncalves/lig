@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""zellij mirror end-to-end tests: lig rewrites its own argv and cwd to mirror the
-foreground app. Run after cargo build --release: python3 tests/zellij_mirror.py."""
+"""lig mirrors the foreground app's argv/cwd for zellij. Run after cargo build --release: python3 tests/zellij_mirror.py."""
 import os
 import shutil
 import time
@@ -73,13 +72,11 @@ class ZellijMirror(unittest.TestCase):
 
     def test_single_pad(self):
         pid = self.start()
-        # No pad is under 4096 bytes, a double pad at least 8192.
         n = len(cmdline(pid))
         self.assertTrue(PAD <= n < 2 * PAD, n)
 
     def test_comm_is_lig(self):
-        # The re-exec goes through /proc/self/exe, which would name the process "exe";
-        # ps, htop, pgrep -x lig and killall lig rely on it staying "lig".
+        # Re-exec via /proc/self/exe would rename it "exe"; pgrep/killall need "lig".
         pid = self.start()
         wait_cmdline(pid, lambda a: a == [ZSH])
         with open(f'/proc/{pid}/comm') as f:
@@ -96,7 +93,6 @@ class ZellijMirror(unittest.TestCase):
         self.assertLess(len(cmdline(pid)), PAD)
 
     def test_no_mirror_untouched(self):
-        # The kill switch: in zellij, but LIG_NO_MIRROR=1 means no pad and no mirror.
         os.environ['LIG_NO_MIRROR'] = '1'
         pid = self.start()
         self.term.read(1.5)

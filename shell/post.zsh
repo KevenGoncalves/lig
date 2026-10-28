@@ -5,15 +5,12 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   _lig_report() {
     builtin emulate -L zsh
     local msg
-    # No popup while browsing history (Up/Down, history search, Ctrl-R, fzf)
-    # or while zsh's own completion is at work (Tab, menu selection, fzf-tab):
-    # those keys must keep going to zsh.
+    # No popup during history browsing or zsh's own completion: those keys stay with zsh.
     if (( ${ISEARCHMATCH_ACTIVE:-0} )) || [[ $KEYMAP == (vicmd|menuselect) ]] || [[ -n $PREBUFFER ]] \
         || [[ $LASTWIDGET == (*history*|*beginning-search*|up-line*|down-line*|*-search-*|*complete*|*expand*|menu-*) ]]; then
       msg=$'\e]6973;H\a'
     else
-      # Control characters are masked so they cannot terminate the OSC early;
-      # replacing keeps the character offsets (and so $CURSOR) valid.
+      # Mask control chars so they can't end the OSC; replacing keeps $CURSOR valid.
       msg=$'\e]6973;B;'"${CURSOR};${BUFFER//[$'\a\e']/ }"$'\a'
     fi
     [[ $msg == $_lig_last ]] && return
@@ -42,17 +39,15 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     LBUFFER+=$text
     (( back > 0 )) && (( CURSOR -= back ))
     _lig_last=
-    # zsh-autosuggestions: drop the stale suggestion and fetch one for the new buffer.
+    # zsh-autosuggestions: drop the stale suggestion and fetch a fresh one.
     unset POSTDISPLAY
     (( ${+functions[_zsh_autosuggest_fetch]} )) && _zsh_autosuggest_fetch
   }
-  # …and keep zsh-autosuggestions from wrapping the widget (its wrapper
-  # restores the old suggestion while the insert payload is being read).
+  # zsh-autosuggestions' widget wrapper would restore the old suggestion mid-read.
   typeset -ga ZSH_AUTOSUGGEST_IGNORE_WIDGETS
   ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_lig_insert)
 
-  # Generators run in the shell's directory with the shell's PATH. Aliases
-  # and function names are sent when they change (records split by \x1e).
+  # Generators need the shell's cwd and PATH; aliases/functions sent on change (split by \x1e).
   typeset -g _lig_aliases= _lig_functions= _lig_builtins_sent=
   _lig_precmd() {
     builtin emulate -L zsh

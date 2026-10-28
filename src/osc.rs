@@ -1,5 +1,4 @@
 //! Extracts lig's private OSC 6973 messages from the shell's output stream.
-//!
 //! The shell integration writes `ESC ] 6973 ; <kind> [; payload] BEL`:
 //!   `R[;<pid>]`            fish signal handler ready, reader active
 //!   `Q;<id>;<B;…|H>`       reply to a fish snapshot request
@@ -20,8 +19,7 @@ const MAX_PENDING: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Msg {
-    /// Fish has installed its signal handler and entered the reader; `pid`
-    /// is the fish process to signal.
+    /// Fish's signal handler is installed; `pid` is the fish process to signal.
     Ready {
         pid: Option<u32>,
     },
@@ -172,7 +170,6 @@ mod tests {
         f.feed(b"a\x1b[1mb\x1b]6973;B;3;git st\x07c\x1b]0;title\x07", &mut out, &mut msgs);
         assert_eq!(out, b"a\x1b[1mbc\x1b]0;title\x07");
         assert_eq!(msgs, vec![(6, Msg::Buffer { cursor: 3, text: "git st".into() })]);
-        // The position says where in the output the message was.
         let (mut out, mut msgs) = (vec![], vec![]);
         f.feed(b"$ \x1b]6973;S\x07ls", &mut out, &mut msgs);
         assert_eq!((out.as_slice(), msgs), (b"$ ls".as_slice(), vec![(2, Msg::PromptEnd)]));

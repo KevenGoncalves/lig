@@ -78,8 +78,7 @@ pub struct Ui {
     /// `default`, `catppuccin`, `nord`, `dracula`, `gruvbox`, `tokyonight`,
     /// `light` or `terminal` (your terminal's own colors).
     pub theme: String,
-    /// The `[colors]` section, kept here for drawing (see [`Config::load`]).
-    /// `[ui.colors]` is still read for older configs, but no longer written.
+    /// Legacy `[ui.colors]`; [`Config::load`] merges `[colors]` in here for drawing.
     #[serde(skip_serializing)]
     pub colors: Colors,
 }
@@ -93,8 +92,7 @@ pub enum Size {
 }
 
 impl Size {
-    /// The size in cells for a terminal dimension of `total`; `None` for
-    /// `"auto"` (or anything unrecognised).
+    /// Cells for a terminal dimension of `total`; `None` for `"auto"` or anything unrecognised.
     pub fn resolve(&self, total: u16) -> Option<u16> {
         match self {
             Size::Cells(n) => Some(*n),
@@ -145,7 +143,6 @@ pub struct Colors {
 }
 
 impl Colors {
-    /// These colors, with `older`'s where these are unset.
     fn or(self, older: Colors) -> Colors {
         Colors {
             bg: self.bg.or(older.bg),
@@ -181,10 +178,9 @@ pub struct Behavior {
     /// Also match suggestions by subsequence (`gco` → `git-checkout`).
     pub fuzzy: bool,
     /// When Enter picks the selected suggestion instead of running the line:
-    /// `"auto"` (unless the word typed is already complete: `git status`),
-    /// `"after-space"` (only when the line ends in a space), `"always"` or
-    /// `"never"`. A selection moved with Tab/arrows is always picked; the
-    /// Enter right after a pick runs the line.
+    /// `"auto"` (unless the typed word is already complete), `"after-space"` (only
+    /// after a space), `"always"` or `"never"`. A selection moved with Tab/arrows
+    /// is always picked; the Enter right after a pick runs the line.
     pub enter_accepts: String,
     /// Add a space after an accepted suggestion (`checkout ` vs `checkout`).
     pub insert_space: bool,
@@ -195,9 +191,8 @@ pub struct Behavior {
     pub files_first_commands: Vec<String>,
     /// Show suggestions right after a space (empty current token).
     pub show_on_empty_token: bool,
-    /// Pop up automatically for the first word (command names). Off by
-    /// default so short commands can be typed and run with one Enter; the
-    /// toggle key (Ctrl+Space) always shows them.
+    /// Pop up automatically for the first word (command names). Off by default so short
+    /// commands run with one Enter; the toggle key (Ctrl+Space) always shows them.
     pub complete_commands: bool,
     /// Search package registries while you type (npm, crates.io, Docker Hub,
     /// PyPI versions, Snap Store). What you type for the package name is sent
@@ -250,7 +245,6 @@ impl Default for Keys {
     }
 }
 
-/// The default `files_first_commands`.
 #[rustfmt::skip]
 const FILES_FIRST_COMMANDS: &[&str] = &[
     // Editors

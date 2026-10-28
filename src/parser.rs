@@ -1,8 +1,5 @@
-//! Shell command-line tokenizer.
-//!
-//! Splits the text left of the cursor into the tokens of the *last* simple
-//! command (everything after the final `|`, `&&`, `;`, `$(` …), keeping both
-//! the raw text (as typed, with quotes/escapes) and the unquoted value.
+//! Shell tokenizer: splits the text left of the cursor into the tokens of the last simple
+//! command (after the final `|`, `&&`, `;`, `$(` …), keeping both raw and unquoted text.
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Token {
@@ -25,7 +22,7 @@ pub struct CommandLine {
 }
 
 impl CommandLine {
-    /// All token values, including the current one, Fig style.
+    /// All token values, the current one last.
     pub fn values(&self) -> Vec<String> {
         self.tokens.iter().chain(std::iter::once(&self.current)).map(|t| t.value.clone()).collect()
     }

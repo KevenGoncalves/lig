@@ -3,9 +3,6 @@
 #
 #   curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
 #
-# Every release has its own copy of this script with its version filled in, so
-# the link above installs the latest release. Settings (environment variables):
-#
 #   LIG_INSTALL_DIR  where to put lig (default: ~/.local/bin)
 #   LIG_VERSION      install another release (e.g. 1.0.5)
 set -eu

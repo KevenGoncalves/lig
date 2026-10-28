@@ -1,6 +1,5 @@
 //! Shared `/proc/<pid>/stat` parsing.
 
-/// The contents of `/proc/<pid>/stat`.
 pub fn stat(pid: u32) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()
 }
@@ -22,7 +21,7 @@ mod tests {
         let f = stat_fields(t).unwrap();
         assert_eq!(f[0], "S");
         assert_eq!(f[2], "42");
-        assert_eq!(f[5], "42"); // pgrp, tpgid
+        assert_eq!(f[5], "42");
     }
 
     #[test]
@@ -32,8 +31,7 @@ mod tests {
 
     #[test]
     fn stat_matches_old_closure() {
-        // Oracle: foreign_program's closure as of 0909f22 (src/session.rs:365-371), copied verbatim
-        // but taking the text instead of reading the pid.
+        // `old` is the session.rs parser this module replaced.
         let old = |s: String| -> Option<(String, i64)> {
             let (head, rest) = s.rsplit_once(')')?;
             let comm = head.split_once('(')?.1.to_string();

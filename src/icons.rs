@@ -1,8 +1,6 @@
 //! Popup icons: Nerd Font glyphs when available, plain Unicode otherwise.
-//!
-//! `icons = "auto"` uses Nerd Font glyphs when a Nerd Font is installed
-//! (`fc-list`, checked once in the background); set `icons = "nerd"` when the
-//! terminal provides them some other way.
+//! `icons = "auto"` detects an installed Nerd Font via `fc-list` (once, in the background);
+//! `icons = "nerd"` forces them when the terminal provides the glyphs some other way.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
@@ -26,12 +24,10 @@ pub fn detect_in_background() {
     std::thread::spawn(detect);
 }
 
-/// Detect Nerd Font support now.
 pub fn detect() {
     NERD.store(if nerd_font_installed() { YES } else { NO }, Ordering::Relaxed);
 }
 
-/// Which glyph set to use for the configured `icons` style.
 pub fn use_nerd(style: &str) -> bool {
     match style {
         "nerd" => true,
@@ -47,7 +43,7 @@ type Overrides = HashMap<String, (Option<&'static str>, Option<&'static str>)>;
 
 static OVERRIDES: OnceLock<Overrides> = OnceLock::new();
 
-/// The name of a suggestion kind in `[icons]`.
+/// The `[icons]` key of a suggestion kind.
 fn kind_name(kind: Kind) -> &'static str {
     match kind {
         Kind::Command => "command",
@@ -82,8 +78,7 @@ fn normalize(key: &str) -> String {
     if k.contains('.') { k } else { k.replace('_', "-") }
 }
 
-/// Use the `[icons]` section of the config (call once, before drawing).
-/// Unknown names are reported; file names are taken as they are.
+/// Load `[icons]` (call once, before drawing). Unknown names are reported; file names are taken as is.
 pub fn set_overrides(icons: &BTreeMap<String, IconOverride>) {
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     let mut map = Overrides::new();
@@ -143,7 +138,6 @@ fn apply(
     (glyph, color)
 }
 
-/// The built-in `(glyph, SGR color)` for a suggestion.
 fn default_glyph(kind: Kind, icon: Option<Icon>, label: &str, nerd: bool) -> (&'static str, &'static str) {
     if nerd {
         if let Some(i) = icon {
@@ -383,11 +377,9 @@ mod tests {
         map.insert("dockerfile".into(), (Some("D"), Some("38;5;2")));
         map.insert("git-branch".into(), (Some("B"), None));
         let get = |kind, icon, label: &str| apply(&map, kind, icon, label, default_glyph(kind, icon, label, true));
-        // `*.rs` sets the glyph, `file` the color of every file.
         assert_eq!(get(Kind::File, None, "main.rs"), ("R", "38;5;1"));
         assert_eq!(get(Kind::File, None, "notes.md").1, "38;5;1");
         assert_eq!(get(Kind::File, None, "Dockerfile"), ("D", "38;5;2"));
-        // An icon name keeps the built-in color; untouched kinds stay built-in.
         assert_eq!(get(Kind::Arg, Some(Icon::GitBranch), "main"), ("B", "38;5;208"));
         assert_eq!(get(Kind::Option, None, "-v"), default_glyph(Kind::Option, None, "-v", true));
         assert_eq!(normalize("Git_Branch"), "git-branch");

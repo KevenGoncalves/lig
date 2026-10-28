@@ -1,5 +1,4 @@
-//! Drawing the suggestion popup into the terminal, and restoring what was
-//! underneath from the vt100 model of the screen.
+//! Draws the suggestion popup and restores what was underneath from the vt100 screen model.
 
 use std::io::Write;
 
@@ -17,8 +16,7 @@ pub struct Rect {
     pub width: u16,
 }
 
-/// Border characters: top-left, top-right, bottom-left, bottom-right,
-/// horizontal, vertical.
+/// Top-left, top-right, bottom-left, bottom-right, horizontal, vertical.
 type Border = [&'static str; 6];
 const ROUNDED: Border = ["╭", "╮", "╰", "╯", "─", "│"];
 const SQUARE: Border = ["┌", "┐", "└", "┘", "─", "│"];
@@ -32,9 +30,7 @@ struct Style {
     pad_v: u16,
     /// Between the name and description columns.
     gap: u16,
-    /// Spaces after the icon.
     icon_gap: u16,
-    /// Cap on the description column.
     desc_max: u16,
 }
 
@@ -51,7 +47,6 @@ fn style(ui: &Ui) -> Style {
     }
 }
 
-/// Where the popup goes and how wide its columns are.
 pub struct Layout {
     pub rect: Rect,
     style: Style,
@@ -64,7 +59,6 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Width of the border: 1, or 0 without one.
     fn border_w(&self) -> u16 {
         u16::from(self.style.border.is_some())
     }
@@ -85,8 +79,7 @@ impl Layout {
     }
 }
 
-/// Rows of a description frame with `lines` of text: a box, or (without a
-/// border) a separator line above the text.
+/// Rows of a description frame: a box, or (borderless) a separator line above the text.
 fn frame_height(lines: u16, border_w: u16) -> u16 {
     if lines == 0 { 0 } else { lines + if border_w == 1 { 2 } else { 1 } }
 }
@@ -135,7 +128,6 @@ fn frame_text(desc: &str, w: usize, n: usize) -> Vec<String> {
     if lines.len() > n {
         lines.truncate(n);
         if let Some(last) = lines.last_mut() {
-            // Mark the cut.
             *last = fit(&format!("{last} …"), w).trim_end().to_string();
             if !last.ends_with('…') {
                 *last = fit(&format!("{last}…"), w).trim_end().to_string();
@@ -169,8 +161,7 @@ fn fit(s: &str, w: usize) -> String {
     out
 }
 
-/// Rows below the cursor (besides the border) that are enough to keep the
-/// popup there.
+/// Rows below the cursor (besides the border) enough to keep the popup below.
 const MIN_BELOW: u16 = 4;
 /// Preferred text width of the bottom description frame.
 const BOTTOM_DESC_W: u16 = 56;
@@ -213,13 +204,11 @@ pub fn layout_at(
     let longest_desc = items.iter().map(|s| s.description.width()).max().unwrap_or(0) as u16;
     let desc_need = if ui.descriptions && !bottom { longest_desc.min(style.desc_max) } else { 0 };
 
-    // Width: fixed (`width = 60` / `"50%"`) or fit to the content within
-    // `min_width..=max_width`.
+    // Width: fixed, or fit to the content within `min_width..=max_width`.
     let smallest = (chrome_w + 4).min(cols);
     let max_w = ui.max_width.resolve(cols).unwrap_or(cols).clamp(smallest, cols);
     let mut content_w = chrome_w + name_need + if desc_need > 0 { style.gap + desc_need } else { 0 };
     if bottom {
-        // Room for the description frame to be readable.
         content_w = content_w.max(2 * b + style.pad_l + style.pad_r + longest_desc.min(BOTTOM_DESC_W));
     }
     let width = match ui.width.resolve(cols) {
@@ -227,8 +216,7 @@ pub fn layout_at(
         None => content_w.clamp(ui.min_width.min(max_w), max_w),
     }
     .clamp(smallest, cols);
-    // Space goes to the name first; the description gets the rest, or is
-    // dropped when it wouldn't be readable.
+    // The name gets space first; the description is dropped when it wouldn't be readable.
     let inner = width - chrome_w;
     let mut name_w = name_need.min(inner);
     let mut desc_w = 0;
@@ -238,8 +226,7 @@ pub fn layout_at(
         name_w = inner;
     }
 
-    // Height: rows of suggestions (or a share of the terminal, border
-    // included), at least `min_height`.
+    // A percent height includes the border; a row count doesn't.
     let chrome_h = 2 * (b + style.pad_v);
     let max_items = match ui.height.resolve(rows) {
         Some(h) if ui.height.is_percent() => h.saturating_sub(chrome_h),
@@ -257,8 +244,7 @@ pub fn layout_at(
     let want = (items.len() as u16).min(max_items).max(ui.min_height.min(max_items)) + chrome_h + frame_h;
     let below = rows.saturating_sub(crow + 1);
     let above = input_top.min(crow);
-    // Prefer below the cursor, shrinking (the list scrolls); only flip above
-    // when there's hardly any room below.
+    // Prefer below (shrinking, the list scrolls); flip above only when there's hardly any room.
     let (row, height) = if below >= want || below >= want.min(MIN_BELOW + chrome_h) || below >= above {
         (crow + 1, want.min(below))
     } else {
@@ -288,7 +274,6 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
     let h = l.visible();
     let mut lines = Vec::with_capacity(l.rect.height as usize);
 
-    // Scrollbar thumb.
     let (thumb_start, thumb_len) = if n > h {
         let len = (h * h).div_ceil(n).max(1);
         let start = (scroll * h) / n;
@@ -301,7 +286,6 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
     if let Some(bd) = st.border {
         lines.push(format!("{edge}{}{}{}\x1b[0m", bd[0], bd[4].repeat(w - 2), bd[1]));
     }
-    // A blank row inside the box (relaxed density).
     let blank = |t: &Theme| match st.border {
         Some(bd) => format!("{edge}{}\x1b[0;{}m{}{edge}{}\x1b[0m", bd[5], t.bg, " ".repeat(w - 2), bd[5]),
         None => format!("\x1b[0;{}m{}\x1b[0m", t.bg, " ".repeat(w)),
@@ -373,7 +357,6 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
         lines.push(blank(&t));
     }
     if let Some(bd) = st.border {
-        // Position counter in the bottom edge when the list scrolls.
         let counter = if n > h && selected < n { format!(" {}/{} ", selected + 1, n) } else { String::new() };
         let fill = w.saturating_sub(2 + counter.width() + usize::from(!counter.is_empty()));
         let tail =
@@ -386,7 +369,6 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
     lines
 }
 
-/// The bottom frame with the selected item's description.
 fn render_frame(t: &Theme, l: &Layout, item: Option<&Suggestion>) -> Vec<String> {
     let st = l.style;
     let w = l.rect.width as usize;
@@ -455,7 +437,6 @@ pub fn preview(ui: &Ui, cols: u16) -> String {
     out
 }
 
-/// Draw the popup at its place on screen.
 pub fn draw(out: &mut Vec<u8>, ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll: usize) {
     let r = l.rect;
     for (i, line) in render(ui, l, items, selected, scroll).iter().enumerate() {
@@ -525,11 +506,8 @@ mod tests {
     fn placement() {
         let ui = Ui::default();
         let at = |crow| layout(&ui, &items(20), (24, 80), (crow, 4), 0).unwrap().rect;
-        // Plenty of room: below, 8 rows + border.
         assert_eq!((at(2).row, at(2).height), (3, 10));
-        // Mid-screen with 7 rows left: stays below, shrinks.
         assert_eq!((at(16).row, at(16).height), (17, 7));
-        // Last line: above.
         assert_eq!((at(23).row, at(23).height), (13, 10));
         let ui = Ui { border: "none".into(), ..Ui::default() };
         let r = layout(&ui, &items(20), (24, 80), (2, 4), 0).unwrap().rect;
@@ -538,7 +516,6 @@ mod tests {
 
     #[test]
     fn above_a_wrapped_command() {
-        // Cursor on the last row, the command started two rows up.
         let ui = Ui::default();
         let r = layout_at(&ui, &items(20), (24, 80), (23, 4), 21, 0).unwrap().rect;
         assert_eq!(r.row + r.height, 21);
@@ -552,7 +529,6 @@ mod tests {
         let lines: Vec<String> = render(&ui, &l, &it, 2, 0).iter().map(|s| strip(s)).collect();
         assert!(lines[0].starts_with('╭') && lines[0].ends_with('╮'));
         assert!(lines[1].starts_with("│  item0") && lines[1].contains("description 0"));
-        // Relaxed: blank rows inside the border, wider gaps.
         let rui = Ui { icons: "none".into(), density: "relaxed".into(), ..Ui::default() };
         let rl = layout(&rui, &it, (24, 80), (2, 10), 0).unwrap();
         let relaxed: Vec<String> = render(&rui, &rl, &it, 0, 0).iter().map(|s| strip(s)).collect();
@@ -563,7 +539,6 @@ mod tests {
         for line in &lines {
             assert_eq!(line.width(), l.rect.width as usize, "{line:?}");
         }
-        // Compact, square, no border.
         for (border, density) in [
             ("square", "compact"),
             ("rounded", "relaxed"),
@@ -584,23 +559,19 @@ mod tests {
         use crate::config::Size;
         let it = items(20);
         let base = Ui { icons: "none".into(), ..Ui::default() };
-        // Fixed width, in columns or percent; the description takes the extra room.
         let ui = Ui { width: Size::Cells(70), ..base.clone() };
         let l = layout(&ui, &it, (24, 100), (2, 10), 0).unwrap();
         assert_eq!(l.rect.width, 70);
         assert!(render(&ui, &l, &it, 0, 0).iter().all(|r| strip(r).width() == 70));
         let ui = Ui { width: Size::Text("50%".into()), ..base.clone() };
         assert_eq!(layout(&ui, &it, (24, 120), (2, 10), 0).unwrap().rect.width, 60);
-        // Narrow fixed width: the description goes before the name shrinks.
         let ui = Ui { width: Size::Cells(20), ..base.clone() };
         let l = layout(&ui, &it, (24, 100), (2, 10), 0).unwrap();
         assert!(strip(&render(&ui, &l, &it, 0, 0)[1]).contains("item0") && l.desc_w == 0);
-        // Auto width respects min/max.
         let ui = Ui { min_width: 60, ..base.clone() };
         assert_eq!(layout(&ui, &it, (24, 100), (2, 10), 0).unwrap().rect.width, 60);
         let ui = Ui { max_width: Size::Text("25%".into()), ..base.clone() };
         assert_eq!(layout(&ui, &it, (24, 100), (2, 10), 0).unwrap().rect.width, 25);
-        // Height: rows, percent (border included), and padding with min_height.
         let ui = Ui { height: Size::Cells(4), ..base.clone() };
         assert_eq!(layout(&ui, &it, (40, 100), (2, 10), 0).unwrap().visible(), 4);
         let ui = Ui { height: Size::Text("50%".into()), ..base.clone() };
@@ -628,11 +599,9 @@ mod tests {
         for line in &lines {
             assert_eq!(line.width(), l.rect.width as usize, "{line:?}");
         }
-        // List box, then the description box with the selected item's text.
         assert!(lines[1].contains("item0") && !lines[1].contains("description"));
         assert!(lines[7].starts_with('╭') && lines[8].contains("Apply the changes"));
         assert!(lines.last().unwrap().starts_with('╰'));
-        // Borderless: a separator line instead of a box.
         let ui = Ui { border: "none".into(), ..ui };
         let l = layout(&ui, &it, (24, 100), (2, 10), 0).unwrap();
         let lines: Vec<String> = render(&ui, &l, &it, 0, 0).iter().map(|s| strip(s)).collect();

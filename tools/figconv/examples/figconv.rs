@@ -1,18 +1,7 @@
-//! figconv: convert the withfig/autocomplete specs into lig's JSON spec format.
-//!
-//! This is a development tool; lig itself contains no JavaScript engine.
-//! Input: the TypeScript sources compiled to self-contained IIFE bundles
-//! (see `tools/update-fig-specs.sh`). Each spec is evaluated once here, in
-//! QuickJS, and written out as static JSON:
-//!
-//! * functions are removed;
-//! * generators become `{"builtin": "<id>"}` when they run a command lig has a
-//!   native Rust generator for (git branches, docker containers, …),
-//!   `{"script": …}` when their post-processing is verified to be "one
-//!   suggestion per line", `{"template": …}` for file listings, and are
-//!   dropped otherwise;
-//! * descriptions are shortened to their first line;
-//! * versioned specs point at their newest version.
+//! Converts withfig/autocomplete specs (IIFE bundles, see `tools/update-fig-specs.sh`) to lig's
+//! static JSON by evaluating each once in QuickJS; lig itself has no JS engine. Functions are removed;
+//! generators become `builtin` (a native lig generator), `script` (output verified as one suggestion
+//! per line) or `template` (file listings), or are dropped.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -429,8 +418,7 @@ impl Conv<'_> {
         let post = o.get("postProcess").and_then(fn_id);
         let mut src = post.map(|p| js.source(p)).unwrap_or_default();
 
-        // `custom: async (tokens, executeShellCommand, context) => …`:
-        // run it against a recording executeShellCommand.
+        // `custom` generators: run against a recording `executeShellCommand`.
         if let Some(c) = o.get("custom").and_then(fn_id) {
             src.push_str(&js.source(c));
             let gctx = json!({"currentWorkingDirectory": "/home/user", "searchTerm": "", "environmentVariables": {}});
@@ -533,12 +521,18 @@ impl Conv<'_> {
 
 /// How a generator turns command output into suggestions.
 enum Shape {
-    /// One suggestion per line.
     Lines,
     /// Whitespace-separated column `field`, after `skip` header lines.
-    Field { skip: usize, field: usize },
+    Field {
+        skip: usize,
+        field: usize,
+    },
     /// Templates over the parsed JSON (see `json_shape`).
-    Json { name: String, description: Option<String>, lines: bool },
+    Json {
+        name: String,
+        description: Option<String>,
+        lines: bool,
+    },
 }
 
 /// Text produced by doing arithmetic/dates on the probe proxies.
@@ -596,7 +590,6 @@ fn infer(run: &dyn Fn(&str, bool) -> Option<Value>) -> Option<Shape> {
 
 const TAG: char = '\u{1}';
 
-/// The tagged paths in a template string.
 fn tag_paths(t: &str) -> Vec<&str> {
     t.split(TAG).skip(1).step_by(2).collect()
 }

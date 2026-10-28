@@ -1,30 +1,13 @@
 //! The zellij "mirror": lig rewrites its own argv and cwd to look like the
-//! foreground app on its inner PTY, so zellij restores the pane correctly.
+//! foreground app on its inner PTY. zellij's session resurrection reads the pane
+//! process's `/proc/<pid>/cmdline` and `cwd`, which would otherwise always be `lig shell`.
 //!
-//! Why: zellij 0.45 serializes a pane (session resurrection) from
-//! `/proc/<pane pid>/cmdline` and `/proc/<pane pid>/cwd`. Inside zellij lig is
-//! the pane process, so without this every pane would come back as `lig shell`
-//! in lig's startup directory, whatever ran in it.
+//! Once a second the argv area (fields 48/49 of `/proc/self/stat`) is rewritten;
+//! `main()` re-execs `lig shell` with a 4096-space pad to make room. The area's last
+//! byte must stay NUL, or the kernel reads on into the environment. zellij drops
+//! empty NUL-split segments, so the zero fill is invisible.
 //!
-//! How: a thread named `lig-mirror` ([`spawn`]) looks at the shell's
-//! foreground process group once a second, maps it through [`rules`] and writes
-//! the result over lig's argv area (fields 48/49 of `/proc/self/stat`), then
-//! `chdir`s to the app's cwd. `main()` re-execs `lig shell` once with a hidden
-//! 4096-space positional, so the area has room for long command lines.
-//!
-//! NUL rules:
-//! - The kernel returns the argv area up to `arg_end` only while the area's
-//!   last byte is NUL; otherwise it treats the area as `setproctitle` text and
-//!   reads on into the environment. So the last byte is never written.
-//! - zellij reads the cmdline through sysinfo, which splits it on NUL and drops
-//!   empty segments, so a NUL-joined, zero-filled layout reads back as exactly
-//!   those args.
-//!
-//! `std::env::args()` reads this same memory: it must not be called after
-//! [`spawn`] (clap has already parsed the args by then).
-//!
-//! Everything works on bytes (`OsString`); only `basename(argv[0])` is
-//! compared, and never through a lossy UTF-8 conversion.
+//! `std::env::args()` reads this same memory: never call it after [`spawn`].
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -34,10 +17,8 @@ use std::sync::Once;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// The mirror thread's name; its panics go to `crate::log`, not the pane.
 const THREAD: &str = "lig-mirror";
 
-/// Which rule produced a result; used for the log line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
     Shell,
@@ -56,8 +37,7 @@ const DENY: &[&[u8]] = &[
     b"chmod", b"chown", b"kill", b"pkill", b"killall", b"git",
 ];
 
-/// NUL-join `args`, zero-fill to `len`; `None` if it does not fit. The last
-/// byte is always NUL, so the result is never truncated.
+/// NUL-join `args` and zero-fill to `len` (the last byte is always NUL); `None` if it does not fit.
 pub fn layout(args: &[OsString], len: usize) -> Option<Vec<u8>> {
     let needed: usize = args.iter().map(|a| a.len() + 1).sum();
     if len == 0 || needed > len {
@@ -90,8 +70,7 @@ pub fn rules(argv: &[OsString]) -> (Option<Vec<OsString>>, Rule) {
     }
 }
 
-/// What the mirror last wrote: the full argv area layout and the cwd.
-/// `State::default()` matches nothing real, so the first tick always writes.
+/// What the mirror last wrote. The default matches nothing real, so the first tick always writes.
 #[derive(Default, PartialEq)]
 struct State {
     argv: Vec<u8>,
@@ -115,13 +94,11 @@ fn argv_area_from(stat_text: &str) -> Option<(usize, usize)> {
     (end > start).then_some((start, end))
 }
 
-/// This process's argv area.
 fn argv_area() -> Option<(usize, usize)> {
     argv_area_from(&crate::procfs::stat(std::process::id())?)
 }
 
-/// Write `bytes` over `area`: the new content first, then zero the old tail.
-/// The last byte stays as it is (NUL, see the module docs).
+/// Write `bytes` over `area` and zero the old tail; the last byte is never touched.
 fn write_area(area: &mut [u8], bytes: &[u8]) {
     let Some(last) = area.len().checked_sub(1) else {
         return;
@@ -132,22 +109,18 @@ fn write_area(area: &mut [u8], bytes: &[u8]) {
     area[content..last].fill(0);
 }
 
-/// Write `bytes` over this process's argv area.
-///
 /// # Safety
-/// `area` must be this process's own argv area as reported by
-/// `/proc/self/stat`, and only the mirror thread may call this.
+/// `area` must be this process's argv area from `/proc/self/stat`, and only
+/// the mirror thread may call this.
 unsafe fn apply(area: (usize, usize), bytes: &[u8]) {
-    // SAFETY: the caller guarantees `area` is our argv area: mapped, writable
-    // memory of `area.1 - area.0` bytes that lives as long as the process.
-    // Nothing else holds a reference to it: std only keeps raw pointers, and
-    // `std::env::args()` is never called after `spawn` (see the module docs).
+    // SAFETY: `area` is our argv area, writable for the process's lifetime. std keeps only
+    // raw pointers to it, and `std::env::args()` is never called after `spawn`.
     let buf = unsafe { std::slice::from_raw_parts_mut(area.0 as *mut u8, area.1 - area.0) };
     write_area(buf, bytes);
 }
 
-/// The decision for one tick. `None` keeps the previous state: the foreground
-/// process vanished or its cmdline was unreadable or empty (routine races).
+/// `None` keeps the previous state: the foreground process vanished or its
+/// cmdline was unreadable or empty (routine races).
 fn tick(
     prev: &State,
     fg_cmdline: std::io::Result<Vec<u8>>,
@@ -176,13 +149,11 @@ fn tick(
     Some((State { argv, cwd }, rule))
 }
 
-/// Run `f`, catching a panic; `false` if it panicked.
 fn guarded(f: impl FnOnce()) -> bool {
     catch_unwind(AssertUnwindSafe(f)).is_ok()
 }
 
-/// Route panics of the mirror thread to `crate::log`: stderr is the raw-mode
-/// pane. Every other thread keeps the previous hook.
+/// Send mirror-thread panics to `crate::log`: stderr is the raw-mode pane.
 fn install_panic_hook() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -197,7 +168,6 @@ fn install_panic_hook() {
     });
 }
 
-/// The argv for the log line: up to 80 bytes, NULs shown as spaces.
 fn display_argv(argv: &[u8]) -> String {
     let end = argv.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
     let shown: Vec<u8> = argv[..end.min(80)].iter().map(|&b| if b == 0 { b' ' } else { b }).collect();
@@ -211,8 +181,7 @@ fn foreground(shell_pid: u32) -> Option<u32> {
     u32::try_from(tpgid).ok().filter(|&p| p > 0)
 }
 
-/// One pass of the loop. `false` on an invariant break (the argv area moved
-/// or became unreadable).
+/// `false` if the argv area moved or became unreadable.
 fn step(shell_pid: u32, shell: &OsStr, area: (usize, usize), prev: &mut State) -> bool {
     if argv_area() != Some(area) {
         return false;
@@ -240,9 +209,8 @@ fn step(shell_pid: u32, shell: &OsStr, area: (usize, usize), prev: &mut State) -
     true
 }
 
-/// Move `prev` to `next`: `chdir` first, then `write_argv`, so zellij never
-/// sees the new argv with the old cwd. `prev.cwd` only follows a successful
-/// `chdir`, so a failed one is retried next tick. `true` if anything changed.
+/// `chdir` before `write_argv`, so zellij never sees the new argv with the old cwd.
+/// A failed `chdir` leaves `prev.cwd` alone, so it is retried. `true` if anything changed.
 fn commit(prev: &mut State, next: State, write_argv: impl FnOnce(&[u8]), chdir: impl FnOnce(&Path) -> bool) -> bool {
     let mut changed = false;
     if next.cwd != prev.cwd && chdir(&next.cwd) {
@@ -257,8 +225,7 @@ fn commit(prev: &mut State, next: State, write_argv: impl FnOnce(&[u8]), chdir: 
     changed
 }
 
-/// The mirror loop: on a panic or an invariant break it writes `[$SHELL]`
-/// once, logs once and returns.
+/// On a panic or invariant break, writes `[$SHELL]` once, logs and returns.
 fn run(shell_pid: u32, shell: &OsStr, area: (usize, usize)) {
     let mut prev = State::default();
     loop {
@@ -276,8 +243,7 @@ fn run(shell_pid: u32, shell: &OsStr, area: (usize, usize)) {
     }
 }
 
-/// Start the mirror thread for the shell `shell_pid`; `shell` is the `$SHELL`
-/// bytes a restored idle pane runs. `None` outside zellij, with
+/// `shell` is what a restored idle pane runs. `None` outside zellij, with
 /// `$LIG_NO_MIRROR` set, or when the argv area is unreadable.
 pub fn spawn(shell_pid: u32, shell: OsString) -> Option<JoinHandle<()>> {
     if std::env::var_os("ZELLIJ").is_none() || std::env::var_os("LIG_NO_MIRROR").is_some() {
@@ -345,7 +311,6 @@ mod tests {
             assert_eq!(rules(&os(&[x])), (None, Rule::Shell), "{x}");
         }
         assert_eq!(rules(&os(&["-sudo", "a"])), (None, Rule::Deny));
-        // Only one dash is stripped.
         assert_eq!(rules(&os(&["--zsh"])).1, Rule::App);
     }
 
@@ -357,7 +322,6 @@ mod tests {
 
     #[test]
     fn rules_resume_flags_pass_through() {
-        // Programs get no special treatment: their argv is mirrored as it is.
         for a in [os(&["agent"]), os(&["agent", "--resume", "abc"]), os(&["agent", "-c", "fix x"])] {
             assert_eq!(rules(&a), (Some(a.clone()), Rule::App));
         }
@@ -373,7 +337,6 @@ mod tests {
 
     #[test]
     fn argv_area_from_real_stat_layout() {
-        // 52 fields: pid, comm, then fields 3..=52; fields 48/49 are the argv area.
         let mut rest: Vec<String> = (3..=52).map(|n| n.to_string()).collect();
         rest[48 - 3] = "1000".into();
         rest[49 - 3] = "1100".into();
@@ -388,7 +351,6 @@ mod tests {
 
     #[test]
     fn write_area_keeps_last_nul() {
-        // 32, not 16: "nvim\0--clean\0README.md\0" alone is 22 bytes.
         let mut area = [0u8; 32];
         write_area(&mut area, &layout(&os(&["nvim", "--clean", "README.md"]), 32).unwrap());
         assert_eq!(&area[..23], b"nvim\0--clean\0README.md\0");
@@ -396,7 +358,6 @@ mod tests {
         write_area(&mut area, &layout(&os(&["/bin/zsh"]), 32).unwrap());
         assert_eq!(&area[..9], b"/bin/zsh\0");
         assert!(area[9..].iter().all(|&b| b == 0));
-        // The last byte is never touched, even by a layout that is not NUL there.
         let mut area = [0u8; 8];
         write_area(&mut area, b"abcdefgh");
         assert_eq!(&area, b"abcdefg\0");
@@ -434,7 +395,7 @@ mod tests {
 
     #[test]
     fn tick_exec_nvim_mirrors() {
-        // `exec nvim foo`: the shell pid itself is the foreground process.
+        // `exec nvim foo`: the shell pid itself is the foreground.
         let (s, rule) = tick(&State::default(), cmd(&["nvim", "foo"]), None, None, zsh(), 64).unwrap();
         assert_eq!(s.argv, layout(&os(&["nvim", "foo"]), 64).unwrap());
         assert_eq!(rule, Rule::App);
@@ -488,7 +449,6 @@ mod tests {
         assert!(commit(&mut prev, next, |_| (), |_| false));
         assert_eq!(prev.cwd, PathBuf::from("/old"), "a failed chdir is retried next tick");
         assert_eq!(prev.argv, b"nvim\0");
-        // Same argv, chdir still failing: nothing changed, nothing to log.
         let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/gone") };
         assert!(!commit(&mut prev, next, |_| panic!("argv unchanged"), |_| false));
     }

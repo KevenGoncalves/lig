@@ -31,8 +31,7 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
         printf '\e]6973;Q;%s;%s\a' "$request" "$msg" >/dev/tty
     end
 
-    # Fish 4.2 discards the unknown CSI used by bash/zsh, so reserve a recognized
-    # modified function key instead (ESC [24;8~).
+    # Fish 4.2 drops the unknown CSI bash/zsh use; reserve ctrl-alt-shift-f12 (ESC [24;8~).
     function __lig_bind --on-variable fish_key_bindings
         for mode in (bind --list-modes)
             bind --mode $mode ctrl-alt-shift-f12 __lig_insert
@@ -44,7 +43,7 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
         set -g __lig_editing 1
         printf '\e]6973;C;%s\a\e]6973;P;%s\a' (__lig_clean "$PWD") (__lig_clean (string join : -- $PATH)) >/dev/tty
         printf '\e]6973;N;%s\a\e]6973;K;%s\a' (string join \x1e -- (functions --names | string match -rv '^_')) (string join \x1e -- (builtin --names)) >/dev/tty
-        # Handler registration is complete before Rust is allowed to signal this process.
+        # Ready: handlers are registered, lig may now send USR1.
         printf '\e]6973;R;%s\a' $fish_pid >/dev/tty
     end
 

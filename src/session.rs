@@ -1,9 +1,5 @@
-//! `lig shell`: runs the shell inside a PTY, mirrors its screen with vt100,
-//! listens to the shell integration (`shell/`) and draws the suggestion popup.
-//!
-//! Threads read the keyboard, the shell's output and resizes into one event
-//! loop ([`Session`]); completion runs on a worker thread so typing never
-//! waits for it.
+//! `lig shell`: runs the shell in a PTY, mirrors its screen with vt100 and draws the suggestion popup.
+//! Input, output and resizes feed one event loop ([`Session`]); completion runs on a worker thread.
 
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
@@ -25,7 +21,7 @@ use crate::store::Store;
 
 /// Wait for output to settle this long before drawing.
 const DEBOUNCE: Duration = Duration::from_millis(4);
-/// …but never longer than this.
+/// Upper bound on the debounce wait.
 const MAX_DELAY: Duration = Duration::from_millis(40);
 /// How long Enter waits for suggestions that are still loading.
 const ENTER_WAIT: Duration = Duration::from_millis(1500);
@@ -37,9 +33,7 @@ const SNAPSHOT_ATTEMPTS: u8 = 3;
 const INSERT_KEY: &str = "\x1b[9147~";
 
 enum Event {
-    /// Keys from the user.
     Input(Vec<u8>),
-    /// Output from the shell.
     Output(Vec<u8>),
     Exit,
     Resize,
@@ -51,7 +45,6 @@ enum Event {
     },
 }
 
-/// A completion request for the worker.
 struct Request {
     line: String,
     env: ShellEnv,
@@ -145,7 +138,6 @@ impl Drop for RawMode {
     }
 }
 
-/// The shell that is talking to lig right now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ShellKind {
     Zsh,
@@ -307,7 +299,6 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     Ok(code)
 }
 
-/// Forward the user's keys (stdin) to the event loop.
 fn spawn_stdin_reader(tx: Sender<Event>) {
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -327,7 +318,6 @@ fn spawn_stdin_reader(tx: Sender<Event>) {
     });
 }
 
-/// Forward the shell's output to the event loop.
 fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>) {
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 64 * 1024];
@@ -347,7 +337,6 @@ fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>) {
     });
 }
 
-/// Report terminal resizes (SIGWINCH) to the event loop.
 fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
     let mut signals = signal_hook::iterator::Signals::new([libc::SIGWINCH])?;
     std::thread::spawn(move || {
@@ -360,13 +349,9 @@ fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
     Ok(())
 }
 
-/// Whether a program other than the shell uses the terminal while a line is
-/// being edited: a widget running fzf (Ctrl+T), a pager… These run in the
-/// shell's own process group (command substitution), so the terminal's
-/// foreground group can't tell. Look for a descendant of the shell that isn't
-/// a shell itself, is in its process group (background jobs have their own),
-/// and has the terminal open for more than stderr (prompt helpers like
-/// `$(git …)` only inherit that).
+/// Whether a non-shell program (fzf via Ctrl+T, a pager…) uses the terminal while a line is edited.
+/// Widgets run in the shell's process group, so the foreground group can't tell: look for a non-shell
+/// descendant in that group with the tty open beyond stderr (prompt helpers like `$(git …)` only have fd 2).
 fn foreign_program(shell: u32, tty: &Path) -> bool {
     let stat = |pid: u32| -> Option<(String, i64)> {
         let s = crate::procfs::stat(pid)?;
@@ -396,7 +381,6 @@ fn foreign_program(shell: u32, tty: &Path) -> bool {
     false
 }
 
-/// A process's children (`/proc/<pid>/task/*/children`).
 fn children(pid: u32) -> Vec<u32> {
     std::fs::read_dir(format!("/proc/{pid}/task"))
         .into_iter()
@@ -407,8 +391,7 @@ fn children(pid: u32) -> Vec<u32> {
         .collect()
 }
 
-/// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain
-/// character (arrows, Backspace, shortcuts…).
+/// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain character.
 fn push_typed(typed: &mut Option<String>, key: &Key) {
     match (&key.code, key.ctrl || key.alt) {
         (keys::Code::Char(c), false) => {
@@ -420,12 +403,9 @@ fn push_typed(typed: &mut Option<String>, key: &Key) {
     }
 }
 
-/// Whether Enter picks the selected suggestion (instead of running the line).
-///
-/// `"auto"`: pick, unless the word typed is already complete (equals a
-/// suggestion: `git status`); `"after-space"`: only when the line ends in a
-/// space; `"always"`; `"never"`. A selection moved with Tab/arrows is always
-/// picked, and the Enter right after a pick runs the line.
+/// Whether Enter picks the selected suggestion instead of running the line.
+/// `auto`: unless the word already equals a suggestion; `after-space`: only after a space.
+/// A navigated selection is always picked; the Enter right after a pick runs the line.
 fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, just_accepted: bool) -> bool {
     match mode {
         "never" => false,
@@ -437,8 +417,7 @@ fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, 
     }
 }
 
-/// Answer completion requests, newest first: quick results (no commands run)
-/// right away, then again once generators and `--help` have run.
+/// Answers the newest request: quick results (no commands run) first, then full ones.
 fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Behavior) {
     let mut engine = Engine::new(Store::default(), behavior);
     while let Ok(mut req) = rx.recv() {
@@ -532,8 +511,7 @@ struct Session {
     insert_file: PathBuf,
     /// Set by bash's prompt marker: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
-    /// The last key sent to the shell is one the shell itself acts on —
-    /// history (Up/Down) or its own completion (Tab): the lines it produces get
+    /// The last key went to the shell's history or completion (Up/Down/Tab): its lines get
     /// no popup, so those keys keep going to the shell. Typing ends it.
     shell_nav: bool,
     bindings: Bindings,
@@ -552,10 +530,8 @@ struct Session {
     line: String,
     env: ShellEnv,
     shell_pid: Option<u32>,
-    /// The PTY the shell runs on (`/dev/pts/N`).
     tty: Option<PathBuf>,
-    /// Another program uses the terminal while the line is edited (fzf's
-    /// Ctrl+T): no popup until it's gone. See [`foreign_program`].
+    /// Another program uses the terminal (see [`foreign_program`]): no popup until it's gone.
     foreign: bool,
     cwd_fallback: PathBuf,
     req_tx: Sender<Request>,
@@ -565,9 +541,8 @@ struct Session {
     /// The line `items` were computed for.
     items_line: String,
     selected: usize,
-    /// The first item shown (the list scrolls).
+    /// Index of the first visible item.
     scroll: usize,
-    /// The user moved the selection on the current line.
     navigated: bool,
     /// A suggestion was just accepted and nothing typed since: Enter runs.
     just_accepted: bool,
@@ -585,13 +560,11 @@ struct Session {
     pending_enter: Option<Instant>,
     /// That Enter and the input after it, replayed in order.
     deferred: Vec<u8>,
-    /// For an Enter typed right after other keys (one input chunk): the line
-    /// before them, and the line they make if they're plain characters. Enter
-    /// waits until the shell reports it (see [`Session::enter_ready`]).
+    /// Enter typed in the same chunk as other keys: the line before them, and the line they
+    /// make if plain characters. Enter waits for it (see [`Session::enter_ready`]).
     enter_after: Option<(String, Option<String>)>,
     /// The popup was closed for this line; it reopens when the line changes.
     dismissed: Option<String>,
-    /// Where the popup is drawn.
     drawn: Option<Rect>,
     /// A synchronized-output block is open (see `begin_sync`).
     sync_open: bool,
@@ -752,14 +725,12 @@ impl Session {
             if let Some(refresh) = &mut self.fish_refresh {
                 refresh.changed();
             }
-            // Take the popup off the screen before the shell draws, so the
-            // screen is exactly what the shell (and our vt100 model) expects.
+            // Erase the popup first so the screen matches what the shell and vt100 expect.
             self.erase(&mut w);
             w.extend_from_slice(&fwd);
         }
         self.write_out(&w);
-        // Each message sees the screen as it was where it appeared (bash's
-        // prompt marker records the cursor there).
+        // Each message sees the screen as of its position (bash's prompt marker reads the cursor).
         let mut at = 0;
         for (pos, m) in msgs {
             self.parser.process(&fwd[at..pos]);
@@ -784,7 +755,6 @@ impl Session {
         }
     }
 
-    /// The edit buffer reported by zsh or fish.
     fn on_buffer(&mut self, cursor: usize, text: &str) {
         crate::log(&format!("buffer cursor={cursor} characters={}", text.chars().count()));
         self.editing = true;
@@ -792,8 +762,7 @@ impl Session {
         self.set_line(text.chars().take(cursor).collect());
     }
 
-    /// Talk to `kind` from now on: the shell lig started may have been
-    /// replaced (`exec bash`, `exec fish`), and each one reports its line and
+    /// The shell may have been replaced (`exec fish`); each kind reports its line and
     /// takes completions its own way.
     fn switch_shell(&mut self, kind: ShellKind) {
         let fish = kind == ShellKind::Fish;
@@ -812,8 +781,6 @@ impl Session {
             if kind == ShellKind::Zsh { InsertionTransport::Inline } else { InsertionTransport::File };
     }
 
-    /// The text left of the cursor changed (reported by zsh, or read off the
-    /// screen for bash).
     fn set_line(&mut self, line: String) {
         if line != self.line {
             if std::mem::take(&mut self.close_after_insert) {
@@ -832,8 +799,7 @@ impl Session {
         }
     }
 
-    /// bash: the input is whatever is on screen between the prompt marker
-    /// and the cursor.
+    /// bash: the input is the screen text between the prompt marker and the cursor.
     fn read_line_from_screen(&mut self) {
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
@@ -929,8 +895,7 @@ impl Session {
             }
             Msg::Path(p) => self.env.path = Some(p),
             Msg::Cwd(c) => {
-                // Follow the inner shell so hosts that read our cwd from `/proc` see the shell's
-                // directory
+                // Follow the shell's cwd so hosts reading ours from `/proc` inherit it.
                 let _ = std::env::set_current_dir(&c);
                 self.env.cwd = PathBuf::from(c);
             }
@@ -955,7 +920,6 @@ impl Session {
         show.then_some(label.as_str())
     }
 
-    /// When to wake up to show the loading message.
     fn loading_wake(&self) -> Option<Instant> {
         let (line, _, since) = self.loading.as_ref()?;
         let at = *since + LOADING_DELAY;
@@ -976,9 +940,8 @@ impl Session {
                 .unwrap_or_else(|| self.cwd_fallback.clone());
         }
         let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual });
-        // Until the answer arrives this line counts as loading (the worker may
-        // still be busy with an earlier, slower request). The first word only
-        // pops up on demand, so it doesn't get a message.
+        // Loading until answered (the worker may be busy with an older request);
+        // the first word only pops up on demand, so it gets no message.
         let first_word = !self.line.trim_start().contains(char::is_whitespace);
         if !first_word || self.manual {
             if !self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line) {
@@ -994,8 +957,7 @@ impl Session {
         self.line.is_empty() || self.line.ends_with(char::is_whitespace)
     }
 
-    /// The word being typed already equals one of the suggestions (`git
-    /// status`, `--amend`): accepting it would change nothing.
+    /// The word being typed already equals a suggestion: accepting it would change nothing.
     fn word_complete(&self) -> bool {
         let chars: Vec<char> = self.line.chars().collect();
         self.items.iter().any(|s| {
@@ -1014,8 +976,7 @@ impl Session {
         )
     }
 
-    /// Replay a deferred Enter (and the keys after it) now that the
-    /// suggestions are final, or loading took too long.
+    /// Replay a deferred Enter and the keys after it, once suggestions are final or loading timed out.
     fn resolve_pending_enter(&mut self) {
         if self.pending_enter.take().is_none() {
             return;
@@ -1024,8 +985,7 @@ impl Session {
         self.loading = None;
         let data = std::mem::take(&mut self.deferred);
         if self.fish_stale() {
-            // The reader did not acknowledge in time. Preserve native Enter
-            // behavior rather than accepting a suggestion for an old buffer.
+            // Fish didn't acknowledge in time: send Enter as is rather than accept for an old buffer.
             self.write_pty(&data);
         } else {
             self.on_input(&data);
@@ -1055,8 +1015,7 @@ impl Session {
         let keep = self.items.get(self.selected).map(|s| s.label.clone());
         self.items = items;
         self.items_line = line;
-        // When slower results arrive for the same line, keep the selection
-        // only if the user moved it; otherwise start from the top again.
+        // Slower results for the same line keep the selection only if the user moved it.
         self.selected = if same_line && self.navigated {
             keep.and_then(|l| self.items.iter().position(|s| s.label == l)).unwrap_or(0)
         } else {
@@ -1080,19 +1039,16 @@ impl Session {
         let mut fwd: Vec<u8> = vec![];
         let mut redraw = false;
         let keys = keys::split(data);
-        // Once a key in this chunk has gone to the shell, the popup state is
-        // stale until the shell redraws: the rest of the chunk goes through as is
-        // (pastes, fast macros).
+        // Once a key has gone to the shell, popup state is stale until it redraws:
+        // the rest of the chunk goes through as is (pastes, fast macros).
         let mut passthrough = false;
-        // What the keys sent to the shell in this chunk type, if they're all
-        // plain characters.
+        // What this chunk's keys type, if they're all plain characters.
         let mut typed: Option<String> = Some(String::new());
         for (n, (raw, key)) in keys.iter().enumerate() {
             let (raw, key) = (*raw, key.clone());
             if passthrough {
-                // Enter right after keys this chunk sent (`mv a.txt Doc` and
-                // Enter typed fast): the line isn't updated yet. Hold Enter
-                // until the shell reports it and its suggestions are ready.
+                // Enter typed fast after other keys: the line isn't updated yet, so hold
+                // Enter until the shell reports it and its suggestions are ready.
                 if key == Key::ENTER && self.enter_can_wait() {
                     let expected = typed.take().map(|t| format!("{}{t}", self.line));
                     self.enter_after = Some((self.line.clone(), expected));
@@ -1120,7 +1076,6 @@ impl Session {
                 if key != Key::ENTER {
                     self.just_accepted = false;
                 }
-                // Keys the shell uses for history and its own completion.
                 self.shell_nav =
                     [Key::UP, Key::DOWN, Key::ctrl('p'), Key::ctrl('n'), Key::TAB, Key::SHIFT_TAB].contains(&key);
                 push_typed(&mut typed, &key);
@@ -1129,12 +1084,9 @@ impl Session {
                 continue;
             }
             let mut action = self.bindings.action(&key);
-            // Next with a single suggestion: nothing to cycle through, take it.
             if action == Some(Action::Next) && self.items.len() == 1 {
                 action = Some(Action::Accept);
             }
-            // Enter completes (`go bui` → build) or picks after a space, but
-            // runs a word that's already complete; the Enter after a pick runs.
             if action == Some(Action::Accept) && key == Key::ENTER && !self.enter_picks() {
                 action = None;
             }
@@ -1145,8 +1097,7 @@ impl Session {
                     redraw = true;
                 }
                 Some(Action::Prev) if self.selected == 0 => {
-                    // Up from the first item closes the popup (and the next Up
-                    // goes to the shell's history).
+                    // Up from the first item closes the popup; the next Up goes to shell history.
                     self.dismiss();
                     redraw = true;
                 }
@@ -1168,7 +1119,6 @@ impl Session {
                     redraw = true;
                 }
                 None => {
-                    // Not for the popup: the key goes to the shell.
                     if key == Key::ENTER {
                         self.dismissed = Some(self.line.clone());
                         redraw = true;
@@ -1205,8 +1155,7 @@ impl Session {
             && self.cfg.behavior.enter_accepts != "never"
     }
 
-    /// A held Enter may go on: the shell has reported the line typed before it
-    /// (or hides the popup).
+    /// A held Enter may go on: the shell reported the line typed before it, or hides the popup.
     fn enter_ready(&self) -> bool {
         match &self.enter_after {
             _ if self.hidden => true,
@@ -1216,8 +1165,7 @@ impl Session {
         }
     }
 
-    /// Enter while this line's suggestions are still loading waits for them
-    /// (briefly), so it acts on the final list, not a partial one.
+    /// Enter waits briefly for this line's loading suggestions, to act on the final list.
     fn enter_should_wait(&self) -> bool {
         self.pending_enter.is_none()
             && self.bindings.action(&Key::ENTER) == Some(Action::Accept)
@@ -1230,8 +1178,7 @@ impl Session {
                     && self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line)))
     }
 
-    /// The toggle key (Ctrl+Space): close the popup, or ask for suggestions
-    /// even where it doesn't open by itself (command names).
+    /// Close the popup, or ask for suggestions even where it doesn't open by itself (command names).
     fn toggle(&mut self) {
         if self.popup_open() {
             self.dismiss();
@@ -1250,17 +1197,14 @@ impl Session {
         self.manual = false;
     }
 
-    /// Send the selected suggestion to the shell, to edit the line with.
     fn accept_selected(&mut self, fwd: &mut Vec<u8>) {
         let s = &self.items[self.selected];
         if s.kind == Kind::Execute {
             // The "Enter" item: run the line.
             fwd.push(b'\r');
         } else {
-            // A completed word needs no popup until the next keystroke; after
-            // `--option ` or a folder (`src/`) the next suggestions show right
-            // away. Judged on the resulting line: Back from `Downloads/`
-            // inserts nothing and leaves `cd `, which keeps it open.
+            // Close after a completed word; stay open if the resulting line is empty or ends
+            // in a space or `/` (`--option `, `src/`), so the next suggestions show right away.
             let kept: String = {
                 let n = self.line.chars().count();
                 self.line.chars().take(n.saturating_sub(s.delete)).collect()
@@ -1316,8 +1260,7 @@ impl Session {
                 let n = self.line.chars().count();
                 self.line.chars().skip(n.saturating_sub(delete)).collect()
             };
-            // Where the command starts: wrapped rows above the cursor row
-            // belong to it too.
+            // Wrapped rows above the cursor belong to the command too.
             let (crow, _) = screen.cursor_position();
             let mut top = crow;
             while top > 0 && screen.row_wrapped(top - 1) {
@@ -1340,14 +1283,12 @@ impl Session {
         if fresh {
             self.stale_since = None;
         }
-        // The shell's new line (fish) or its suggestions are on their way: keep the popup that is
-        // up for a moment, rather than blink it off and on with each key. Keys still only act on
-        // current suggestions (`popup_open`).
+        // While the new line (fish) or its suggestions are on the way, keep the popup briefly
+        // instead of blinking. Keys still act only on current suggestions (`popup_open`).
         let keep = !fresh
             && self.shown.is_some()
             && self.drawable()
             && self.stale_since.get_or_insert_with(Instant::now).elapsed() < LOADING_DELAY;
-        // Either the suggestions, or a one-line "Searching…" message.
         let message = self.loading_message().filter(|_| !keep).map(|label| {
             // Placed like a suggestion for the word being typed.
             let word = self.line.chars().rev().take_while(|c| !c.is_whitespace()).count();
@@ -1406,8 +1347,7 @@ impl Session {
                 layout.as_ref().map(|l| l.rect)
             ));
         }
-        // What the user sees; it stays set across the brief erase/redraw
-        // around shell output.
+        // Stays set across the brief erase/redraw around shell output.
         self.shown = layout.as_ref().filter(|_| !is_message).map(|l| l.rect);
         match (&layout, self.drawn) {
             (Some(l), Some(old)) if l.rect == old => {}
@@ -1512,15 +1452,12 @@ mod tests {
 
     #[test]
     fn enter_rule() {
-        // (word_empty, complete, navigated, just_accepted)
-        // `z ` → pick; `go bui` → complete it; `git status` → run.
+        // Args: (mode, word_empty, complete, navigated, just_accepted).
         assert!(enter_accepts("auto", true, false, false, false));
         assert!(enter_accepts("auto", false, false, false, false));
         assert!(!enter_accepts("auto", false, true, false, false));
-        // Enter, Enter: pick, then run. Tab to an item, then Enter: picked.
         assert!(!enter_accepts("auto", true, false, false, true));
         assert!(enter_accepts("auto", false, true, true, false));
-        // Other modes.
         assert!(!enter_accepts("after-space", false, false, false, false));
         assert!(enter_accepts("always", false, true, false, false));
         assert!(!enter_accepts("never", true, false, true, false));

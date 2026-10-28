@@ -1,13 +1,7 @@
-//! Packs the spec folders into archives embedded in the binary:
-//!
-//! * `specs/lig/` (hand-written) → `lig_specs.bin`
-//! * `specs/fig/` (converted from withfig/autocomplete) → `fig_specs.bin`
-//!
-//! ```text
-//! "LIGSPEC1" | u32 count | count × (u16 name_len, name, u32 offset, u32 len) | deflate blobs…
-//! ```
-//!
-//! Each spec is compressed on its own, so lig only inflates the ones you use.
+//! Packs `specs/lig/` and `specs/fig/` into `lig_specs.bin` / `fig_specs.bin`, embedded in the binary.
+//! Format (little-endian):
+//! `"LIGSPEC1" | u32 count | count × (u16 name_len, name, u32 offset, u32 len) | deflate blobs`.
+//! Each spec is deflated separately so lig only inflates the ones it uses.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

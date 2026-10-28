@@ -208,7 +208,6 @@ pub fn compose_services() -> Generator {
 
 // ---------------------------------------------------------------- files in the project
 
-/// Walk up from `cwd` to find `name`.
 pub fn find_up(cwd: &Path, name: &str) -> Option<PathBuf> {
     cwd.ancestors().map(|d| d.join(name)).find(|p| p.is_file())
 }
@@ -251,8 +250,7 @@ pub fn npm_deps() -> Generator {
     })
 }
 
-/// Cargo targets of a kind (`bin`, `example`, `test`, `bench`) from the
-/// conventional directories and `[[bin]]`-style tables.
+/// Cargo targets of a kind (`bin`, `example`, …) from conventional dirs and `[[bin]]` tables.
 pub fn cargo_targets(kind: &'static str) -> Generator {
     gen_fn(&format!("cargo:{kind}"), move |cx| {
         let Some(manifest) = find_up(cx.cwd, "Cargo.toml") else { return vec![] };
@@ -557,7 +555,7 @@ pub fn rustup_list(id: &'static str, what: &'static str, installed: bool) -> Gen
 
 // ---------------------------------------------------------------- asdf
 
-/// The plugin the line is about: `asdf install nodejs …`, `asdf list all nodejs …`.
+/// The plugin named on the line (`asdf list all nodejs …`).
 fn asdf_plugin(cx: &GenCtx) -> Option<String> {
     cx.positionals().into_iter().skip(1).find(|p| *p != "all").map(str::to_string)
 }
@@ -632,9 +630,8 @@ pub fn asdf_shims() -> Generator {
 
 // ---------------------------------------------------------------- php
 
-/// Laravel Artisan commands of the project, with their descriptions.
-/// `php artisan --help` only describes `list`, so the commands come from
-/// `list --format=json` (Symfony's descriptor), falling back to `--raw`.
+/// Laravel Artisan commands. `artisan --help` only describes `list`, so these
+/// come from `list --format=json`, falling back to `--raw`.
 pub fn artisan_commands() -> Generator {
     gen_fn("php:artisan-commands", |cx| {
         let mut out: Vec<SuggestionDef> = cx
@@ -738,8 +735,7 @@ pub fn dnf_installed() -> Generator {
     .ttl(30_000)
 }
 
-/// Packages in the enabled repositories. Read from dnf's metadata cache
-/// (`-C`: nothing is downloaded while typing) and kept for a few hours.
+/// Packages in the enabled repos, from dnf's metadata cache (`-C`: no downloads while typing).
 pub fn dnf_available() -> Generator {
     gen_fn("dnf:available", |cx| {
         let argv = ["dnf", "-q", "-C", "repoquery", "--available", "--qf", "%{name}\\n"];
@@ -1106,8 +1102,7 @@ fn home_abbrev(p: &str) -> String {
     }
 }
 
-/// Directories from zoxide (or rupa/z's `~/.z`), ranked and matched by the
-/// tool itself using every keyword typed so far.
+/// Directories from zoxide (or rupa/z's `~/.z`), matched on every keyword typed.
 pub fn zoxide_dirs() -> Generator {
     gen_fn("zoxide:dirs", |cx| {
         let words: Vec<&str> =
@@ -1142,9 +1137,7 @@ pub fn zoxide_dirs() -> Generator {
 }
 
 // ---------------------------------------------------------------- online registries
-//
-// Like Fig's, these search the package registry as you type (via `curl`),
-// with ids starting with `online:` so `behavior.online = false` turns them off.
+// Ids start with `online:` so `behavior.online = false` turns them off.
 
 fn urlencode(s: &str) -> String {
     s.bytes()
@@ -1244,8 +1237,7 @@ pub fn npm_registry() -> Generator {
             list.extend(versions);
             return version_suggestions(name, "@", typed, list);
         }
-        // npms.io completes prefixes by popularity (`reac` → react) but its
-        // version numbers are stale, so only names and descriptions are used.
+        // npms.io ranks prefixes by popularity but its versions are stale: names only.
         let url = format!("https://api.npms.io/v2/search/suggestions?q={}&size=25", urlencode(q));
         if let Some(serde_json::Value::Array(list)) = http_json(cx, &url, None)
             && !list.is_empty()
@@ -1296,8 +1288,7 @@ pub fn crates_io() -> Generator {
             sort_versions(&mut list);
             return version_suggestions(name, "@", typed, list);
         }
-        // Relevance finds the exact name; downloads finds the popular ones
-        // (`ser` → serde, serde_json).
+        // Relevance finds the exact name, downloads the popular ones (`ser` → serde).
         let mut out: Vec<(u64, SuggestionDef)> = vec![];
         for sort in ["relevance", "downloads"] {
             let url = format!("https://crates.io/api/v1/crates?q={}&per_page=25&sort={sort}", urlencode(q));
@@ -1346,7 +1337,6 @@ pub fn docker_hub() -> Generator {
         let url = format!("https://hub.docker.com/v2/search/repositories/?query={}&page_size=25", urlencode(q));
         let Some(v) = http_json(cx, &url, None) else { return vec![] };
         let mut repos: Vec<&serde_json::Value> = v["results"].as_array().into_iter().flatten().collect();
-        // Official images first, then by stars.
         repos.sort_by_key(|r| (r["is_official"] != true, std::cmp::Reverse(r["star_count"].as_u64().unwrap_or(0))));
         let list = repos.into_iter().filter_map(|r| {
             let official = if r["is_official"] == true { "official, " } else { "" };
@@ -1361,8 +1351,7 @@ pub fn docker_hub() -> Generator {
     .ttl(30 * 60_000)
 }
 
-/// Download `url` into `~/.cache/lig/<file>`, reusing it for `max_age`
-/// (and, when offline, however old it is).
+/// Download `url` into `~/.cache/lig/<file>`, reused for `max_age` (indefinitely when offline).
 fn cached_download(cx: &GenCtx, url: &str, file: &str, max_age: std::time::Duration) -> Option<String> {
     let path = dirs::cache_dir()?.join("lig").join(file);
     let fresh = std::fs::metadata(&path)
@@ -1390,8 +1379,7 @@ fn human_count(n: u64) -> String {
     }
 }
 
-/// The 15,000 most downloaded PyPI packages (hugovk/top-pypi-packages,
-/// refreshed weekly), since PyPI itself can't be searched.
+/// The 15,000 most downloaded PyPI packages, since PyPI itself can't be searched.
 pub fn pypi_top() -> Generator {
     gen_fn("online:pypi-top", |cx| {
         if cx.current().contains("==") {
@@ -1420,7 +1408,7 @@ pub fn pypi_top() -> Generator {
     .ttl(24 * 3_600_000)
 }
 
-/// PyPI has no search API; this offers versions after `name==`.
+/// PyPI versions after `name==`.
 pub fn pypi_versions() -> Generator {
     gen_fn("online:pypi", |cx| {
         let Some((name, typed)) = cx.current().split_once("==") else { return vec![] };
@@ -1444,7 +1432,7 @@ pub fn pypi_versions() -> Generator {
     .ttl(30 * 60_000)
 }
 
-/// `snap find`: the Snap Store, searched as you type.
+/// Snap Store search (`snap find`).
 pub fn snap_store() -> Generator {
     gen_fn("online:snap", |cx| {
         let q = cx.current();
@@ -1509,8 +1497,7 @@ mod online_tests {
 
 // ---------------------------------------------------------------- extrepo
 
-/// Run a command and cache its stdout in `~/.cache/lig/<file>` for `max_age`
-/// (falling back to the stale copy when it fails).
+/// A command's stdout, cached in `~/.cache/lig/<file>` for `max_age` (stale copy on failure).
 fn cached_output(cx: &GenCtx, argv: &[&str], file: &str, max_age: std::time::Duration) -> Option<String> {
     let path = dirs::cache_dir()?.join("lig").join(file);
     let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
