@@ -1268,4 +1268,12 @@ mod tests {
         let r = labels(&mut e, &env, "sudo git commit --am");
         assert_eq!(r[0].0, "--amend");
     }
+
+    #[test]
+    fn builtin_php() {
+        let (mut e, env) = engine();
+        // The interpreter's options and the artisan subcommand.
+        assert!(labels(&mut e, &env, "php --i").iter().any(|r| r.0 == "--ini"));
+        assert!(labels(&mut e, &env, "php art").iter().any(|r| r.0 == "artisan"));
+    }
 }

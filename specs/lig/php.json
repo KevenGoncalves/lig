@@ -1,0 +1,422 @@
+{
+  "name": "php",
+  "description": "Run the PHP interpreter",
+  "options": [
+    {
+      "name": "-a",
+      "description": "Run as interactive shell (requires readline extension)"
+    },
+    {
+      "name": "-c",
+      "description": "Look for php.ini file in this directory",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-n",
+      "description": "No configuration (ini) files will be used"
+    },
+    {
+      "name": "-d",
+      "description": "Define INI entry with a value (foo=bar)",
+      "args": {
+        "name": "key=value"
+      },
+      "isRepeatable": true
+    },
+    {
+      "name": "-e",
+      "description": "Generate extended information for debugger/profiler"
+    },
+    {
+      "name": "-f",
+      "description": "Parse and execute a file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": [
+        "-h",
+        "--help"
+      ],
+      "description": "This help"
+    },
+    {
+      "name": "-i",
+      "description": "PHP information"
+    },
+    {
+      "name": "-l",
+      "description": "Syntax check only (lint)"
+    },
+    {
+      "name": "-m",
+      "description": "Show compiled in modules"
+    },
+    {
+      "name": "-r",
+      "description": "Run PHP code without using script tags <?..?>",
+      "args": {
+        "name": "code"
+      }
+    },
+    {
+      "name": "-B",
+      "description": "Run PHP code before processing input lines",
+      "args": {
+        "name": "code"
+      }
+    },
+    {
+      "name": "-R",
+      "description": "Run PHP code for every input line",
+      "args": {
+        "name": "code"
+      }
+    },
+    {
+      "name": "-F",
+      "description": "Parse and execute a file for every input line",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-E",
+      "description": "Run PHP code after processing all input lines",
+      "args": {
+        "name": "code"
+      }
+    },
+    {
+      "name": "-H",
+      "description": "Hide any passed arguments from external tools"
+    },
+    {
+      "name": "-S",
+      "description": "Run with built-in web server",
+      "args": {
+        "name": "addr:port"
+      }
+    },
+    {
+      "name": "-t",
+      "description": "Document root for the built-in web server",
+      "args": {
+        "name": "docroot",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "-s",
+      "description": "Output HTML syntax highlighted source"
+    },
+    {
+      "name": [
+        "-v",
+        "--version"
+      ],
+      "description": "Version number"
+    },
+    {
+      "name": "-w",
+      "description": "Output source with stripped comments and whitespace"
+    },
+    {
+      "name": "-z",
+      "description": "Load Zend extension",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "--ini",
+      "description": "Show configuration file names"
+    },
+    {
+      "name": "--rf",
+      "description": "Show information about function",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--rc",
+      "description": "Show information about class",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--re",
+      "description": "Show information about extension",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--rz",
+      "description": "Show information about Zend extension",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--ri",
+      "description": "Show configuration for extension",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "subcommands": [
+    {
+      "name": "artisan",
+      "description": "Laravel Artisan",
+      "options": [
+        {
+          "name": [
+            "-n",
+            "--no-interaction"
+          ],
+          "description": "Do not ask any interactive question",
+          "isPersistent": true
+        },
+        {
+          "name": [
+            "-q",
+            "--quiet"
+          ],
+          "description": "Do not output any message",
+          "isPersistent": true
+        },
+        {
+          "name": [
+            "-v",
+            "--verbose"
+          ],
+          "description": "Increase the verbosity of messages (-v, -vv, -vvv)",
+          "isPersistent": true
+        },
+        {
+          "name": "--env",
+          "description": "The environment the command should run under",
+          "args": {
+            "name": "env"
+          },
+          "isPersistent": true
+        },
+        {
+          "name": "--no-ansi",
+          "description": "Disable ANSI output",
+          "isPersistent": true
+        }
+      ],
+      "subcommands": [
+        {
+          "name": "about",
+          "description": "Display basic information about your application",
+          "loadHelp": ["php", "artisan", "about"]
+        },
+        {
+          "name": "serve",
+          "description": "Serve the application on the PHP development server",
+          "loadHelp": ["php", "artisan", "serve"]
+        },
+        {
+          "name": "tinker",
+          "description": "Interact with your application in a shell",
+          "loadHelp": ["php", "artisan", "tinker"]
+        },
+        {
+          "name": "test",
+          "description": "Run the application tests",
+          "loadHelp": ["php", "artisan", "test"]
+        },
+        {
+          "name": "migrate",
+          "description": "Run the database migrations",
+          "loadHelp": ["php", "artisan", "migrate"]
+        },
+        {
+          "name": "migrate:fresh",
+          "description": "Drop all tables and re-run all migrations",
+          "loadHelp": ["php", "artisan", "migrate:fresh"]
+        },
+        {
+          "name": "migrate:rollback",
+          "description": "Rollback the last database migration",
+          "loadHelp": ["php", "artisan", "migrate:rollback"]
+        },
+        {
+          "name": "migrate:status",
+          "description": "Show the status of each migration",
+          "loadHelp": ["php", "artisan", "migrate:status"]
+        },
+        {
+          "name": "db:seed",
+          "description": "Seed the database with records",
+          "loadHelp": ["php", "artisan", "db:seed"]
+        },
+        {
+          "name": "db:wipe",
+          "description": "Drop all tables, views, and types",
+          "loadHelp": ["php", "artisan", "db:wipe"]
+        },
+        {
+          "name": "route:list",
+          "description": "List all registered routes",
+          "loadHelp": ["php", "artisan", "route:list"]
+        },
+        {
+          "name": "make:model",
+          "description": "Create a new Eloquent model class",
+          "loadHelp": ["php", "artisan", "make:model"]
+        },
+        {
+          "name": "make:migration",
+          "description": "Create a new migration file",
+          "loadHelp": ["php", "artisan", "make:migration"]
+        },
+        {
+          "name": "make:controller",
+          "description": "Create a new controller class",
+          "loadHelp": ["php", "artisan", "make:controller"]
+        },
+        {
+          "name": "make:seeder",
+          "description": "Create a new seeder class",
+          "loadHelp": ["php", "artisan", "make:seeder"]
+        },
+        {
+          "name": "make:factory",
+          "description": "Create a new model factory",
+          "loadHelp": ["php", "artisan", "make:factory"]
+        },
+        {
+          "name": "make:request",
+          "description": "Create a new form request class",
+          "loadHelp": ["php", "artisan", "make:request"]
+        },
+        {
+          "name": "make:command",
+          "description": "Create a new Artisan command",
+          "loadHelp": ["php", "artisan", "make:command"]
+        },
+        {
+          "name": "make:job",
+          "description": "Create a new job class",
+          "loadHelp": ["php", "artisan", "make:job"]
+        },
+        {
+          "name": "make:event",
+          "description": "Create a new event class",
+          "loadHelp": ["php", "artisan", "make:event"]
+        },
+        {
+          "name": "make:listener",
+          "description": "Create a new event listener class",
+          "loadHelp": ["php", "artisan", "make:listener"]
+        },
+        {
+          "name": "make:policy",
+          "description": "Create a new policy class",
+          "loadHelp": ["php", "artisan", "make:policy"]
+        },
+        {
+          "name": "make:resource",
+          "description": "Create a new resource",
+          "loadHelp": ["php", "artisan", "make:resource"]
+        },
+        {
+          "name": "make:middleware",
+          "description": "Create a new middleware class",
+          "loadHelp": ["php", "artisan", "make:middleware"]
+        },
+        {
+          "name": "make:test",
+          "description": "Create a new test class",
+          "loadHelp": ["php", "artisan", "make:test"]
+        },
+        {
+          "name": "config:cache",
+          "description": "Create a configuration cache file",
+          "loadHelp": ["php", "artisan", "config:cache"]
+        },
+        {
+          "name": "config:clear",
+          "description": "Remove the configuration cache file",
+          "loadHelp": ["php", "artisan", "config:clear"]
+        },
+        {
+          "name": "cache:clear",
+          "description": "Flush the application cache",
+          "loadHelp": ["php", "artisan", "cache:clear"]
+        },
+        {
+          "name": "optimize",
+          "description": "Cache framework bootstrap, configuration, and metadata",
+          "loadHelp": ["php", "artisan", "optimize"]
+        },
+        {
+          "name": "optimize:clear",
+          "description": "Remove all cached configuration and files",
+          "loadHelp": ["php", "artisan", "optimize:clear"]
+        },
+        {
+          "name": "key:generate",
+          "description": "Set the application key",
+          "loadHelp": ["php", "artisan", "key:generate"]
+        },
+        {
+          "name": "storage:link",
+          "description": "Create the symbolic links for public storage",
+          "loadHelp": ["php", "artisan", "storage:link"]
+        },
+        {
+          "name": "queue:work",
+          "description": "Start processing jobs of the queue",
+          "loadHelp": ["php", "artisan", "queue:work"]
+        },
+        {
+          "name": "queue:restart",
+          "description": "Restart queue worker daemons after their current job",
+          "loadHelp": ["php", "artisan", "queue:restart"]
+        }
+      ],
+      "args": [
+        {
+          "name": "command",
+          "generators": [
+            {
+              "builtin": "php:artisan-commands"
+            }
+          ]
+        },
+        {
+          "name": "args",
+          "isOptional": true,
+          "isVariadic": true
+        }
+      ]
+    }
+  ],
+  "args": [
+    {
+      "name": "file",
+      "isOptional": true,
+      "template": "filepaths"
+    },
+    {
+      "name": "args",
+      "isOptional": true,
+      "isVariadic": true
+    }
+  ]
+}
