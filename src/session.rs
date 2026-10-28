@@ -27,6 +27,7 @@ const MAX_DELAY: Duration = Duration::from_millis(40);
 const ENTER_WAIT: Duration = Duration::from_millis(1500);
 /// Show "Searching…" only when results take longer than this.
 const LOADING_DELAY: Duration = Duration::from_millis(150);
+const DOUBLE_TAP: Duration = Duration::from_millis(500);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 const SNAPSHOT_ATTEMPTS: u8 = 3;
 /// Key sequence bound to the insert function in bash and zsh.
@@ -283,6 +284,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         enter_after: None,
         deferred: vec![],
         dismissed: None,
+        dismissed_by: None,
         drawn: None,
         sync_open: false,
         dirty: false,
@@ -565,6 +567,7 @@ struct Session {
     enter_after: Option<(String, Option<String>)>,
     /// The popup was closed for this line; it reopens when the line changes.
     dismissed: Option<String>,
+    dismissed_by: Option<(Key, Instant)>,
     drawn: Option<Rect>,
     /// A synchronized-output block is open (see `begin_sync`).
     sync_open: bool,
@@ -1072,6 +1075,9 @@ impl Session {
                 redraw = true;
                 continue;
             }
+            if self.repeated_dismiss(&key) {
+                continue;
+            }
             if !self.popup_open() {
                 if key != Key::ENTER {
                     self.just_accepted = false;
@@ -1084,6 +1090,11 @@ impl Session {
                 continue;
             }
             let mut action = self.bindings.action(&key);
+            // Esc Esc in one read arrives as Alt+Esc.
+            let unmodified = Key { alt: false, ..key.clone() };
+            if action.is_none() && key.alt && self.bindings.action(&unmodified) == Some(Action::Dismiss) {
+                action = Some(Action::Dismiss);
+            }
             if action == Some(Action::Next) && self.items.len() == 1 {
                 action = Some(Action::Accept);
             }
@@ -1108,6 +1119,9 @@ impl Session {
                 }
                 Some(Action::Dismiss | Action::Toggle) => {
                     self.dismiss();
+                    if action == Some(Action::Dismiss) && !key.alt {
+                        self.dismissed_by = Some((key.clone(), Instant::now()));
+                    }
                     redraw = true;
                 }
                 Some(Action::Accept) => {
@@ -1188,6 +1202,14 @@ impl Session {
             self.navigated = false;
             self.items_line.clear();
             self.request();
+        }
+    }
+
+    /// Esc again right after closing the popup; sent on, zsh would read the next key as Alt+key.
+    fn repeated_dismiss(&mut self, key: &Key) -> bool {
+        match self.dismissed_by.take() {
+            Some((k, at)) => k == *key && at.elapsed() < DOUBLE_TAP && !self.popup_open(),
+            None => false,
         }
     }
 
