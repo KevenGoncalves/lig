@@ -63,7 +63,7 @@ curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/instal
 The script downloads the latest release for your machine (x86_64 or ARM64, the static
 build that runs on any Linux), checks it against its sha256, and puts `lig` in
 `~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
-release (`… | LIG_VERSION=1.0.5 sh`).
+release (`… | LIG_VERSION=1.0.6 sh`).
 
 To download it yourself, each [release](https://github.com/KevenGoncalves/lig/releases/latest)
 has these archives, each with a `.sha256`:
@@ -167,7 +167,7 @@ Type as usual and the popup appears with suggestions for what you're typing.
 | `Tab` / `↓` | next suggestion |
 | `Shift-Tab` / `↑` | previous suggestion (on the first one: close the popup) |
 | `Enter` | accept the suggestion |
-| `Esc` | close the popup |
+| `Esc` | close the popup (`Esc` `Esc` too, then `Enter` runs the line) |
 | `Ctrl+Space` | open / close the popup on demand |
 
 What to expect:
@@ -404,8 +404,11 @@ Thanks to the contributors:
 - [@techwizrd](https://github.com/techwizrd): fish support ([#6](https://github.com/KevenGoncalves/lig/pull/6)).
 - [@mawkler](https://github.com/mawkler): the Nix flake and home-manager module
   ([#9](https://github.com/KevenGoncalves/lig/pull/9), [#10](https://github.com/KevenGoncalves/lig/pull/10)),
-  and telling Ctrl+M from Ctrl+J ([#12](https://github.com/KevenGoncalves/lig/pull/12)).
+  telling Ctrl+M from Ctrl+J ([#12](https://github.com/KevenGoncalves/lig/pull/12)), removing the
+  popup flicker ([#13](https://github.com/KevenGoncalves/lig/pull/13)), and following the inner
+  shell's folder ([#14](https://github.com/KevenGoncalves/lig/pull/14)).
 - [@nadelacruz-00](https://github.com/nadelacruz-00): the zellij mirror ([#11](https://github.com/KevenGoncalves/lig/pull/11)).
+- [@jeremiasadriano](https://github.com/jeremiasadriano): the `php` and `php artisan` specs ([#16](https://github.com/KevenGoncalves/lig/pull/16)).
 
 The specs in `specs/fig/` come from [withfig/autocomplete](https://github.com/withfig/autocomplete),
 © Hercules Labs Inc. and contributors, MIT licensed (see [`specs/fig/LICENSE`](specs/fig/LICENSE)).
