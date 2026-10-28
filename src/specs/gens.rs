@@ -630,6 +630,34 @@ pub fn asdf_shims() -> Generator {
     .ttl(10_000)
 }
 
+// ---------------------------------------------------------------- php
+
+/// Laravel Artisan commands of the project, with their descriptions.
+/// `php artisan --help` only describes `list`, so the commands come from
+/// `list --format=json` (Symfony's descriptor), falling back to `--raw`.
+pub fn artisan_commands() -> Generator {
+    gen_fn("php:artisan-commands", |cx| {
+        let mut out: Vec<SuggestionDef> = cx
+            .run(&["php", "artisan", "list", "--format=json"])
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .map(|v| {
+                v["commands"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|c| c["hidden"] != true)
+                    .filter_map(|c| Some(sug(c["name"].as_str()?).desc(c["description"].as_str().unwrap_or(""))))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if out.is_empty() {
+            out.extend(cx.lines(&["php", "artisan", "list", "--raw"]).into_iter().map(sug));
+        }
+        out
+    })
+    .ttl(30_000)
+}
+
 // ---------------------------------------------------------------- ghostty
 
 /// Themes Ghostty can load, and where they come from.
@@ -970,6 +998,7 @@ pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("ssh:hosts-colon", "the same, as host: (scp)"),
     ("tmux:sessions", "tmux sessions"),
     ("pip:installed", "installed Python packages"),
+    ("php:artisan-commands", "Laravel Artisan commands of the project"),
     ("kube:contexts", "kubeconfig contexts"),
     ("kube:namespaces", "namespaces"),
     ("kube:pods", "pods"),
@@ -1017,6 +1046,7 @@ pub fn builtin(id: &str) -> Option<Generator> {
         "ssh:hosts" => ssh_hosts(),
         "tmux:sessions" => tmux_sessions(),
         "pip:installed" => pip_installed(),
+        "php:artisan-commands" => artisan_commands(),
         "rustup:toolchains" => rustup_toolchains(),
         "kube:contexts" => kube_contexts(),
         "kube:namespaces" => kube_namespaces(),
