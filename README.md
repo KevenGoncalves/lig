@@ -175,9 +175,11 @@ What to expect:
 - **Command names don't pop up by themselves** (`ls`, `sudo ls`…), so simple commands run
   with a single `Enter`. Press `Ctrl+Space` to see command names, or set
   `complete_commands = true` to always get them.
-- **`Enter`** completes the word you're typing (`go bui` → `go build`), or picks the first
-  suggestion after a space (`git checkout ` → `git checkout main`). If the word is already
-  complete (`git status`), it runs the command. `Enter` `Enter` means "pick, then run".
+- **`Enter`** completes the word you're typing (`go bui` → `go build`, `source .venv` →
+  `source .venv/`), or picks the first suggestion after a space (`git checkout ` →
+  `git checkout main`). If the word is already complete (`git status`, `ls -l`), it runs
+  the command. `Enter` `Enter` means "pick, then run". To run only once the popup is
+  closed, set `enter_accepts = "always"`: `Enter` on a complete word closes the popup.
 - **No space is added** after a pick, options included (`--force`). Type the space
   yourself to see what comes next.
 - **Files first for commands that open them** (`code`, `vim`, `nvim`, `cat`, `less`,
@@ -223,7 +225,7 @@ dismiss = ["esc"]
 toggle = ["ctrl-space"]
 
 [behavior]
-enter_accepts = "auto"     # "after-space", "always", "never"
+enter_accepts = "auto"     # "always" (run only once the popup is closed), "after-space", "never"
 insert_space = false       # add a space after every pick
 complete_commands = false  # pop up for command names too
 online = true              # search package registries as you type
