@@ -3,6 +3,7 @@
 if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" && -z "$__lig_loaded" ]]; then
   __lig_loaded=1
   __lig_aliases=
+  __lig_vars=
   __lig_once=
 
   __lig_prompt() {
@@ -15,6 +16,14 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     if [[ $a != "$__lig_aliases" ]]; then
       __lig_aliases=$a
       printf '\e]6973;A;%s\a' "$a" >/dev/tty
+    fi
+    local e=
+    for k in $(compgen -e); do [[ $k == _ ]] || e+="$k=${!k}"$'\x1e'; done
+    e=${e%$'\x1e'}
+    e=${e//[$'\a\e']/}
+    if [[ $e != "$__lig_vars" ]]; then
+      __lig_vars=$e
+      printf '\e]6973;V;%s\a' "$e" >/dev/tty
     fi
     if [[ -z $__lig_once ]]; then
       __lig_once=1

@@ -43,7 +43,8 @@ that works in any terminal: it draws the popup inside the terminal itself.
 - **Package search as you type**: npm, crates.io, Docker Hub, PyPI and the Snap Store.
 - **Any other command** gets its options, subcommands and argument values from its
   `--help` or man page.
-- Knows your **aliases, functions and builtins** (`gco ` completes like `git checkout `).
+- Knows your **aliases, functions and builtins** (`gco ` completes like `git checkout `),
+  and your **environment variables** after `$` (`$HO` → `$HOME`, with its value).
 - **zsh, bash and fish**, including fish started inside another shell.
 - Works inside **tmux** and **zellij**; zellij panes are restored with the app that ran in them.
 - Nerd Font icons, themes, configurable size, and any keys you like.
@@ -188,6 +189,9 @@ What to expect:
 - **Folders** (`cd`, `mkdir`, …): picking one keeps the popup open with its subfolders.
   The first entries are **↵ Enter** (run the command) and **Back** (one folder up). Path
   options like `cargo install --path` also offer `.`, the current folder.
+- **`$` completes exported variables** (`$HO`, `"${HO`), with the value as the description.
+  Values of names with `TOKEN`, `SECRET`, `PASS`, `KEY`, `CREDENTIAL`, `PRIVATE` or
+  `COOKIE` show as `••••••`.
 - **History and the shell's own completion stay yours**: while you browse history with the
   arrows, use `Tab` after closing the popup, or run a tool like fzf's `Ctrl+T`, Lig stays
   out of the way. Typing brings it back.

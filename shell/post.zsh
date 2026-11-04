@@ -47,8 +47,8 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   typeset -ga ZSH_AUTOSUGGEST_IGNORE_WIDGETS
   ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_lig_insert)
 
-  # Generators need the shell's cwd and PATH; aliases/functions sent on change (split by \x1e).
-  typeset -g _lig_aliases= _lig_functions= _lig_builtins_sent=
+  # Generators need the shell's cwd and PATH; aliases, functions and exported variables sent on change (split by \x1e).
+  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent=
   _lig_precmd() {
     builtin emulate -L zsh
     builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >$TTY
@@ -69,6 +69,14 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     if [[ $f != $_lig_functions ]]; then
       _lig_functions=$f
       builtin print -rn -- $'\e]6973;N;'"${f//[$'\a\e']/}"$'\a' >$TTY
+    fi
+    local -a vars
+    for k in ${(k)parameters[(R)*export*]}; do [[ $k == _ ]] || vars+=("$k=${(P)k}"); done
+    local v=${(pj:\x1e:)vars}
+    v=${v//[$'\a\e']/}
+    if [[ $v != $_lig_vars ]]; then
+      _lig_vars=$v
+      builtin print -rn -- $'\e]6973;V;'"$v"$'\a' >$TTY
     fi
   }
   builtin autoload -Uz add-zsh-hook

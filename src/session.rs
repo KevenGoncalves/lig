@@ -906,6 +906,7 @@ impl Session {
             Msg::Aliases(a) => self.env.aliases = std::sync::Arc::new(a.into_iter().collect()),
             Msg::Functions(f) => self.env.functions = std::sync::Arc::new(f),
             Msg::Builtins(b) => self.env.builtins = std::sync::Arc::new(b),
+            Msg::Vars(v) => self.env.vars = std::sync::Arc::new(v),
         }
         self.mark_dirty();
     }

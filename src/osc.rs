@@ -12,6 +12,7 @@
 //!   `A;<k=v>\x1e<k=v>…`    the shell's aliases
 //!   `N;<name>\x1e<name>…`  the shell's function names
 //!   `K;<name>\x1e<name>…`  the shell's builtins
+//!   `V;<k=v>\x1e<k=v>…`    the shell's exported variables
 
 const PREFIX: &[u8] = b"\x1b]6973;";
 /// An unterminated message longer than this isn't ours: pass it through.
@@ -40,6 +41,7 @@ pub enum Msg {
     Aliases(Vec<(String, String)>),
     Functions(Vec<String>),
     Builtins(Vec<String>),
+    Vars(Vec<(String, String)>),
 }
 
 /// Removes our messages from the output; keeps state across reads, since a
@@ -97,6 +99,11 @@ impl OscFilter {
     }
 }
 
+/// `k=v` pairs separated by `\x1e`.
+fn pairs(s: &str) -> Vec<(String, String)> {
+    s.split('\x1e').filter_map(|p| p.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
 /// A message from its payload (`<kind>;<rest>`); unknown kinds are ignored.
 fn parse(payload: &[u8]) -> Option<Msg> {
     let s = String::from_utf8_lossy(payload);
@@ -123,11 +130,10 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         "F" => Some(Msg::Finish),
         "P" => Some(Msg::Path(rest.to_string())),
         "C" => Some(Msg::Cwd(rest.to_string())),
-        "A" => Some(Msg::Aliases(
-            rest.split('\x1e').filter_map(|p| p.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-        )),
+        "A" => Some(Msg::Aliases(pairs(rest))),
         "N" => Some(Msg::Functions(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
         "K" => Some(Msg::Builtins(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
+        "V" => Some(Msg::Vars(pairs(rest))),
         _ => None,
     }
 }
@@ -192,13 +198,19 @@ mod tests {
     fn aliases_and_functions() {
         let mut f = OscFilter::default();
         let (mut out, mut msgs) = (vec![], vec![]);
-        f.feed("\x1b]6973;A;gco=git checkout\x1ell=ls -l\x07\x1b]6973;N;z\x1ezi\x07".as_bytes(), &mut out, &mut msgs);
+        f.feed(
+            "\x1b]6973;A;gco=git checkout\x1ell=ls -l\x07\x1b]6973;N;z\x1ezi\x07\x1b]6973;V;HOME=/home/me\x1eX=a=b\x07"
+                .as_bytes(),
+            &mut out,
+            &mut msgs,
+        );
         let msgs: Vec<Msg> = msgs.into_iter().map(|m| m.1).collect();
         assert_eq!(
             msgs,
             vec![
                 Msg::Aliases(vec![("gco".into(), "git checkout".into()), ("ll".into(), "ls -l".into())]),
                 Msg::Functions(vec!["z".into(), "zi".into()]),
+                Msg::Vars(vec![("HOME".into(), "/home/me".into()), ("X".into(), "a=b".into())]),
             ]
         );
     }

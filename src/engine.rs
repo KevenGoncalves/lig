@@ -50,6 +50,8 @@ pub struct ShellEnv {
     pub aliases: Arc<HashMap<String, String>>,
     pub functions: Arc<Vec<String>>,
     pub builtins: Arc<Vec<String>>,
+    /// Exported variables: (name, value).
+    pub vars: Arc<Vec<(String, String)>>,
 }
 
 /// A candidate before filtering and ranking (see [`Engine::finish`]).
@@ -200,7 +202,9 @@ impl Engine {
             only_paths: true,
         };
 
-        if cl.current.redirect {
+        if let Some((name, braced)) = var_prefix(&cl.current) {
+            variables(&mut cx, name, braced);
+        } else if cl.current.redirect {
             self.files(&mut cx, false);
         } else if cl.tokens.is_empty() {
             let v = &cl.current.value;
@@ -914,6 +918,40 @@ fn insertion(c: &Cand, name: &str, cur: &Token, space: bool) -> (String, usize) 
     }
 }
 
+/// The variable name typed at the end of the word (`$HO`, `${HO`), and whether it's braced.
+fn var_prefix(cur: &Token) -> Option<(&str, bool)> {
+    if cur.open_quote == Some('\'') {
+        return None;
+    }
+    let at = cur.raw.rfind('$')?;
+    if cur.raw[..at].ends_with('\\') {
+        return None;
+    }
+    let rest = &cur.raw[at + 1..];
+    let (name, braced) = rest.strip_prefix('{').map_or((rest, false), |n| (n, true));
+    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_').then_some((name, braced))
+}
+
+/// Exported variables, with their value as the description (hidden for secret-looking names).
+fn variables(cx: &mut Cx<'_>, name: &str, braced: bool) {
+    let close = if braced { "}" } else { "" };
+    for (k, v) in cx.env.vars.iter() {
+        let meta = spec::Meta {
+            names: vec![k.clone()],
+            description: Some(if secret(k) { "••••••".into() } else { v.clone() }),
+            insert_value: Some(format!("{k}{close}")),
+            icon: Some(Icon::Variable),
+            ..Default::default()
+        };
+        cx.push(&meta, Kind::Arg, "", name, name.chars().count());
+    }
+}
+
+fn secret(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    ["TOKEN", "SECRET", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "COOKIE"].iter().any(|w| n.contains(w))
+}
+
 fn is_flag(t: &str) -> bool {
     t.starts_with('-') && t.len() > 1
 }
@@ -1049,6 +1087,24 @@ mod tests {
         assert_eq!(r[1].0, "bench");
         assert!(!labels(&mut e, &env, "tool ").iter().any(|r| r.0 == "hidden-cmd"));
         assert_eq!(labels(&mut e, &env, "tool hidden-c").len(), 0);
+    }
+
+    #[test]
+    fn variables() {
+        let (mut e, mut env) = engine();
+        env.vars = Arc::new(vec![
+            ("HOME".into(), "/home/me".into()),
+            ("HOSTNAME".into(), "box".into()),
+            ("GITHUB_TOKEN".into(), "ghp_x".into()),
+        ]);
+        let r = labels(&mut e, &env, "echo $HO");
+        assert_eq!(r, vec![("HOME".into(), "HOME".into(), 2), ("HOSTNAME".into(), "HOSTNAME".into(), 2)]);
+        assert_eq!(labels(&mut e, &env, "cd \"${HO")[0], ("HOME".into(), "HOME}".into(), 2));
+        assert_eq!(labels(&mut e, &env, "ls $HOME/$HOS")[0].0, "HOSTNAME");
+        assert!(labels(&mut e, &env, "echo '$HO").is_empty());
+        assert!(labels(&mut e, &env, "echo \\$HO").is_empty());
+        let c = e.complete("echo $GIT", &env, true, false);
+        assert_eq!(c.items[0].description, "••••••");
     }
 
     #[test]

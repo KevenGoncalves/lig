@@ -43,6 +43,19 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
         set -g __lig_editing 1
         printf '\e]6973;C;%s\a\e]6973;P;%s\a' (__lig_clean "$PWD") (__lig_clean (string join : -- $PATH)) >/dev/tty
         printf '\e]6973;N;%s\a\e]6973;K;%s\a' (string join \x1e -- (functions --names | string match -rv '^_')) (string join \x1e -- (builtin --names)) >/dev/tty
+        set -l vars
+        for k in (set --names -x)
+            test $k = _; and continue
+            set -l sep ' '
+            string match -q '*PATH' -- $k; and set sep :
+            set -l value (string join $sep -- $$k)
+            set -a vars "$k=$value"
+        end
+        set -l v (string join \x1e -- $vars | string replace -ar '[\a\e]' ' ' | string collect)
+        if test "$v" != "$__lig_vars"
+            set -g __lig_vars $v
+            printf '\e]6973;V;%s\a' "$v" >/dev/tty
+        end
         # Ready: handlers are registered, lig may now send USR1.
         printf '\e]6973;R;%s\a' $fish_pid >/dev/tty
     end
