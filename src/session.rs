@@ -407,8 +407,8 @@ fn push_typed(typed: &mut Option<String>, key: &Key) {
 
 /// Whether Enter picks the selected suggestion instead of running the line.
 /// `auto`: unless the word already equals a suggestion; `after-space`: only after a space;
-/// `always`: while the popup is open. A navigated selection is always picked; the Enter
-/// right after a pick runs the line.
+/// `always`: while the popup is open. A navigated selection is always picked; except with
+/// `always`, the Enter right after a pick runs the line.
 fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, just_accepted: bool) -> bool {
     match mode {
         "never" => false,
