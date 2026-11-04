@@ -831,7 +831,7 @@ pub fn kube_namespaces() -> Generator {
 
 #[cfg(test)]
 mod tests {
-    use super::relative_to;
+    use super::{relative_to, remote_target};
 
     #[test]
     fn every_listed_generator_exists() {
@@ -839,6 +839,15 @@ mod tests {
             assert!(super::builtin(id).is_some_and(|g| g.id == *id || id.starts_with("kube:")), "{id}");
         }
         assert!(super::builtin("files:file://").is_some() && super::builtin("kube:names:services").is_some());
+    }
+
+    #[test]
+    fn remote_targets() {
+        assert_eq!(remote_target("pi:"), Some(("pi", "")));
+        assert_eq!(remote_target("admin@10.0.8.43:~/a b"), Some(("admin@10.0.8.43", "~/a b")));
+        assert_eq!(remote_target("./a:b"), None);
+        assert_eq!(remote_target(":x"), None);
+        assert_eq!(remote_target("pi"), None);
     }
 
     #[test]
@@ -903,9 +912,12 @@ pub fn cargo_deps() -> Generator {
     })
 }
 
-/// ssh hosts as `host:` (for scp/rsync remote paths).
+/// ssh hosts as `host:` (for scp/rsync remote paths), then the paths on that host.
 pub fn ssh_hosts_colon() -> Generator {
-    gen_fn("ssh:hosts-colon", |_| {
+    gen_fn("ssh:hosts-colon", |cx| {
+        if let Some((host, path)) = remote_target(cx.current()) {
+            return remote_paths(cx, host, path);
+        }
         ssh_host_list()
             .into_iter()
             .map(|s| {
@@ -915,6 +927,28 @@ pub fn ssh_hosts_colon() -> Generator {
             .collect()
     })
     .ttl(30_000)
+    .trigger(Trigger::Chars(":/".into()))
+    .query_after(":/")
+}
+
+/// `[user@]host:path` split at the colon; a local path with a colon (`./a:b`) isn't one.
+fn remote_target(token: &str) -> Option<(&str, &str)> {
+    let (host, path) = token.split_once(':')?;
+    let ok = !host.is_empty() && host.chars().all(|c| c.is_ascii_alphanumeric() || "._-@".contains(c));
+    ok.then_some((host, path))
+}
+
+/// The folder being typed on `host`, listed over ssh. `BatchMode`: with no key or agent
+/// login, ssh fails at once instead of asking for a password.
+fn remote_paths(cx: &GenCtx, host: &str, path: &str) -> Vec<SuggestionDef> {
+    let base = path.rfind('/').map_or(path, |i| &path[i + 1..]);
+    let ls = crate::remote::ls_command(path);
+    let argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", host, &ls];
+    cx.lines(&argv)
+        .into_iter()
+        .filter(|name| !name.starts_with('.') || base.starts_with('.'))
+        .map(|name| if name.ends_with('/') { sug(name).kind(Kind::Folder) } else { sug(name).kind(Kind::File) })
+        .collect()
 }
 
 /// Local users from `/etc/passwd`.
@@ -991,7 +1025,7 @@ pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("extrepo:disabled", "disabled extrepo repositories"),
     ("extrepo:installed", "configured extrepo repositories"),
     ("ssh:hosts", "hosts from ssh config and known_hosts"),
-    ("ssh:hosts-colon", "the same, as host: (scp)"),
+    ("ssh:hosts-colon", "ssh hosts as host:, then the paths on that host (scp, rsync)"),
     ("tmux:sessions", "tmux sessions"),
     ("pip:installed", "installed Python packages"),
     ("php:artisan-commands", "Laravel Artisan commands of the project"),

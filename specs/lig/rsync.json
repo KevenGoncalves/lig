@@ -1,0 +1,13 @@
+{
+  "name": "rsync",
+  "args": {
+    "name": "path",
+    "isVariadic": true,
+    "template": "filepaths",
+    "generators": [
+      {
+        "builtin": "ssh:hosts-colon"
+      }
+    ]
+  }
+}
