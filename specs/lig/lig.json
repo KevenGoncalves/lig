@@ -217,6 +217,50 @@
           ]
         },
         {
+          "name": "new",
+          "description": "Start a user spec from the one lig uses (built-in, or parsed from --help)",
+          "options": [
+            {
+              "name": "--from-help",
+              "description": "Parse `<command> --help` even if there is a built-in spec"
+            },
+            {
+              "name": "--force",
+              "description": "Replace an existing user spec"
+            },
+            {
+              "name": [
+                "-h",
+                "--help"
+              ],
+              "description": "Print help"
+            }
+          ],
+          "args": {
+            "name": "command",
+            "commandNames": true
+          }
+        },
+        {
+          "name": "check",
+          "description": "Report what lig can't use in spec files (default: every user spec)",
+          "options": [
+            {
+              "name": [
+                "-h",
+                "--help"
+              ],
+              "description": "Print help"
+            }
+          ],
+          "args": {
+            "name": "specs",
+            "isOptional": true,
+            "isVariadic": true,
+            "template": "filepaths"
+          }
+        },
+        {
           "name": "help",
           "description": "Print the help of a subcommand",
           "options": [
@@ -235,7 +279,9 @@
               "list",
               "path",
               "clear-cache",
-              "generators"
+              "generators",
+              "new",
+              "check"
             ]
           }
         }

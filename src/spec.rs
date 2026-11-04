@@ -1029,6 +1029,196 @@ fn list_key(v: &Value) -> String {
     v.to_string()
 }
 
+// ---------------------------------------------------------------- checking user specs
+
+const META_KEYS: &[&str] = &["name", "displayName", "description", "insertValue", "priority", "hidden", "icon"];
+const SUBCOMMAND_KEYS: &[&str] = &[
+    "subcommands",
+    "options",
+    "args",
+    "additionalSuggestions",
+    "loadSpec",
+    "loadHelp",
+    "parserDirectives",
+    "skipFigSpec",
+];
+const OPTION_KEYS: &[&str] =
+    &["args", "isPersistent", "isRepeatable", "requiresSeparator", "requiresEquals", "exclusiveOn"];
+const ARG_KEYS: &[&str] = &[
+    "name",
+    "isOptional",
+    "isVariadic",
+    "optionsCanBreakVariadicArg",
+    "isCommand",
+    "commandNames",
+    "suggestions",
+    "template",
+    "generators",
+];
+/// Fig keys lig reads past (they're fine in a spec, they just change nothing).
+const FIG_ONLY_KEYS: &[&str] = &[
+    "description",
+    "default",
+    "isRequired",
+    "dependsOn",
+    "isDangerous",
+    "deprecated",
+    "isScript",
+    "isModule",
+    "debounce",
+];
+const GENERATOR_KEYS: &[&str] = &[
+    "builtin",
+    "suggestions",
+    "script",
+    "json",
+    "splitOn",
+    "skipLines",
+    "field",
+    "trigger",
+    "getQueryTerm",
+    "cache",
+    "template",
+];
+
+/// What lig can't use in a spec file: unknown keys (ignored when loading) and values it doesn't know.
+pub fn check(v: &Value) -> Vec<String> {
+    let mut out = vec![];
+    check_subcommand(v, "", &mut out);
+    out
+}
+
+fn at(path: &str, part: &str) -> String {
+    if path.is_empty() { part.to_string() } else { format!("{path}.{part}") }
+}
+
+/// `options[--force]`: by first name, or by index.
+fn item(path: &str, key: &str, v: &Value, i: usize) -> String {
+    let id = names(v.get("name")).into_iter().next().unwrap_or_else(|| i.to_string());
+    at(path, &format!("{key}[{id}]"))
+}
+
+fn check_keys(v: &Value, allowed: &[&[&str]], path: &str, out: &mut Vec<String>) -> bool {
+    let Some(o) = v.as_object() else {
+        out.push(format!("{}: expected an object", display(path)));
+        return false;
+    };
+    for k in o.keys().filter(|k| !allowed.iter().chain([&FIG_ONLY_KEYS]).any(|a| a.contains(&k.as_str()))) {
+        out.push(format!("{}: unknown key `{k}`", display(path)));
+    }
+    true
+}
+
+fn display(path: &str) -> &str {
+    if path.is_empty() { "(top level)" } else { path }
+}
+
+fn check_meta(v: &Value, path: &str, named: bool, out: &mut Vec<String>) {
+    match v.get("name") {
+        Some(Value::String(_)) => {}
+        Some(Value::Array(a)) if !a.is_empty() && a.iter().all(Value::is_string) => {}
+        None if !named => {}
+        _ => out.push(format!("{}: `name` must be a string or a list of strings", display(path))),
+    }
+    if let Some(icon) = v.get("icon")
+        && icon.as_str().and_then(Icon::from_name).is_none()
+    {
+        out.push(format!("{}: unknown icon {icon} (`lig icons` lists them)", display(path)));
+    }
+}
+
+fn check_subcommand(v: &Value, path: &str, out: &mut Vec<String>) {
+    if !check_keys(v, &[META_KEYS, SUBCOMMAND_KEYS], path, out) {
+        return;
+    }
+    check_meta(v, path, true, out);
+    for (i, s) in one_or_many(v.get("subcommands")).into_iter().enumerate() {
+        check_subcommand(s, &item(path, "subcommands", s, i), out);
+    }
+    for (i, o) in one_or_many(v.get("options")).into_iter().enumerate() {
+        let p = item(path, "options", o, i);
+        if check_keys(o, &[META_KEYS, OPTION_KEYS], &p, out) {
+            check_meta(o, &p, true, out);
+            check_args(o, &p, out);
+        }
+    }
+    check_args(v, path, out);
+    for (i, s) in one_or_many(v.get("additionalSuggestions")).into_iter().enumerate() {
+        check_suggestion(s, &item(path, "additionalSuggestions", s, i), out);
+    }
+    if let Some(d) = v.get("parserDirectives") {
+        check_keys(d, &[&["flagsArePosixNoncompliant", "optionArgSeparators"]], &at(path, "parserDirectives"), out);
+    }
+}
+
+fn check_args(v: &Value, path: &str, out: &mut Vec<String>) {
+    for (i, a) in one_or_many(v.get("args")).into_iter().enumerate() {
+        let p = item(path, "args", a, i);
+        if !check_keys(a, &[ARG_KEYS], &p, out) {
+            continue;
+        }
+        check_templates(a, &p, out);
+        for (j, s) in one_or_many(a.get("suggestions")).into_iter().enumerate() {
+            check_suggestion(s, &item(&p, "suggestions", s, j), out);
+        }
+        for (j, g) in one_or_many(a.get("generators")).into_iter().enumerate() {
+            check_generator(g, &at(&p, &format!("generators[{j}]")), out);
+        }
+    }
+}
+
+fn check_templates(v: &Value, path: &str, out: &mut Vec<String>) {
+    for t in one_or_many(v.get("template")) {
+        match t.as_str() {
+            Some("filepaths" | "folders") => {}
+            Some("help" | "history") => out.push(format!("{path}: lig doesn't support template {t}")),
+            _ => out.push(format!("{path}: unknown template {t} (`filepaths` or `folders`)")),
+        }
+    }
+}
+
+fn check_suggestion(v: &Value, path: &str, out: &mut Vec<String>) {
+    if v.is_string() {
+        return;
+    }
+    if !check_keys(v, &[META_KEYS, &["type"]], path, out) {
+        return;
+    }
+    check_meta(v, path, true, out);
+    if let Some(t) = v.get("type")
+        && t.as_str().and_then(kind_from_str).is_none()
+    {
+        out.push(format!("{path}: unknown type {t}"));
+    }
+}
+
+fn check_generator(v: &Value, path: &str, out: &mut Vec<String>) {
+    if !check_keys(v, &[GENERATOR_KEYS], path, out) {
+        return;
+    }
+    check_templates(v, path, out);
+    if let Some(id) = v.get("builtin") {
+        if id.as_str().and_then(crate::specs::gens::builtin).is_none() {
+            out.push(format!("{path}: unknown builtin {id} (`lig specs generators` lists them)"));
+        }
+    } else if let Some(s) = v.get("script") {
+        if !(s.is_string() || s.as_array().is_some_and(|a| !a.is_empty() && a.iter().all(Value::is_string))) {
+            out.push(format!("{path}: `script` must be a shell string or a list of strings"));
+        }
+    } else if v.get("suggestions").is_none() && v.get("template").is_none() {
+        out.push(format!("{path}: needs `builtin`, `script`, `suggestions` or `template`"));
+    }
+    if let Some(j) = v.get("json")
+        && check_keys(j, &[&["name", "description", "lines"]], &at(path, "json"), out)
+        && !j.get("name").is_some_and(Value::is_string)
+    {
+        out.push(format!("{path}.json: needs a `name` template"));
+    }
+    if let Some(c) = v.get("cache") {
+        check_keys(c, &[&["ttl"]], &at(path, "cache"), out);
+    }
+}
+
 /// FNV-1a: stable ids for generators from files.
 fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
@@ -1040,6 +1230,30 @@ mod tests {
 
     fn names(v: Vec<SuggestionDef>) -> Vec<(String, Option<String>)> {
         v.into_iter().map(|s| (s.meta.names[0].clone(), s.meta.description)).collect()
+    }
+
+    #[test]
+    fn check_reports_what_lig_cant_use() {
+        let v = serde_json::json!({
+            "name": "tool",
+            "descripton": "typo",
+            "icon": "nope",
+            "subcommands": [{"name": "run", "options": [{"name": "--force", "requiresEqual": true}]}, {"description": "no name"}],
+            "args": {"name": "file", "template": "files", "generators": [{"builtin": "git:nope"}, {"splitOn": "\n"}], "suggestions": [{"name": "a", "type": "thing"}]},
+        });
+        assert_eq!(
+            check(&v),
+            [
+                "(top level): unknown key `descripton`",
+                "(top level): unknown icon \"nope\" (`lig icons` lists them)",
+                "subcommands[run].options[--force]: unknown key `requiresEqual`",
+                "subcommands[1]: `name` must be a string or a list of strings",
+                "args[file]: unknown template \"files\" (`filepaths` or `folders`)",
+                "args[file].suggestions[a]: unknown type \"thing\"",
+                "args[file].generators[0]: unknown builtin \"git:nope\" (`lig specs generators` lists them)",
+                "args[file].generators[1]: needs `builtin`, `script`, `suggestions` or `template`",
+            ]
+        );
     }
 
     #[test]

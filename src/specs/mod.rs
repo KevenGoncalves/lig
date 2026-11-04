@@ -109,6 +109,7 @@ mod tests {
             let spec = crate::spec::from_value(&v);
             assert_eq!(spec.meta.names[0], n, "{n}: name doesn't match the file name");
             assert_eq!(crate::spec::to_value(&spec), v, "{n}: keys lig doesn't understand");
+            assert_eq!(crate::spec::check(&v), Vec::<String>::new(), "{n}");
             let text = v.to_string();
             for id in text.split("\"builtin\":\"").skip(1).map(|r| r.split('"').next().unwrap()) {
                 assert!(super::gens::builtin(id).is_some(), "{n}: unknown generator {id}");

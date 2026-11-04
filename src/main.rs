@@ -217,6 +217,21 @@ enum SpecsCmd {
     ClearCache,
     /// List the native generators spec files can use (`{"builtin": "<id>"}`)
     Generators,
+    /// Start a user spec from the one lig uses (built-in, or parsed from --help)
+    New {
+        command: String,
+        /// Parse `<command> --help` even if there is a built-in spec
+        #[arg(long)]
+        from_help: bool,
+        /// Replace an existing user spec
+        #[arg(long)]
+        force: bool,
+    },
+    /// Report what lig can't use in spec files (default: every user spec)
+    Check {
+        /// Spec files, or command names in the user specs folder
+        specs: Vec<String>,
+    },
 }
 
 /// Append a line to the debug log when `LIG_LOG` is set.
@@ -589,6 +604,98 @@ fn list_specs() {
     eprintln!("{} commands ({} lig + {} fig spec files embedded)", all.len(), specs::LIG.count(), specs::FIG.count());
 }
 
+fn new_spec(command: &str, from_help: bool, force: bool) -> Result<()> {
+    anyhow::ensure!(store::safe(command), "invalid command name {command:?}");
+    let path = store::user_dir().join(format!("{command}.json"));
+    for p in [&path, &path.with_extension("toml")] {
+        anyhow::ensure!(force || !p.exists(), "{} already exists (--force replaces it)", p.display());
+    }
+    let builtin = if from_help { None } else { specs::builtin(command).map(std::sync::Arc::new) };
+    let (spec, source) = match builtin {
+        Some(s) => (s, "the built-in spec".to_string()),
+        None => {
+            let cfg = config::Config::load().behavior;
+            let mut loader = help::HelpLoader::new(std::time::Duration::from_millis(cfg.help_timeout_ms), vec![]);
+            match loader.lookup(&[command.to_string()], &std::env::current_dir()?, &[], true) {
+                help::Lookup::Found(Some(s)) => (s, format!("`{command} --help`")),
+                _ => anyhow::bail!(
+                    "lig has no spec for {command}, and couldn't parse `{command} --help` or its man page"
+                ),
+            }
+        }
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&spec::to_value(&spec))? + "\n")?;
+    println!("lig: wrote {} from {source}", path.display());
+    println!("lig: {command} completes from it now; check your edits with `lig specs check {command}`");
+    Ok(())
+}
+
+/// Prints what each spec can't use; `false` if any has a problem.
+fn check_specs(targets: &[String]) -> Result<bool> {
+    let dir = store::user_dir();
+    let files: Vec<PathBuf> = if targets.is_empty() {
+        let mut f: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "json" || e == "toml"))
+            .collect();
+        f.sort();
+        anyhow::ensure!(!f.is_empty(), "no user specs in {}", dir.display());
+        f
+    } else {
+        targets
+            .iter()
+            .map(|t| {
+                let named = ["json", "toml"].map(|e| dir.join(format!("{t}.{e}")));
+                [PathBuf::from(t)]
+                    .into_iter()
+                    .chain(named)
+                    .find(|p| p.is_file())
+                    .with_context(|| format!("no spec file {t} (nor {t}.json/.toml in {})", dir.display()))
+            })
+            .collect::<Result<_>>()?
+    };
+    let mut ok = true;
+    for path in files {
+        let problems = check_spec_file(&path);
+        if problems.is_empty() {
+            println!("{}: ok", path.display());
+        }
+        for p in &problems {
+            println!("{}: {p}", path.display());
+        }
+        ok &= problems.is_empty();
+    }
+    Ok(ok)
+}
+
+fn check_spec_file(path: &Path) -> Vec<String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => return vec![e.to_string()],
+    };
+    let value: Result<serde_json::Value, String> = if path.extension().is_some_and(|e| e == "toml") {
+        toml::from_str(&text).map_err(|e| e.to_string())
+    } else {
+        serde_json::from_str(&text).map_err(|e| e.to_string())
+    };
+    let value = match value {
+        Ok(v) => v,
+        Err(e) => return vec![e.trim().to_string()],
+    };
+    let mut problems = spec::check(&value);
+    let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    if problems.is_empty() && !spec::from_value(&value).meta.names.contains(&stem) {
+        problems.push(format!("`name` doesn't include {stem:?}: lig finds specs by file name"));
+    }
+    problems
+}
+
 fn list_icons() {
     icons::detect();
     let cfg = config::Config::load();
@@ -696,6 +803,12 @@ fn main() -> Result<()> {
             }
             println!("{:<30} <prefix> then local paths (e.g. files:file://)", "files:<prefix>");
             println!("{:<30} names of a kubernetes resource type", "kube:names:<type>");
+        }
+        Cmd::Specs { cmd: SpecsCmd::New { command, from_help, force } } => new_spec(&command, from_help, force)?,
+        Cmd::Specs { cmd: SpecsCmd::Check { specs } } => {
+            if !check_specs(&specs)? {
+                std::process::exit(1);
+            }
         }
         Cmd::Specs { cmd: SpecsCmd::ClearCache } => {
             let dir = help::cache_dir();

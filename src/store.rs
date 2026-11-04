@@ -22,7 +22,7 @@ impl Default for Store {
     }
 }
 
-fn safe(name: &str) -> bool {
+pub fn safe(name: &str) -> bool {
     !name.is_empty() && Path::new(name).components().all(|c| matches!(c, Component::Normal(_)))
 }
 

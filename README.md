@@ -280,8 +280,16 @@ results cached for 30 minutes. Turn it off with `online = false`.
 ### Writing a spec
 
 A spec describes a command's subcommands, options and arguments, in the
-[Fig spec format](https://fig.io/docs/reference) (static parts only). Save it as
-`~/.config/lig/specs/deploy.toml`:
+[Fig spec format](https://fig.io/docs/reference) (static parts only). To change the
+suggestions of a command lig already knows, start from its spec:
+
+```bash
+lig specs new docker
+```
+
+That writes `~/.config/lig/specs/docker.json` from the built-in spec (or from `--help` for
+other commands, or with `--from-help`), and lig uses it from then on. For a new command,
+write one yourself, e.g. `~/.config/lig/specs/deploy.toml`:
 
 ```toml
 name = "deploy"
@@ -303,7 +311,8 @@ command whose output lines become suggestions (`generators = { script = [...] }`
 has native generators (git branches, docker containers, …) usable with
 `generators = [{ builtin = "git:branches" }]`; `lig specs generators` lists them.
 
-Check a spec with `lig complete "deploy -e "`.
+`lig specs check` reports what lig can't use in your specs (misspelled keys, unknown
+icons, templates or generators), and `lig complete "deploy -e "` shows the suggestions.
 
 ## How it works
 
