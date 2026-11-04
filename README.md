@@ -47,6 +47,8 @@ that works in any terminal: it draws the popup inside the terminal itself.
   and your **environment variables** after `$` (`$HO` → `$HOME`, with its value).
 - **zsh, bash and fish**, including fish started inside another shell.
 - Works inside **tmux** and **zellij**; zellij panes are restored with the app that ran in them.
+- **Over ssh**: `lig ssh` brings the popup to a server without installing anything there,
+  and `scp`/`rsync` complete paths on the host.
 - Nerd Font icons, themes, configurable size, and any keys you like.
 - Runs locally: no daemon, no account, no telemetry.
 
@@ -357,6 +359,42 @@ Known limitations:
   Harmless apart from how `ps` shows lig.
 - A restored app runs with the zellij server's `PATH`, like plain zellij.
 
+## ssh
+
+**Remote paths.** `scp` and `rsync` complete paths on the host after `host:`
+(`scp notes.txt pi:Doc` → `pi:Documents/`). Lig lists them with `ssh host ls`, so it needs
+a login that doesn't ask for a password (a key or ssh-agent); otherwise you just get no
+suggestions. Without a key, an open connection works too: with this in `~/.ssh/config`,
+one `ssh pi` with your password makes the listings work, and fast, for 10 minutes.
+
+```
+Host pi
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 10m
+```
+
+**The popup on the host.** `lig ssh` logs in like `ssh` and brings the popup along:
+
+```bash
+lig ssh admin@pi
+```
+
+It asks for your password like `ssh` if the host needs one, and nothing is installed on
+the host: Lig sends its hooks with the login, your zsh or bash there loads them from a temp
+folder after your own startup files, and removes the folder at its first prompt.
+Suggestions are made on your machine; files, `$PATH` commands and generators like git
+branches come from the host, over the same connection (no second login). It takes any ssh
+options, and is plain `ssh` outside Lig or with a remote command (`lig ssh pi uptime`), so
+`alias ssh='lig ssh'` is safe.
+
+On the host:
+
+- The shell must be zsh or bash (others start as usual, without the popup), with `sh`,
+  `base64` and `mktemp`, which any Linux has.
+- Commands get no suggestions from their `--help`, and generators that read project files
+  (npm scripts, make and Cargo targets) don't see the host's files.
+
 ## Troubleshooting
 
 | Problem | Try |
@@ -365,6 +403,8 @@ Known limitations:
 | Wrong or missing suggestions | `lig complete "<the line>"` shows what Lig would suggest. |
 | A key binding does nothing | `lig keys` shows whether the key reaches Lig, and its name. |
 | A command's suggestions look outdated | `lig specs clear-cache` re-reads `--help` output. |
+| `clear` or `vim` complain about the terminal over plain `ssh` | The host lacks your terminal's terminfo: `infocmp -x xterm-ghostty \| ssh host -- tic -x -` (`lig ssh` falls back to `xterm-256color` by itself). |
+| No `scp host:` paths | The host needs a login without a password prompt (a key, ssh-agent, or an open `ControlMaster` connection). |
 | Something else | Start a shell with `LIG_LOG=1 zsh` (or `bash` / `fish`) and check `~/.local/state/lig/lig.log`. |
 
 ## Limitations
@@ -396,8 +436,9 @@ They test `target/release/lig`; set `LIG_TEST_BIN` to use another binary.
 
 ```
 src/                  the lig binary (session.rs: PTY + popup, engine.rs: completion,
-                      popup.rs: drawing, help.rs: --help parser, specs/gens.rs: native generators)
-shell/                zsh, bash and fish hooks
+                      popup.rs: drawing, help.rs: --help parser, specs/gens.rs: native generators,
+                      remote.rs: lig ssh)
+shell/                zsh, bash and fish hooks; remote.* bootstrap them for `lig ssh`
 specs/lig/            hand-written specs (JSON)
 specs/fig/            converted withfig/autocomplete specs (generated)
 build.rs              embeds both spec folders, compressed, into the binary
