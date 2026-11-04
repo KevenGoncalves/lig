@@ -406,14 +406,15 @@ fn push_typed(typed: &mut Option<String>, key: &Key) {
 }
 
 /// Whether Enter picks the selected suggestion instead of running the line.
-/// `auto`: unless the word already equals a suggestion; `after-space`: only after a space.
-/// A navigated selection is always picked; the Enter right after a pick runs the line.
+/// `auto`: unless the word already equals a suggestion; `after-space`: only after a space;
+/// `always`: while the popup is open. A navigated selection is always picked; the Enter
+/// right after a pick runs the line.
 fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, just_accepted: bool) -> bool {
     match mode {
         "never" => false,
+        "always" => true,
         _ if navigated => true,
         _ if just_accepted => false,
-        "always" => true,
         "after-space" => word_empty,
         _ => word_empty || !complete,
     }
@@ -965,7 +966,7 @@ impl Session {
         let chars: Vec<char> = self.line.chars().collect();
         self.items.iter().any(|s| {
             let typed: String = chars[chars.len().saturating_sub(s.delete)..].iter().collect();
-            !typed.is_empty() && s.insert.trim_end().trim_end_matches('/') == typed.trim_end_matches('/')
+            !typed.is_empty() && s.insert.trim_end() == typed
         })
     }
 
@@ -1098,8 +1099,16 @@ impl Session {
             if action == Some(Action::Next) && self.items.len() == 1 {
                 action = Some(Action::Accept);
             }
-            if action == Some(Action::Accept) && key == Key::ENTER && !self.enter_picks() {
-                action = None;
+            if action == Some(Action::Accept) && key == Key::ENTER {
+                // `always`: Enter on a complete word only closes the popup.
+                if self.cfg.behavior.enter_accepts == "always" && !self.navigated && self.word_complete() {
+                    self.dismiss();
+                    redraw = true;
+                    continue;
+                }
+                if !self.enter_picks() {
+                    action = None;
+                }
             }
             match action {
                 Some(Action::Next) => {
@@ -1482,6 +1491,7 @@ mod tests {
         assert!(enter_accepts("auto", false, true, true, false));
         assert!(!enter_accepts("after-space", false, false, false, false));
         assert!(enter_accepts("always", false, true, false, false));
+        assert!(enter_accepts("always", false, false, false, true));
         assert!(!enter_accepts("never", true, false, true, false));
     }
 }

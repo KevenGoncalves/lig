@@ -179,8 +179,8 @@ pub struct Behavior {
     pub fuzzy: bool,
     /// When Enter picks the selected suggestion instead of running the line:
     /// `"auto"` (unless the typed word is already complete), `"after-space"` (only
-    /// after a space), `"always"` or `"never"`. A selection moved with Tab/arrows
-    /// is always picked; the Enter right after a pick runs the line.
+    /// after a space), `"always"` (while the popup is open) or `"never"`. A selection
+    /// moved with Tab/arrows is always picked; the Enter right after a pick runs the line.
     pub enter_accepts: String,
     /// Add a space after an accepted suggestion (`checkout ` vs `checkout`).
     pub insert_space: bool,
