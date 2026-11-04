@@ -6,6 +6,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::remote::Remote;
+
 #[derive(Debug, Default, Clone)]
 pub struct Output {
     pub stdout: String,
@@ -20,7 +22,12 @@ pub enum Cmd<'a> {
     Argv(&'a [String]),
 }
 
-pub fn run(cmd: Cmd<'_>, cwd: &Path, env: &[(String, String)], timeout: Duration) -> Output {
+/// Runs locally, or on the host of a `lig ssh` session.
+pub fn run(cmd: Cmd<'_>, cwd: &Path, env: &[(String, String)], timeout: Duration, remote: Option<&Remote>) -> Output {
+    if let Some(r) = remote {
+        let argv = r.argv(cmd, cwd, env);
+        return run(Cmd::Argv(&argv), Path::new(""), &[], timeout, None);
+    }
     let mut c = match cmd {
         Cmd::Shell(s) => {
             let mut c = Command::new(if Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" });

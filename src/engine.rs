@@ -11,6 +11,7 @@ use crate::config::Behavior;
 use crate::exec::{self, Cmd};
 use crate::help::{HelpLoader, Lookup};
 use crate::parser::{self, CommandLine, Token};
+use crate::remote::{self, Remote};
 use crate::spec::{
     self, Arg, GenCtx, GenSource, Generator, LoadSpec, Opt, Subcommand, SuggestionDef, Template, Trigger,
 };
@@ -52,6 +53,8 @@ pub struct ShellEnv {
     pub builtins: Arc<Vec<String>>,
     /// Exported variables: (name, value).
     pub vars: Arc<Vec<(String, String)>>,
+    /// The shell is on this host (`lig ssh`): files and commands are there.
+    pub remote: Option<Arc<Remote>>,
 }
 
 /// A candidate before filtering and ranking (see [`Engine::finish`]).
@@ -145,6 +148,13 @@ fn cand(m: &spec::Meta, kind: Kind, suffix: &str) -> Cand {
     }
 }
 
+/// `(is_dir, name)` for each entry of a folder.
+type Listing = Arc<Vec<(bool, String)>>;
+
+/// A folder on a `lig ssh` host is listed again after this.
+const REMOTE_DIR_TTL: Duration = Duration::from_secs(3);
+/// Listings on a `lig ssh` host run while you type: give up quickly.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(2);
 /// More than this is never useful in a popup.
 const MAX_SUGGESTIONS: usize = 500;
 
@@ -161,6 +171,8 @@ pub struct Engine {
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
     spec_cmds: Option<Arc<HashSet<String>>>,
+    /// Folder listings on a `lig ssh` host, by host, cwd and folder.
+    remote_dirs: HashMap<String, (Instant, Listing)>,
 }
 
 fn exec_vars(env: &ShellEnv) -> Vec<(String, String)> {
@@ -178,6 +190,7 @@ impl Engine {
             gen_cache: HashMap::new(),
             last_results: HashMap::new(),
             path_cmds: None,
+            remote_dirs: HashMap::new(),
             spec_cmds: None,
         }
     }
@@ -419,6 +432,9 @@ impl Engine {
     }
 
     fn help_spec(&mut self, argv: &[String], cx: &mut Cx<'_>) -> Option<Arc<Subcommand>> {
+        if cx.env.remote.is_some() {
+            return None;
+        }
         match self.help.lookup(argv, &cx.env.cwd, &exec_vars(cx.env), cx.run_generators) {
             Lookup::Found(s) => s,
             Lookup::NeedsRun => {
@@ -485,11 +501,12 @@ impl Engine {
             Some(Trigger::Prefix(n)) => v.chars().take(*n).collect(),
         };
         let before = &cx.tokens[..cx.tokens.len() - 1];
-        let key = format!("{}\0{}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"), trigger_key);
+        let host = cx.env.remote.as_ref().map_or("", |r| r.dest.as_str());
+        let key = format!("{}\0{host}\0{}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"), trigger_key);
         let ttl = g.cache_ttl.unwrap_or(Duration::from_millis(self.cfg.generator_cache_ms));
 
         // Same generator and context, any trigger state: shown while fresh results are fetched.
-        let context = format!("{}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"));
+        let context = format!("{}\0{host}\0{}\0{}", g.id, cx.env.cwd.display(), before.join("\x1f"));
         let defs = match self.gen_cache.get(&key) {
             Some((t, defs)) if t.elapsed() < ttl => defs.clone(),
             _ if !cx.run_generators => {
@@ -522,12 +539,19 @@ impl Engine {
         let vars = exec_vars(cx.env);
         let timeout = Duration::from_millis(self.cfg.generator_timeout_ms);
         match &g.source {
-            GenSource::Rust(f) => f(&GenCtx { cwd: &cx.env.cwd, env: &vars, tokens: &cx.tokens, timeout }),
+            GenSource::Rust(f) => f(&GenCtx {
+                cwd: &cx.env.cwd,
+                env: &vars,
+                tokens: &cx.tokens,
+                timeout,
+                remote: cx.env.remote.as_deref(),
+            }),
             GenSource::Script { argv, shell, output } => {
-                let out = match shell {
-                    Some(s) => exec::run(Cmd::Shell(s), &cx.env.cwd, &vars, timeout),
-                    None => exec::run(Cmd::Argv(argv), &cx.env.cwd, &vars, timeout),
+                let cmd = match shell {
+                    Some(s) => Cmd::Shell(s),
+                    None => Cmd::Argv(argv),
                 };
+                let out = exec::run(cmd, &cx.env.cwd, &vars, timeout, cx.env.remote.as_deref());
                 output.suggestions(&out.stdout)
             }
             GenSource::Static(list) => list.clone(),
@@ -561,26 +585,14 @@ impl Engine {
             Some(i) => cur.raw[i + 1..].chars().count(),
             None => cur.raw.chars().count(),
         };
-        let dir = if dir_part.is_empty() {
-            cx.env.cwd.clone()
-        } else if let Some(rel) = dir_part.strip_prefix("~/") {
-            dirs::home_dir().unwrap_or_default().join(rel)
-        } else {
-            // An absolute `dir_part` replaces the cwd.
-            cx.env.cwd.join(dir_part)
+        let listed = match cx.env.remote.clone() {
+            Some(r) => self.remote_dir(&r, cx.env, dir_part),
+            None => local_dir(&cx.env.cwd, dir_part),
         };
-        let Ok(rd) = std::fs::read_dir(&dir) else { return };
-        let mut entries: Vec<(bool, String)> = rd
-            .flatten()
-            .take(5000)
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with('.') && !base.starts_with('.') {
-                    return None;
-                }
-                let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
-                (is_dir || !folders_only).then_some((is_dir, name))
-            })
+        let mut entries: Vec<(bool, String)> = listed
+            .iter()
+            .filter(|(is_dir, name)| (!name.starts_with('.') || base.starts_with('.')) && (*is_dir || !folders_only))
+            .cloned()
             .collect();
         // Folders first, then by name.
         entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
@@ -590,6 +602,30 @@ impl Engine {
             let meta = spec::Meta { names: vec![label], ..Default::default() };
             cx.push(&meta, kind, suffix, base, delete);
         }
+    }
+
+    /// [`local_dir`] on a `lig ssh` host, cached briefly.
+    fn remote_dir(&mut self, r: &Remote, env: &ShellEnv, dir_part: &str) -> Listing {
+        let key = format!("{}\0{}\0{dir_part}", r.dest, env.cwd.display());
+        if let Some((t, v)) = self.remote_dirs.get(&key)
+            && t.elapsed() < REMOTE_DIR_TTL
+        {
+            return v.clone();
+        }
+        let ls = remote::ls_command(dir_part);
+        let out = exec::run(Cmd::Shell(&ls), &env.cwd, &[], REMOTE_TIMEOUT, Some(r));
+        let v: Listing = Arc::new(
+            out.stdout
+                .lines()
+                .take(5000)
+                .map(|l| match l.strip_suffix('/') {
+                    Some(name) => (true, name.to_string()),
+                    None => (false, l.to_string()),
+                })
+                .collect(),
+        );
+        self.remote_dirs.insert(key, (Instant::now(), v.clone()));
+        v
     }
 
     /// Executables on the shell's PATH; those with a built-in or user spec first.
@@ -644,13 +680,22 @@ impl Engine {
 
     fn path_commands(&mut self, env: &ShellEnv) -> Arc<BTreeSet<String>> {
         let path = env.path.clone().or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
+        let key = format!("{}\0{path}", env.remote.as_ref().map_or("", |r| r.dest.as_str()));
         if let Some((t, p, set)) = &self.path_cmds
-            && *p == path
+            && *p == key
             && t.elapsed() < Duration::from_secs(30)
         {
             return set.clone();
         }
         let mut set = BTreeSet::new();
+        if let Some(r) = &env.remote {
+            let list = r#"IFS=:; for d in $PATH; do ls -1 "$d" 2>/dev/null; done"#;
+            let vars = [("PATH".to_string(), path)];
+            let out = exec::run(Cmd::Shell(list), &env.cwd, &vars, REMOTE_TIMEOUT, Some(r));
+            let set = Arc::new(out.stdout.lines().map(str::to_string).collect::<BTreeSet<_>>());
+            self.path_cmds = Some((Instant::now(), key, set.clone()));
+            return set;
+        }
         for dir in path.split(':').filter(|d| !d.is_empty()) {
             for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
                 if let Ok(m) = std::fs::metadata(e.path())
@@ -662,7 +707,7 @@ impl Engine {
             }
         }
         let set = Arc::new(set);
-        self.path_cmds = Some((Instant::now(), path, set.clone()));
+        self.path_cmds = Some((Instant::now(), key, set.clone()));
         set
     }
 
@@ -950,6 +995,28 @@ fn variables(cx: &mut Cx<'_>, name: &str, braced: bool) {
 fn secret(name: &str) -> bool {
     let n = name.to_ascii_uppercase();
     ["TOKEN", "SECRET", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "COOKIE"].iter().any(|w| n.contains(w))
+}
+
+/// The folder `dir_part` as typed: `src/`, `~/x/`, `/etc/`, or empty for `cwd`.
+fn local_dir(cwd: &std::path::Path, dir_part: &str) -> Listing {
+    let dir = if dir_part.is_empty() {
+        cwd.to_path_buf()
+    } else if let Some(rel) = dir_part.strip_prefix("~/") {
+        dirs::home_dir().unwrap_or_default().join(rel)
+    } else {
+        // An absolute `dir_part` replaces the cwd.
+        cwd.join(dir_part)
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Arc::default() };
+    Arc::new(
+        rd.flatten()
+            .take(5000)
+            .map(|e| {
+                let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
+                (is_dir, e.file_name().to_string_lossy().into_owned())
+            })
+            .collect(),
+    )
 }
 
 fn is_flag(t: &str) -> bool {

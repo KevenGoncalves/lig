@@ -163,7 +163,7 @@ impl HelpLoader {
         if help_is_safe(exe) {
             let mut a = argv.to_vec();
             a.push("--help".into());
-            let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout);
+            let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout, None);
             let text = if out.stdout.trim().is_empty() { out.stderr } else { out.stdout };
             if parse(&text, argv).is_some_and(|s| !s.options.is_empty() || !s.subcommands.is_empty()) {
                 return clean(&text);
@@ -171,7 +171,7 @@ impl HelpLoader {
         }
         if argv.len() == 1 {
             let a = vec!["man".to_string(), "-P".into(), "cat".into(), argv[0].clone()];
-            let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout);
+            let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout, None);
             if out.status == 0 {
                 return clean(&out.stdout);
             }

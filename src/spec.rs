@@ -220,6 +220,8 @@ pub struct GenCtx<'a> {
     /// All tokens of the command, the one being completed last.
     pub tokens: &'a [String],
     pub timeout: Duration,
+    /// Commands run on this host (`lig ssh`).
+    pub remote: Option<&'a crate::remote::Remote>,
 }
 
 impl GenCtx<'_> {
@@ -231,7 +233,7 @@ impl GenCtx<'_> {
     /// Run a command in the shell's directory; stdout on success.
     pub fn run(&self, argv: &[&str]) -> Option<String> {
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
-        let out = exec::run(Cmd::Argv(&argv), self.cwd, self.env, self.timeout);
+        let out = exec::run(Cmd::Argv(&argv), self.cwd, self.env, self.timeout, self.remote);
         (out.status == 0).then_some(out.stdout)
     }
 

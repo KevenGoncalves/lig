@@ -50,10 +50,15 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   # Prepended: vte.sh (GNOME Terminal) ends PS0 with `ESC \`, which would swallow our `\e`.
   [[ $PS0 == *'6973;F'* ]] || PS0='\e]6973;F\a'"${PS0:-}"
 
-  # lig writes `<delete>;<back>;<text>` to $LIG_INSERT_FILE, then sends ESC [9147~.
+  # lig writes `<delete>;<back>;<text>` to $LIG_INSERT_FILE, then sends ESC [9147~;
+  # over `lig ssh` the payload follows the key instead, ending in BEL.
   __lig_insert() {
     local p
-    p=$(<"$LIG_INSERT_FILE") || return
+    if [[ -n $LIG_REMOTE ]]; then
+      IFS= read -r -s -d $'\a' p || return
+    else
+      p=$(<"$LIG_INSERT_FILE") || return
+    fi
     local del=${p%%;*}
     p=${p#*;}
     local back=${p%%;*}

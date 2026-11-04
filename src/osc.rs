@@ -13,6 +13,8 @@
 //!   `N;<name>\x1e<name>…`  the shell's function names
 //!   `K;<name>\x1e<name>…`  the shell's builtins
 //!   `V;<k=v>\x1e<k=v>…`    the shell's exported variables
+//!   `X;<pid>;<socket>;<host>`  `lig ssh` logs in to host (see `remote.rs`)
+//!   `Y`                    that `lig ssh` ended
 
 const PREFIX: &[u8] = b"\x1b]6973;";
 /// An unterminated message longer than this isn't ours: pass it through.
@@ -42,6 +44,13 @@ pub enum Msg {
     Functions(Vec<String>),
     Builtins(Vec<String>),
     Vars(Vec<(String, String)>),
+    /// `lig ssh` (process `pid`) logs in to `dest` with its connection at `control`.
+    Remote {
+        pid: u32,
+        control: String,
+        dest: String,
+    },
+    RemoteEnd,
 }
 
 /// Removes our messages from the output; keeps state across reads, since a
@@ -134,6 +143,12 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         "N" => Some(Msg::Functions(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
         "K" => Some(Msg::Builtins(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
         "V" => Some(Msg::Vars(pairs(rest))),
+        "X" => {
+            let mut f = rest.splitn(3, ';');
+            let pid = f.next()?.parse().ok()?;
+            Some(Msg::Remote { pid, control: f.next()?.to_string(), dest: f.next()?.to_string() })
+        }
+        "Y" => Some(Msg::RemoteEnd),
         _ => None,
     }
 }

@@ -17,6 +17,7 @@ use crate::engine::{Engine, Kind, ShellEnv, Suggestion};
 use crate::keys::{self, Action, Bindings, Key};
 use crate::osc::{Msg, OscFilter};
 use crate::popup::{self, Rect};
+use crate::remote::Remote;
 use crate::store::Store;
 
 /// Wait for output to settle this long before drawing.
@@ -271,6 +272,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         tty,
         foreign: false,
         foreign_checked: Instant::now(),
+        remote: None,
         req_tx,
         items: vec![],
         items_line: String::new(),
@@ -394,6 +396,24 @@ fn children(pid: u32) -> Vec<u32> {
         .filter_map(|t| std::fs::read_to_string(t.path().join("children")).ok())
         .flat_map(|s| s.split_whitespace().filter_map(|p| p.parse().ok()).collect::<Vec<u32>>())
         .collect()
+}
+
+/// The local shell's state, kept while its `lig ssh` runs.
+struct RemoteSession {
+    pid: u32,
+    local_env: ShellEnv,
+    fish_shell: bool,
+    insertion_transport: InsertionTransport,
+}
+
+/// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
+fn is_lig_ssh(pid: u32, control: &str) -> bool {
+    let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lig");
+    let exe = |p: PathBuf| p.to_string_lossy().trim_end_matches(" (deleted)").to_string();
+    let theirs = std::fs::read_link(format!("/proc/{pid}/exe")).ok().map(exe);
+    Path::new(control) == dir.join(format!("ssh-{pid}"))
+        && theirs.is_some()
+        && theirs == std::env::current_exe().ok().map(exe)
 }
 
 /// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain character.
@@ -540,6 +560,8 @@ struct Session {
     /// Another program uses the terminal (see [`foreign_program`]): no popup until it's gone.
     foreign: bool,
     foreign_checked: Instant,
+    /// The shell is logged in to a host through `lig ssh`.
+    remote: Option<RemoteSession>,
     cwd_fallback: PathBuf,
     req_tx: Sender<Request>,
 
@@ -661,8 +683,14 @@ impl Session {
     }
 
     fn update_foreign(&mut self) {
-        self.foreign =
-            self.editing && self.shell_pid.zip(self.tty.as_deref()).is_some_and(|(pid, tty)| foreign_program(pid, tty));
+        // A `lig ssh` killed before it could say so.
+        if self.remote.as_ref().is_some_and(|r| unsafe { libc::kill(r.pid as i32, 0) } != 0) {
+            self.end_remote();
+        }
+        // `ssh` itself uses the terminal; the remote shell reports what it's doing.
+        self.foreign = self.editing
+            && self.remote.is_none()
+            && self.shell_pid.zip(self.tty.as_deref()).is_some_and(|(pid, tty)| foreign_program(pid, tty));
         self.foreign_checked = Instant::now();
     }
 
@@ -800,8 +828,53 @@ impl Session {
             // Only bash's line is read off the screen.
             self.prompt_end = None;
         }
-        self.insertion_transport =
-            if kind == ShellKind::Zsh { InsertionTransport::Inline } else { InsertionTransport::File };
+        // A remote shell can't read our files: the payload follows the key.
+        self.insertion_transport = if kind == ShellKind::Zsh || self.remote.is_some() {
+            InsertionTransport::Inline
+        } else {
+            InsertionTransport::File
+        };
+    }
+
+    /// `lig ssh` started: until it ends, the remote shell drives the popup.
+    fn start_remote(&mut self, pid: u32, control: String, dest: String) {
+        if self.remote.is_some() || !is_lig_ssh(pid, &control) {
+            crate::log(&format!("ignored remote start from pid {pid}"));
+            return;
+        }
+        crate::log(&format!("remote {dest}"));
+        let remote = Some(std::sync::Arc::new(Remote { control: control.into(), dest }));
+        let local_env = std::mem::replace(&mut self.env, ShellEnv { remote, ..Default::default() });
+        self.remote = Some(RemoteSession {
+            pid,
+            local_env,
+            fish_shell: self.fish_shell,
+            insertion_transport: self.insertion_transport,
+        });
+        self.fish_shell = false;
+        self.fish_refresh = None;
+        self.prompt_end = None;
+        self.insertion_transport = InsertionTransport::Inline;
+        self.reset_line();
+    }
+
+    fn end_remote(&mut self) {
+        let Some(r) = self.remote.take() else { return };
+        crate::log("remote ended");
+        self.env = r.local_env;
+        self.fish_shell = r.fish_shell;
+        self.insertion_transport = r.insertion_transport;
+        self.prompt_end = None;
+        self.reset_line();
+    }
+
+    fn reset_line(&mut self) {
+        self.editing = false;
+        self.foreign = false;
+        self.items.clear();
+        self.items_line.clear();
+        self.line.clear();
+        self.dismissed = None;
     }
 
     fn set_line(&mut self, line: String) {
@@ -919,13 +992,17 @@ impl Session {
             Msg::Path(p) => self.env.path = Some(p),
             Msg::Cwd(c) => {
                 // Follow the shell's cwd so hosts reading ours from `/proc` inherit it.
-                let _ = std::env::set_current_dir(&c);
+                if self.remote.is_none() {
+                    let _ = std::env::set_current_dir(&c);
+                }
                 self.env.cwd = PathBuf::from(c);
             }
             Msg::Aliases(a) => self.env.aliases = std::sync::Arc::new(a.into_iter().collect()),
             Msg::Functions(f) => self.env.functions = std::sync::Arc::new(f),
             Msg::Builtins(b) => self.env.builtins = std::sync::Arc::new(b),
             Msg::Vars(v) => self.env.vars = std::sync::Arc::new(v),
+            Msg::Remote { pid, control, dest } => self.start_remote(pid, control, dest),
+            Msg::RemoteEnd => self.end_remote(),
         }
         self.mark_dirty();
     }
