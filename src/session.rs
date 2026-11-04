@@ -28,6 +28,8 @@ const ENTER_WAIT: Duration = Duration::from_millis(1500);
 /// Show "Searching…" only when results take longer than this.
 const LOADING_DELAY: Duration = Duration::from_millis(150);
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
+/// While another program has the terminal, look again this often: it can exit without output.
+const FOREIGN_RECHECK: Duration = Duration::from_millis(200);
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 const SNAPSHOT_ATTEMPTS: u8 = 3;
 /// Key sequence bound to the insert function in bash and zsh.
@@ -268,6 +270,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         shell_pid,
         tty,
         foreign: false,
+        foreign_checked: Instant::now(),
         req_tx,
         items: vec![],
         items_line: String::new(),
@@ -536,6 +539,7 @@ struct Session {
     tty: Option<PathBuf>,
     /// Another program uses the terminal (see [`foreign_program`]): no popup until it's gone.
     foreign: bool,
+    foreign_checked: Instant,
     cwd_fallback: PathBuf,
     req_tx: Sender<Request>,
 
@@ -609,10 +613,20 @@ impl Session {
                 let w = t + ENTER_WAIT;
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
+            if self.foreign {
+                let w = self.foreign_checked + FOREIGN_RECHECK;
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
             let ev = if let Some(due) = deadline {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        if self.foreign && self.foreign_checked.elapsed() >= FOREIGN_RECHECK {
+                            self.update_foreign();
+                            if self.foreign {
+                                continue;
+                            }
+                        }
                         // A snapshot request alone must not repaint the popup.
                         if self
                             .fish_refresh
@@ -644,6 +658,12 @@ impl Session {
                 Event::Exit => return,
             }
         }
+    }
+
+    fn update_foreign(&mut self) {
+        self.foreign =
+            self.editing && self.shell_pid.zip(self.tty.as_deref()).is_some_and(|(pid, tty)| foreign_program(pid, tty));
+        self.foreign_checked = Instant::now();
     }
 
     fn write_out(&mut self, bytes: &[u8]) {
@@ -745,8 +765,7 @@ impl Session {
         if self.editing && self.prompt_end.is_some() {
             self.read_line_from_screen();
         }
-        self.foreign =
-            self.editing && self.shell_pid.zip(self.tty.as_deref()).is_some_and(|(pid, tty)| foreign_program(pid, tty));
+        self.update_foreign();
         self.last_output = Instant::now();
         self.mark_dirty();
         if self.pending_enter.is_some()
@@ -1368,9 +1387,10 @@ impl Session {
         }
         if std::env::var_os("LIG_LOG").is_some() {
             crate::log(&format!(
-                "render editing={} hidden={} items={} current={} alternate={} cursor={:?} size={:?} rect={:?}",
+                "render editing={} hidden={} foreign={} items={} current={} alternate={} cursor={:?} size={:?} rect={:?}",
                 self.editing,
                 self.hidden,
+                self.foreign,
                 self.items.len(),
                 self.items_line == self.line,
                 self.parser.screen().alternate_screen(),
