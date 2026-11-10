@@ -1,5 +1,5 @@
 {
-  description = "Fig-style IDE autocomplete for your Linux terminal";
+  description = "Fig-style IDE autocomplete for your Linux or macOS terminal";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -9,6 +9,7 @@
       forAllSystems = nixpkgs.lib.genAttrs [
         "x86_64-linux"
         "aarch64-linux"
+        "aarch64-darwin"
       ];
     in
     {
@@ -24,11 +25,11 @@
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             meta = {
-              description = "Fig-style IDE autocomplete for your Linux terminal";
+              description = "Fig-style IDE autocomplete for your Linux or macOS terminal";
               homepage = "https://github.com/KevenGoncalves/lig";
               license = nixpkgs.lib.licenses.mit;
               mainProgram = "lig";
-              platforms = nixpkgs.lib.platforms.linux;
+              platforms = nixpkgs.lib.platforms.linux ++ [ "aarch64-darwin" ];
             };
           };
         }

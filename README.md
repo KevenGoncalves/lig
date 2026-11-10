@@ -5,7 +5,7 @@
 <h1 align="center">Lig</h1>
 
 <p align="center">
-  <b>IDE-style autocomplete for your Linux terminal.</b><br>
+  <b>IDE-style autocomplete for your Linux or macOS terminal.</b><br>
   Subcommands, options, branches, packages and paths in a popup as you type.<br>
   For zsh, bash and fish, in any terminal. Written in Rust.
 </p>
@@ -32,7 +32,7 @@ subcommand and option does, values that come from your system (branches, contain
 packages), and the next thing that fits on the line.
 
 It brings the experience of [Fig](https://fig.io) (now Kiro CLI autocomplete) and
-[easy-complete](https://github.com/chen86860/easy-complete) to Linux, as a single binary
+[easy-complete](https://github.com/chen86860/easy-complete) to Linux and Apple Silicon macOS, as a single binary
 that works in any terminal: it draws the popup inside the terminal itself.
 
 - **~740 commands** out of the box: git, docker, kubectl, cargo, npm, aws, gh, terraform,
@@ -54,7 +54,8 @@ that works in any terminal: it draws the popup inside the terminal itself.
 
 ## Install
 
-Lig runs on Linux with zsh ≥ 5.3, bash ≥ 4.4 or fish ≥ 4.2.1. Optional: `curl` for online
+Lig runs on Linux and Apple Silicon macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 or fish ≥ 4.2.1.
+On macOS, use the bundled zsh or a current bash/fish; Apple’s bundled bash 3.2 is too old. Optional: `curl` for online
 package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 ### Prebuilt binary
@@ -63,8 +64,8 @@ package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the latest release for your machine (x86_64 or ARM64, the static
-build that runs on any Linux), checks it against its sha256, and puts `lig` in
+The script downloads the latest release for your machine (x86_64/ARM64 static Linux
+or native Apple Silicon macOS), verifies its SHA-256 checksum, and puts `lig` in
 `~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
 release (`… | LIG_VERSION=1.0.6 sh`).
 
@@ -73,6 +74,7 @@ has these archives, each with a `.sha256`:
 
 | Archive | Runs on |
 | --- | --- |
+| `lig-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS (unsigned CLI binary) |
 | `lig-<version>-x86_64-unknown-linux-musl.tar.gz` | any x86_64 Linux (static binary) |
 | `lig-<version>-aarch64-unknown-linux-musl.tar.gz` | any ARM64 Linux (static binary) |
 | `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
@@ -155,7 +157,7 @@ eval (lig init fish post | string collect)
 ### Update and remove
 
 - **Update**: `lig update` installs the latest release from GitHub over the current
-  binary (the static build, checked against its sha256). `lig update --check` only tells
+  binary (the native macOS or static Linux build, checked against its SHA-256). `lig update --check` only tells
   you whether there's a newer one. Then open a new terminal tab: a tab keeps the version
   it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
@@ -200,7 +202,9 @@ What to expect:
 
 ## Configuration
 
-Settings live in `~/.config/lig/config.toml`. `lig config` prints every option with its
+Settings live in `~/.config/lig/config.toml` on Linux and
+`~/Library/Application Support/lig/config.toml` on macOS. Set `XDG_CONFIG_HOME`
+to use `$XDG_CONFIG_HOME/lig/config.toml` on either platform. `lig config` prints every option with its
 default value. The ones you're most likely to change:
 
 ```toml
@@ -331,11 +335,22 @@ the popup never blocks typing.
 
 ## zellij
 
-Inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
+On Linux, inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
 bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
 mirrors the foreground app into its own command line and working directory, once a
 second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
 idle shell as a plain pane) with the right folder, and restores it that way.
+
+On macOS, Lig uses zellij's `action set-resurrect-command` API to supply exact
+arguments and working directories without rewriting its process memory. This API
+was verified on zellij's development branch (commit `d06f87aca7151e032d0f10befb61f1a6df365a86`)
+and is **not available in zellij 0.45.1**. Lig detects the capability at runtime:
+older versions still support autocomplete, but macOS session resurrection requires
+a zellij build with this API. `lig doctor` reports whether the integration is active,
+unsupported, or failing. Use the same default shell in zellij and `$SHELL` so idle
+panes restore as plain shells. Excluded commands and commands larger than 4096 bytes
+restore as the shell; macOS also falls back for non-UTF-8 arguments. A non-UTF-8 working
+directory restores a shell at its nearest UTF-8 ancestor instead of the application.
 
 ```bash
 lig doctor                  # "[ok  ] zellij mirror: on" inside zellij
@@ -351,7 +366,7 @@ waits for ENTER in each command pane, and that is the safety net.
 
 Known limitations:
 
-- `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
+- On Linux, `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
   `killall <app>` and `pgrep -x <app>` don't, because lig's process name stays `lig`.
   `htop` shows the pane as the app.
 - A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
@@ -405,7 +420,7 @@ On the host:
 | A command's suggestions look outdated | `lig specs clear-cache` re-reads `--help` output. |
 | `clear` or `vim` complain about the terminal over plain `ssh` | The host lacks your terminal's terminfo: `infocmp -x xterm-ghostty \| ssh host -- tic -x -` (`lig ssh` falls back to `xterm-256color` by itself). |
 | No `scp host:` paths | The host needs a login without a password prompt (a key, ssh-agent, or an open `ControlMaster` connection). |
-| Something else | Start a shell with `LIG_LOG=1 zsh` (or `bash` / `fish`) and check `~/.local/state/lig/lig.log`. |
+| Something else | Start a shell with `LIG_LOG=1 zsh` (or `bash` / `fish`) and check `~/.local/state/lig/lig.log` (Linux), or `$TMPDIR/lig/lig.log` (macOS). |
 
 ## Limitations
 
@@ -427,10 +442,15 @@ python3 tests/fish_pty.py       # PTY tests: fish, then bash/zsh, tmux, the tria
 python3 tests/shell_smoke.py
 python3 tests/tmux_placement.py
 python3 tests/trial_launcher.py
-python3 tests/zellij_mirror.py  # the zellij mirror (needs zsh, not zellij)
+python3 tests/zellij_mirror.py  # Linux mirror (needs zsh, not zellij)
+python3 tests/zellij_macos.py   # macOS mirror contracts (needs zsh)
+python3 tests/install.py       # offline installer/checksum tests
+# macOS end-to-end resurrection, with a zellij build supporting the new API:
+LIG_TEST_ZELLIJ=/path/to/zellij python3 tests/zellij_resurrection.py
 tools/update-fig-specs.sh       # regenerate specs/fig/ from withfig/autocomplete
 ```
 
+CI runs unit and shell checks on Linux and Apple Silicon macOS.
 The PTY tests need Python 3 and the shells they test; the tmux tests use a private server.
 They test `target/release/lig`; set `LIG_TEST_BIN` to use another binary.
 

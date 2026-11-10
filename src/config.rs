@@ -6,7 +6,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir().unwrap_or_else(|| PathBuf::from("~/.config")).join("lig")
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .or_else(dirs::config_dir)
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("lig")
 }
 
 pub fn config_path() -> PathBuf {

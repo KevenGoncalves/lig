@@ -18,11 +18,13 @@ fail() { printf 'lig: %s\n' "$*" >&2; exit 1; }
 case "$VERSION" in
     @*) fail "this copy of the script has no version; run the one from a release, or set LIG_VERSION" ;;
 esac
-[ "$(uname -s)" = Linux ] || fail "lig runs on Linux only"
-case "$(uname -m)" in
-    x86_64 | amd64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) fail "there's no prebuilt lig for $(uname -m); build it from source instead" ;;
+system="$(uname -s)"
+arch="$(uname -m)"
+case "$system:$arch" in
+    Linux:x86_64 | Linux:amd64) target=x86_64-unknown-linux-musl ;;
+    Linux:aarch64 | Linux:arm64) target=aarch64-unknown-linux-musl ;;
+    Darwin:arm64 | Darwin:aarch64) target=aarch64-apple-darwin ;;
+    *) fail "there's no prebuilt lig for $system/$arch; macOS builds require Apple Silicon" ;;
 esac
 
 if command -v curl >/dev/null 2>&1; then
@@ -33,18 +35,20 @@ else
     fail "curl or wget is needed"
 fi
 
-name="lig-$VERSION-$arch-unknown-linux-musl"
+name="lig-$VERSION-$target"
 url="https://github.com/$REPO/releases/download/v$VERSION/$name.tar.gz"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 say "downloading lig $VERSION ($arch)"
 fetch "$url" "$tmp/$name.tar.gz" || fail "couldn't download $url"
+fetch "$url.sha256" "$tmp/$name.tar.gz.sha256" || fail "couldn't download the checksum"
 if command -v sha256sum >/dev/null 2>&1; then
-    fetch "$url.sha256" "$tmp/$name.tar.gz.sha256" || fail "couldn't download the checksum"
-    (cd "$tmp" && sha256sum -c --quiet "$name.tar.gz.sha256") || fail "the download doesn't match its checksum"
+    (cd "$tmp" && sha256sum -c "$name.tar.gz.sha256") || fail "the download doesn't match its checksum"
+elif command -v shasum >/dev/null 2>&1; then
+    (cd "$tmp" && shasum -a 256 -c "$name.tar.gz.sha256") || fail "the download doesn't match its checksum"
 else
-    say "sha256sum isn't installed; skipping the checksum"
+    fail "sha256sum or shasum is required to verify the download"
 fi
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 

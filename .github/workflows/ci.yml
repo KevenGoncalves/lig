@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+  pull_request:
+env:
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+      - run: cargo test --locked
+      - run: python3 tests/install.py
+      - run: cargo build --release --locked
+      - name: Install macOS test shells
+        if: runner.os == 'macOS'
+        run: brew install fish bash
+      - name: macOS shell and mirror regressions
+        if: runner.os == 'macOS'
+        run: |
+          python3 tests/shell_smoke.py
+          python3 tests/fish_pty.py
+          python3 tests/zellij_macos.py
+      - name: Install Linux test shell
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Linux shell and mirror regressions
+        if: runner.os == 'Linux'
+        run: |
+          python3 tests/shell_smoke.py
+          python3 tests/zellij_mirror.py

@@ -7,10 +7,17 @@ mod exec;
 mod help;
 mod icons;
 mod keys;
+#[cfg(target_os = "linux")]
 mod mirror;
+#[cfg(target_os = "macos")]
+#[path = "mirror_macos.rs"]
+mod mirror;
+mod mirror_policy;
 mod osc;
 mod parser;
 mod popup;
+mod process;
+#[cfg(target_os = "linux")]
 mod procfs;
 mod remote;
 mod session;
@@ -34,7 +41,7 @@ const PRE_BASH: &str = include_str!("../shell/pre.bash");
 const POST_BASH: &str = include_str!("../shell/post.bash");
 
 #[derive(Parser)]
-#[command(name = "lig", version, about = "Fig-style IDE autocomplete for your Linux terminal")]
+#[command(name = "lig", version, about = "Fig-style IDE autocomplete for your terminal")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -42,6 +49,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    #[command(hide = true)]
+    ShellPath { pid: u32 },
     /// Run a shell inside lig (the shell integration does this for you)
     Shell {
         /// Shell to run (default: $SHELL)
@@ -392,7 +401,26 @@ fn version_key(v: &str) -> Vec<u64> {
     v.trim_start_matches('v').split(['.', '-']).map_while(|p| p.parse().ok()).collect()
 }
 
-/// Installs the static (musl) release build, which runs on any Linux, after checking its sha256.
+fn release_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        _ => None,
+    }
+}
+
+fn checksum_command() -> std::process::Command {
+    if cfg!(target_os = "macos") {
+        let mut cmd = std::process::Command::new("shasum");
+        cmd.args(["-a", "256"]);
+        cmd
+    } else {
+        std::process::Command::new("sha256sum")
+    }
+}
+
+/// Installs the native release build after verifying its SHA-256 checksum.
 fn update(check: bool, force: bool) -> Result<()> {
     use std::process::Command;
     let current = env!("CARGO_PKG_VERSION");
@@ -427,11 +455,9 @@ fn update(check: bool, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let arch = match std::env::consts::ARCH {
-        a @ ("x86_64" | "aarch64") => a,
-        other => anyhow::bail!("there's no prebuilt lig for {other}; build it from source instead"),
-    };
-    let name = format!("lig-{latest}-{arch}-unknown-linux-musl");
+    let target = release_target(std::env::consts::OS, std::env::consts::ARCH)
+        .context("no prebuilt lig for this platform; build from source instead")?;
+    let name = format!("lig-{latest}-{target}");
     let asset = |file: &str| {
         release["assets"]
             .as_array()
@@ -454,7 +480,7 @@ fn update(check: bool, force: bool) -> Result<()> {
         println!("lig: downloading {archive}");
         run(Command::new("curl").args(["-fsSL", "--max-time", "300", "-o"]).arg(work.join(&archive)).arg(&url))?;
         std::fs::write(work.join(format!("{archive}.sha256")), curl(&[&sum_url])?)?;
-        run(Command::new("sha256sum").args(["--quiet", "-c", &format!("{archive}.sha256")]).current_dir(&work))
+        run(checksum_command().arg("-c").arg(format!("{archive}.sha256")).current_dir(&work))
             .context("the download doesn't match its checksum")?;
         run(Command::new("tar").args(["xzf", &archive]).current_dir(&work))?;
         let new = work.join(&name).join("lig");
@@ -479,6 +505,7 @@ fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// `read` returns the lig shell's `/proc/<pid>/cmdline`, already polled.
+#[cfg(any(target_os = "linux", test))]
 fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
     if !zellij {
         return "[off ] zellij mirror: not in zellij".into();
@@ -495,6 +522,7 @@ fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn shows_doctor(cmdline: &[u8]) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let mut args = cmdline.split(|&b| b == 0);
@@ -504,6 +532,7 @@ fn shows_doctor(cmdline: &[u8]) -> bool {
 }
 
 /// Polls for up to 1.5 s, until the mirror shows `lig doctor`.
+#[cfg(target_os = "linux")]
 fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
     let mut last = None;
     for _ in 0..15 {
@@ -548,6 +577,7 @@ fn doctor() -> Result<()> {
     let n = e.complete("ls --", &env, true, false).items.len();
     println!("[{}] --help parsing: `ls --` → {n} suggestions", ok(n > 0));
     let lig_pid = std::env::var("LIG_PID").ok().and_then(|v| v.parse::<u32>().ok());
+    #[cfg(target_os = "linux")]
     println!(
         "{}",
         mirror_status(
@@ -555,6 +585,15 @@ fn doctor() -> Result<()> {
             std::env::var_os("ZELLIJ").is_some(),
             std::env::var_os("LIG_NO_MIRROR").is_some(),
             || lig_pid.and_then(read_lig_cmdline),
+        )
+    );
+    #[cfg(target_os = "macos")]
+    println!(
+        "{}",
+        mirror::doctor_status(
+            lig_pid,
+            std::env::var_os("ZELLIJ").is_some(),
+            std::env::var_os("LIG_NO_MIRROR").is_some()
         )
     );
     Ok(())
@@ -775,7 +814,7 @@ fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> b
 fn main() -> Result<()> {
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let zellij = std::env::var_os("ZELLIJ").is_some();
-    if needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
+    if cfg!(target_os = "linux") && needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new("/proc/self/exe")
             .arg0(&args[0])
@@ -786,11 +825,18 @@ fn main() -> Result<()> {
     }
     let cli = Cli::parse();
     match cli.cmd {
+        Cmd::ShellPath { pid } => {
+            let path = process::executable(pid).context("cannot resolve shell executable")?;
+            println!("{}", path.display());
+        }
         Cmd::Shell { shell, login, pad } => {
             if pad.is_some() {
                 // The /proc/self/exe re-exec names the process "exe"; restore "lig" before spawning threads.
                 // SAFETY: PR_SET_NAME reads a NUL-terminated string of at most 16 bytes.
-                unsafe { libc::prctl(libc::PR_SET_NAME, c"lig".as_ptr()) };
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    libc::prctl(libc::PR_SET_NAME, c"lig".as_ptr())
+                };
             }
             icons::detect_in_background();
             let code = session::run(shell.unwrap_or_else(default_shell), login)?;
@@ -923,6 +969,14 @@ mod shell_tests {
     }
 
     #[test]
+    fn release_targets_preserve_linux_and_only_support_apple_silicon_macos() {
+        assert_eq!(release_target("linux", "x86_64"), Some("x86_64-unknown-linux-musl"));
+        assert_eq!(release_target("linux", "aarch64"), Some("aarch64-unknown-linux-musl"));
+        assert_eq!(release_target("macos", "aarch64"), Some("aarch64-apple-darwin"));
+        assert_eq!(release_target("macos", "x86_64"), None);
+        assert_eq!(release_target("windows", "aarch64"), None);
+    }
+    #[test]
     fn release_versions_compare_as_numbers() {
         assert!(version_key("v1.0.10") > version_key("1.0.9"));
         assert!(version_key("v1.1.0") > version_key("1.0.99"));
@@ -943,7 +997,7 @@ mod shell_tests {
                     );
                 }
             }
-            for sub in cli.get_subcommands() {
+            for sub in cli.get_subcommands().filter(|s| !s.is_hide_set()) {
                 let name = sub.get_name();
                 let s =
                     spec.find_subcommand(name).unwrap_or_else(|| panic!("specs/lig/lig.json lacks `{path} {name}`"));
