@@ -200,6 +200,10 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         cmd.env("LIG_TTY", tty);
     }
     cmd.env("LIG_PID", std::process::id().to_string());
+    #[cfg(target_os = "macos")]
+    if let (Ok(session), Ok(pane)) = (std::env::var("ZELLIJ_SESSION_NAME"), std::env::var("ZELLIJ_PANE_ID")) {
+        cmd.env(crate::mirror::PANE_OWNER_ENV, crate::mirror::pane_owner(&session, &pane));
+    }
     // bash reads accepted completions from this file (see shell/post.bash).
     let insert_file =
         dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join(format!("lig-{}.insert", std::process::id()));
@@ -367,11 +371,11 @@ struct RemoteSession {
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
 fn is_lig_ssh(pid: u32, control: &str) -> bool {
     let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lig");
-    let exe = |p: PathBuf| p.to_string_lossy().trim_end_matches(" (deleted)").to_string();
-    let theirs = crate::process::executable(pid).map(exe);
+    // Both sides from the same query, so symlinks and a replaced binary resolve alike.
+    let theirs = crate::process::executable(pid);
     Path::new(control) == dir.join(format!("ssh-{pid}"))
         && theirs.is_some()
-        && theirs == std::env::current_exe().ok().map(exe)
+        && theirs == crate::process::executable(std::process::id())
 }
 
 /// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain character.

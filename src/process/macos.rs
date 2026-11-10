@@ -52,6 +52,14 @@ mod tests {
         assert_eq!(parse_args(&bytes), Some(vec!["".into(), "10".into()]));
     }
     #[test]
+    fn pointer_aligned_path_has_no_padding() {
+        // "/bin/ls\0" ends exactly on 8 bytes: argv starts right after it. Rounding up past an
+        // aligned end would drop argv[0]; rounding by +8 instead of +7 would do exactly that.
+        let mut bytes = 1i32.to_ne_bytes().to_vec();
+        bytes.extend_from_slice(b"/bin/ls\0ls\0HOME=/x\0");
+        assert_eq!(parse_args(&bytes), Some(vec!["ls".into()]));
+    }
+    #[test]
     fn rejects_truncated_or_invalid_arguments() {
         let mut truncated = 2i32.to_ne_bytes().to_vec();
         truncated.extend_from_slice(b"/bin/test\0");
@@ -252,6 +260,88 @@ mod native_tests {
         child.wait().unwrap();
         assert!(present);
     }
+    #[test]
+    fn stderr_only_and_ttyless_processes_do_not_hold_the_tty() {
+        // Prompt helpers like `$(git …)` keep only stderr on the tty; they must not hide the popup.
+        let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize::default()).unwrap();
+        let tty = pair.master.tty_name().unwrap();
+        let tty_file = || std::fs::OpenOptions::new().read(true).write(true).open(&tty).unwrap();
+        let spawn = |stderr: std::process::Stdio| {
+            std::process::Command::new("/bin/sleep")
+                .arg("10")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(stderr)
+                .spawn()
+                .unwrap()
+        };
+        let mut stderr_only = spawn(tty_file().into());
+        let mut ttyless = spawn(std::process::Stdio::null());
+        let found = (has_tty(stderr_only.id(), &tty), has_tty(ttyless.id(), &tty));
+        for child in [&mut stderr_only, &mut ttyless] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        assert_eq!(found, (false, false));
+    }
+
+    /// Runs `script` under `/bin/sh` as a process-group leader standing in for the user's shell,
+    /// with `$TTY_PATH` set; waits until its background jobs have started.
+    fn fake_shell(script: &str, tty: &Path) -> std::process::Child {
+        use std::os::unix::process::CommandExt;
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .env("TTY_PATH", tty)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while children(child.id()).is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Let the job exec past the shell's fork.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        child
+    }
+
+    /// Whether `foreign_program` sees the job, polling until `expected` or a deadline:
+    /// the job may still be a forked `sh` that has not exec'd its program.
+    fn foreign_in(script: &str, expected: bool) -> bool {
+        let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize::default()).unwrap();
+        let tty = pair.master.tty_name().unwrap();
+        let mut shell = fake_shell(script, &tty);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut found = foreign_program(shell.id(), &tty);
+        while found != expected && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            found = foreign_program(shell.id(), &tty);
+        }
+        // SAFETY: plain kill(2) on the process group this test created.
+        unsafe { libc::kill(-(shell.id() as i32), libc::SIGKILL) };
+        shell.wait().unwrap();
+        found
+    }
+
+    #[test]
+    fn program_reading_the_tty_in_the_shells_group_is_foreign() {
+        // fzf via Ctrl+T: a widget child in the shell's group owns the terminal, so lig stays out of the way.
+        assert!(foreign_in(r#"/bin/sleep 10 < "$TTY_PATH" & wait"#, true));
+        // Grandchildren count too (a widget that runs a pipeline or a wrapper script).
+        assert!(foreign_in(r#"/bin/sh -c '/bin/sleep 10 < "$TTY_PATH"; :' & wait"#, true));
+    }
+
+    #[test]
+    fn shells_and_stderr_only_helpers_are_not_foreign() {
+        // A nested shell waiting on the tty is still the shell, not a foreign program.
+        assert!(!foreign_in(r#"/bin/zsh -fc 'read x' < "$TTY_PATH" & wait"#, false));
+        // A prompt helper with only stderr on the tty.
+        assert!(!foreign_in(r#"/bin/sleep 10 2> "$TTY_PATH" & wait"#, false));
+    }
+
     #[test]
     fn inspect_self_and_child() {
         let pid = std::process::id();

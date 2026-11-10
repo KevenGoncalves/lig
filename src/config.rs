@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 pub fn config_dir() -> PathBuf {
+    // The XDG spec says to ignore a relative (or empty) XDG_CONFIG_HOME.
     std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|p| !p.is_empty())
         .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
         .or_else(dirs::config_dir)
         .unwrap_or_else(|| PathBuf::from("~/.config"))
         .join("lig")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""macOS mirror contract tests. Optional real resurrection: LIG_TEST_ZELLIJ=/path/to/zellij."""
+"""macOS mirror contract tests against a fake zellij. Real resurrection: tests/zellij_resurrection.py."""
 import json
 import os
 from pathlib import Path
@@ -34,6 +34,7 @@ with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
         self.env = patch.dict(os.environ, ZELLIJ='0', ZELLIJ_SESSION_NAME='test session', ZELLIJ_PANE_ID='7',
                               PATH=str(self.root)+os.pathsep+os.environ['PATH'])
         self.env.start()
+        os.environ.pop('LIG_MIRROR_PANE',None)  # set when the suite itself runs inside a lig zellij pane
         self.term = None
 
     def tearDown(self):
@@ -70,6 +71,26 @@ with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
         self.assertEqual(call[:5],['--session','test session','action','set-resurrect-command','--pane-id'])
         term.send(b'\x03')
         self.wait_call(lambda c:c[-1]=='/bin/zsh' and Path(c[c.index('--cwd')+1]).resolve()==cwd.resolve())
+
+    def test_nested_lig_leaves_the_pane_to_the_outer_one(self):
+        # Two mirrors on one pane would overwrite each other's resurrect command every second.
+        term=self.start()
+        self.wait_call(lambda c:c[-1]=='/bin/zsh')
+        term.send('lig doctor > "$HOME/doctor"\r')
+        term.wait_for(lambda:(term.home/'doctor').exists() and 'explicit resurrection API' in (term.home/'doctor').read_text(),timeout=6)
+        script=term.home/'app.py'
+        script.write_text('import time\ntime.sleep(30)\n')
+        term.send(f"lig shell --shell /bin/zsh\r")
+        # The outer lig records the nested lig as the pane's command...
+        self.wait_call(lambda c:'shell' in c and '--shell' in c)
+        term.send(f"'{sys.executable}' '{script}' 'nested marker'\r")
+        time.sleep(3)
+        # ...and the nested lig never reports its own foreground program for the same pane.
+        calls=self.calls.read_text()
+        self.assertNotIn('nested marker',calls)
+        term.send(b'\x03')
+        term.send('exit\r')  # leave the nested lig so tearDown can close the outer shell
+        self.wait_call(lambda c:c[-1]=='/bin/zsh' and c.count('--')==1 and len(c)==10)
 
     def test_old_zellij_keeps_shell_and_reports_limitation(self):
         self.unsupported.touch()

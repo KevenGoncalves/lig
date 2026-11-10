@@ -1,10 +1,18 @@
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 pub fn cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
+/// The kernel appends " (deleted)" once the binary is replaced (a package upgrade): strip it,
+/// as macOS reports the plain path.
 pub fn executable(pid: u32) -> Option<PathBuf> {
-    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+    let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    match path.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
+        Some(live) => Some(PathBuf::from(OsStr::from_bytes(live))),
+        None => Some(path),
+    }
 }
 
 /// Whether a non-shell program (fzf via Ctrl+T, a pager…) uses the terminal while a line is edited.

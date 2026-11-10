@@ -24,7 +24,15 @@ case "$system:$arch" in
     Linux:x86_64 | Linux:amd64) target=x86_64-unknown-linux-musl ;;
     Linux:aarch64 | Linux:arm64) target=aarch64-unknown-linux-musl ;;
     Darwin:arm64 | Darwin:aarch64) target=aarch64-apple-darwin ;;
-    *) fail "there's no prebuilt lig for $system/$arch; macOS builds require Apple Silicon" ;;
+    # A shell under Rosetta reports x86_64 on Apple Silicon too.
+    Darwin:x86_64)
+        if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+            target=aarch64-apple-darwin
+        else
+            fail "there's no prebuilt lig for Intel Macs; macOS builds require Apple Silicon"
+        fi
+        ;;
+    *) fail "there's no prebuilt lig for $system/$arch; build it from source instead" ;;
 esac
 
 if command -v curl >/dev/null 2>&1; then

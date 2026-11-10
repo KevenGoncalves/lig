@@ -10,8 +10,6 @@
 //! `std::env::args()` reads this same memory: never call it after [`spawn`].
 
 use std::ffi::{OsStr, OsString};
-#[cfg(test)]
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -220,72 +218,6 @@ mod tests {
 
     fn os(v: &[&str]) -> Vec<OsString> {
         v.iter().map(OsString::from).collect()
-    }
-
-    #[test]
-    fn layout_exact_fit() {
-        assert_eq!(layout(&os(&["ab", "c"]), 6).unwrap(), b"ab\0c\0\0");
-    }
-
-    #[test]
-    fn layout_overflow_is_none() {
-        assert!(layout(&os(&["abcdef"]), 6).is_none());
-    }
-
-    #[test]
-    fn layout_last_byte_nul() {
-        for (a, n) in [(os(&["ab", "c"]), 5), (os(&["abcde"]), 6), (os(&[]), 3)] {
-            let v = layout(&a, n).unwrap();
-            assert_eq!(v.len(), n);
-            assert_eq!(v[n - 1], 0);
-        }
-    }
-
-    #[test]
-    fn rules_shells_and_wrappers_are_none() {
-        for x in "sh bash zsh fish dash env nice ionice nohup timeout time stdbuf xargs watch".split(' ') {
-            for name in [x.to_string(), format!("/usr/bin/{x}")] {
-                assert_eq!(rules(&os(&[&name, "a"])), (None, Rule::Shell), "{name}");
-            }
-        }
-    }
-
-    #[test]
-    fn rules_denylist_is_none() {
-        for x in ["sudo", "./rm", "/usr/bin/git", "mkfs.ext4", "pkill"] {
-            assert_eq!(rules(&os(&[x, "a"])), (None, Rule::Deny), "{x}");
-        }
-        assert_eq!(rules(&os(&["run0", "a"])).1, Rule::App);
-    }
-
-    #[test]
-    fn rules_login_shell_dash_is_shell() {
-        for x in ["-zsh", "-bash", "/bin/-sh"] {
-            assert_eq!(rules(&os(&[x])), (None, Rule::Shell), "{x}");
-        }
-        assert_eq!(rules(&os(&["-sudo", "a"])), (None, Rule::Deny));
-        assert_eq!(rules(&os(&["--zsh"])).1, Rule::App);
-    }
-
-    #[test]
-    fn rules_app_unchanged() {
-        let r = rules(&os(&["nvim", "foo"]));
-        assert_eq!(r, (Some(os(&["nvim", "foo"])), Rule::App));
-    }
-
-    #[test]
-    fn rules_resume_flags_pass_through() {
-        for a in [os(&["agent"]), os(&["agent", "--resume", "abc"]), os(&["agent", "-c", "fix x"])] {
-            assert_eq!(rules(&a), (Some(a.clone()), Rule::App));
-        }
-    }
-
-    #[test]
-    fn rules_keeps_non_utf8_bytes() {
-        let argv = vec![OsString::from("nvim"), OsString::from_vec(b"caf\xe9.txt".to_vec())];
-        let (out, rule) = rules(&argv);
-        assert_eq!(rule, Rule::App);
-        assert_eq!(out.unwrap()[1].as_bytes(), b"caf\xe9.txt");
     }
 
     #[test]

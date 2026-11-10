@@ -30,7 +30,7 @@ class Resurrection(unittest.TestCase):
                      TMPDIR=str(root), XDG_CONFIG_HOME=str(root/'config'),
                      ZELLIJ_SOCKET_DIR=str(root/'socket'),
                      PATH=str(Path(zellij).parent)+os.pathsep+str(BIN.parent)+os.pathsep+os.environ['PATH'])
-            for key in ['ZELLIJ','ZELLIJ_SESSION_NAME','ZELLIJ_PANE_ID','LIG_TTY','LIG_PID','LIG_DISABLE','LIG_NO_MIRROR']:
+            for key in ['ZELLIJ','ZELLIJ_SESSION_NAME','ZELLIJ_PANE_ID','LIG_TTY','LIG_PID','LIG_DISABLE','LIG_NO_MIRROR','LIG_MIRROR_PANE']:
                 env.pop(key,None)
             config=root/'config.kdl'
             config.write_text('default_shell "/bin/zsh"\nshow_startup_tips false\nshow_release_notes false\nsession_serialization true\nserialization_interval 1\n')

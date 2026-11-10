@@ -113,7 +113,7 @@ Then import the module, enable it, and optionally also configure it:
 
   programs.lig = {
     enable = true;
-    settings = { # gets written to ~/.config/lig/config.toml
+    settings = { # gets written to ~/.config/lig/config.toml (on macOS, lig reads it only with XDG_CONFIG_HOME set)
       ui.theme = "catppuccin";
       behavior.online = false;
     };
@@ -266,7 +266,8 @@ Changes apply to new terminal tabs.
 
 Looked up in this order:
 
-1. **Your specs** in `~/.config/lig/specs/<command>.json` or `.toml`.
+1. **Your specs** in `~/.config/lig/specs/<command>.json` or `.toml` (on macOS,
+   `~/Library/Application Support/lig/specs/` unless `XDG_CONFIG_HOME` is set).
 2. **Hand-written specs** in [`specs/lig/`](specs/lig) (git, docker, cargo, npm, systemctl,
    apt, dnf, asdf, kubectl, cd, …), merged with the converted one for the same command when
    there is one.
@@ -293,9 +294,9 @@ suggestions of a command lig already knows, start from its spec:
 lig specs new docker
 ```
 
-That writes `~/.config/lig/specs/docker.json` from the built-in spec (or from `--help` for
+That writes `docker.json` in your specs folder from the built-in spec (or from `--help` for
 other commands, or with `--from-help`), and lig uses it from then on. For a new command,
-write one yourself, e.g. `~/.config/lig/specs/deploy.toml`:
+write one yourself in the same folder, e.g. `deploy.toml`:
 
 ```toml
 name = "deploy"
@@ -348,12 +349,13 @@ and is **not available in zellij 0.45.1**. Lig detects the capability at runtime
 older versions still support autocomplete, but macOS session resurrection requires
 a zellij build with this API. `lig doctor` reports whether the integration is active,
 unsupported, or failing. Use the same default shell in zellij and `$SHELL` so idle
-panes restore as plain shells. Excluded commands and commands larger than 4096 bytes
-restore as the shell; macOS also falls back for non-UTF-8 arguments. A non-UTF-8 working
-directory restores a shell at its nearest UTF-8 ancestor instead of the application.
+panes restore as plain shells. Excluded commands and commands larger than about 4 KiB
+restore as the shell; macOS also falls back for non-UTF-8 arguments. A non-UTF-8 or
+unreadable working directory restores a shell instead of the application (at the nearest
+UTF-8 ancestor, or the shell's own directory).
 
 ```bash
-lig doctor                  # "[ok  ] zellij mirror: on" inside zellij
+lig doctor                  # "[ok  ] zellij mirror: on, ..." (Linux) or "... explicit resurrection API" (macOS)
 LIG_NO_MIRROR=1 zellij      # turn the mirror off; autocomplete still works
 ```
 
@@ -371,7 +373,8 @@ Known limitations:
   `htop` shows the pane as the app.
 - A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
 - A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
-  Harmless apart from how `ps` shows lig.
+  On Linux this is harmless apart from how `ps` shows lig. On macOS that lig, like any lig
+  nested in a pane, sees the pane's id and leaves its resurrect command to the outer lig.
 - A restored app runs with the zellij server's `PATH`, like plain zellij.
 
 ## ssh
@@ -466,7 +469,7 @@ tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
 install.sh            the installer attached to every release
-.github/workflows/    release builds
+.github/workflows/    CI and release builds
 assets/               the logo
 ```
 
