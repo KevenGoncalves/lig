@@ -98,7 +98,7 @@ class Fish:
         deadline = time.monotonic() + timeout
         while not predicate():
             if time.monotonic() >= deadline:
-                raise AssertionError('timed out waiting for shell state')
+                raise AssertionError(f'timed out waiting for shell state; output: {self.output[-500:]!r}')
             self.read(.02)
 
     def wait_text(self, text, start=0):
