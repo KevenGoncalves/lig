@@ -81,11 +81,9 @@ with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
         script=term.home/'app.py'
         script.write_text('import time\ntime.sleep(30)\n')
         term.send(f"lig shell --shell /bin/zsh\r")
-        # The outer lig records the nested lig as the pane's command...
         self.wait_call(lambda c:'shell' in c and '--shell' in c)
         term.send(f"'{sys.executable}' '{script}' 'nested marker'\r")
         time.sleep(3)
-        # ...and the nested lig never reports its own foreground program for the same pane.
         calls=self.calls.read_text()
         self.assertNotIn('nested marker',calls)
         term.send(b'\x03')

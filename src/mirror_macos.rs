@@ -1,4 +1,3 @@
-//! Explicit zellij resurrection metadata on macOS (no argv memory mutation).
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,18 +17,13 @@ fn invoke(args: &[String]) -> crate::exec::Output {
     crate::exec::run(crate::exec::Cmd::Argv(args), Path::new(""), &[], Duration::from_secs(2), None)
 }
 
-/// Mirror state, written by the mirror thread and read back by `lig doctor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
     Starting,
     Active,
-    /// This zellij has no `set-resurrect-command`.
     Unsupported,
-    /// zellij could not be run at all.
     Missing,
-    /// The capability probe kept timing out.
     Timeout,
-    /// The last update did not reach zellij; retried next tick.
     Failed,
 }
 impl Status {
@@ -50,7 +44,6 @@ impl Status {
     }
 }
 
-/// Probe for `set-resurrect-command`: the resulting state, and why when it is not `Active`.
 /// A timeout gives `None`, so the caller probes again.
 fn supported() -> (Option<Status>, String) {
     let out = invoke(&["zellij".into(), "action".into(), "set-resurrect-command".into(), "--help".into()]);
@@ -63,7 +56,6 @@ fn supported() -> (Option<Status>, String) {
     }
 }
 
-/// Probes that time out in a row before the mirror gives up for this shell.
 const PROBE_ATTEMPTS: u32 = 5;
 
 fn status_path(pid: u32) -> Result<PathBuf, String> {
@@ -104,7 +96,6 @@ impl StatusFile {
             .custom_flags(libc::O_NOFOLLOW)
             .open(&self.path)
             .and_then(|mut f| f.write_all(state.as_str().as_bytes()));
-        // Log the first failure only: this runs every second.
         if let Err(e) = result {
             if !self.logged.replace(true) {
                 crate::log(&format!("mirror: cannot write status {}: {e}", self.path.display()));
@@ -195,9 +186,7 @@ pub fn spawn(shell_pid: u32, shell: OsString) -> Option<std::thread::JoinHandle<
     let Some(pane) = std::env::var("ZELLIJ_PANE_ID").ok().filter(|s| s.parse::<u32>().is_ok()) else {
         return skip("ZELLIJ_PANE_ID is unset or not a number");
     };
-    // A lig nested in this pane (or a terminal started from it) inherits the pane id:
-    // only the outermost lig may set the pane's resurrect command.
-    // Pane ids are small per-session numbers, so the owner names the session too.
+    // A nested lig inherits the pane id: only the outermost lig may set the pane's resurrect command.
     if std::env::var(PANE_OWNER_ENV).is_ok_and(|owner| owner == pane_owner(&session, &pane)) {
         return skip("an outer lig already mirrors this pane");
     }
@@ -214,7 +203,6 @@ pub fn spawn(shell_pid: u32, shell: OsString) -> Option<std::thread::JoinHandle<
         let mut available = None;
         let mut timeouts = 0;
         let mut previous = None;
-        // The loop runs every second: log a message only when it differs from the last one.
         let mut last_log = String::new();
         let note = |last_log: &mut String, msg: String| {
             if msg != *last_log {
@@ -242,7 +230,6 @@ pub fn spawn(shell_pid: u32, shell: OsString) -> Option<std::thread::JoinHandle<
                         let cwd = crate::process::cwd(pid)?;
                         (crate::process::identity(pid) == Some(before)).then(|| (restore_command(&argv, &shell), cwd))
                     });
-                    // On a disappearing/unreadable foreground process, replace stale commands with the shell.
                     let next = safe_state(
                         snapshot.unwrap_or_else(|| {
                             let cwd = crate::process::cwd(shell_pid)
@@ -259,10 +246,8 @@ pub fn spawn(shell_pid: u32, shell: OsString) -> Option<std::thread::JoinHandle<
                         if out.status == 0 {
                             previous = Some(next);
                             status.write(Status::Active);
-                            // A failure that comes back after this success is worth logging again.
                             last_log.clear();
                         } else {
-                            // Retry next tick; do not claim that an unsent state is active.
                             status.write(Status::Failed);
                             note(
                                 &mut last_log,
@@ -284,7 +269,6 @@ pub fn spawn(shell_pid: u32, shell: OsString) -> Option<std::thread::JoinHandle<
 /// Set on the shell lig runs, so a nested lig in the same zellij pane leaves the pane to this one.
 pub const PANE_OWNER_ENV: &str = "LIG_MIRROR_PANE";
 
-/// The `PANE_OWNER_ENV` value for a zellij session and pane.
 pub fn pane_owner(session: &str, pane: &str) -> String {
     format!("{session}:{pane}")
 }
@@ -338,7 +322,6 @@ mod tests {
     }
     #[test]
     fn status_round_trips_through_its_file_text() {
-        // `lig doctor` reads what the mirror thread wrote; a mismatch reads as "not active".
         for status in Status::ALL {
             assert_eq!(Status::parse(status.as_str()), Some(status));
         }

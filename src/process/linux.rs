@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 pub fn cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
-/// The kernel appends " (deleted)" once the binary is replaced (a package upgrade): strip it,
-/// as macOS reports the plain path.
+/// The kernel appends " (deleted)" once the binary is replaced: strip it, as macOS reports the plain path.
 pub fn executable(pid: u32) -> Option<PathBuf> {
     let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     match path.as_os_str().as_bytes().strip_suffix(b" (deleted)") {
@@ -16,8 +15,7 @@ pub fn executable(pid: u32) -> Option<PathBuf> {
 }
 
 /// Whether a non-shell program (fzf via Ctrl+T, a pager…) uses the terminal while a line is edited.
-/// Widgets run in the shell's process group, so the foreground group can't tell: look for a non-shell
-/// descendant in that group with the tty open beyond stderr (prompt helpers like `$(git …)` only have fd 2).
+/// Widgets run in the shell's process group, so look for a non-shell descendant there with the tty open beyond stderr.
 pub fn foreign_program(shell: u32, tty: &Path) -> bool {
     let stat = |pid: u32| -> Option<(String, i64)> {
         let s = crate::procfs::stat(pid)?;

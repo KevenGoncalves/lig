@@ -1,4 +1,3 @@
-//! Shared resurrection rules and bounded argv layout.
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -22,13 +21,11 @@ const DENY: &[&[u8]] = &[
     b"chmod", b"chown", b"kill", b"pkill", b"killall", b"git",
 ];
 
-/// Whether `args`, NUL-joined with a final NUL, fit in `len` bytes.
 pub fn fits(args: &[OsString], len: usize) -> bool {
     len > 0 && args.iter().map(|a| a.len() + 1).sum::<usize>() <= len
 }
 
 /// NUL-join `args` and zero-fill to `len` (the last byte is always NUL); `None` if it does not fit.
-/// The Linux mirror writes this over its argv area.
 #[cfg(any(target_os = "linux", test))]
 pub fn layout(args: &[OsString], len: usize) -> Option<Vec<u8>> {
     if !fits(args, len) {
@@ -47,7 +44,6 @@ fn basename(argv: &[OsString]) -> &[u8] {
     argv.first().and_then(|a| Path::new(a).file_name()).map_or(&[][..], |n| n.as_bytes())
 }
 
-/// Decide what a restored pane should run: `None` means a plain shell.
 pub fn rules(argv: &[OsString]) -> (Option<Vec<OsString>>, Rule) {
     // A login shell's argv[0] is `-zsh`, `-bash`: drop that one dash.
     let base = basename(argv);

@@ -1,4 +1,3 @@
-//! Native macOS process inspection. No process metadata is read from /proc.
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 
@@ -9,11 +8,7 @@ fn parse_args(data: &[u8]) -> Option<Vec<OsString>> {
     }
     let mut rest = data.get(4..)?;
     let path_end = rest.iter().position(|&b| b == 0)? + 1;
-    // XNU exec_extract_strings aligns the executable-path area to the target
-    // pointer size. Apple Silicon and Rosetta processes are both 64-bit.
-    // KERN_PROCARGS2 removes the 16-byte "executable_path=" prefix, which
-    // preserves that alignment. Do NOT skip all NULs: argv[0] may be empty.
-    // See apple-oss-distributions/xnu bsd/kern/kern_exec.c: exec_extract_strings.
+    // XNU aligns the executable-path area to pointer size and KERN_PROCARGS2 keeps that alignment: do not skip all NULs, argv[0] may be empty.
     let argv_start = path_end.checked_add(7)? & !7;
     if rest.get(path_end..argv_start)?.iter().any(|&b| b != 0) {
         return None;
@@ -86,7 +81,6 @@ fn path(chars: impl IntoIterator<Item = libc::c_char>) -> Option<PathBuf> {
 
 fn bsd(pid: u32) -> Option<libc::proc_bsdinfo> {
     let pid = i32::try_from(pid).ok()?;
-    // SAFETY: this C struct contains only integers/arrays; the buffer has its exact size.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let n = unsafe {
         libc::proc_pidinfo(
@@ -102,7 +96,6 @@ fn bsd(pid: u32) -> Option<libc::proc_bsdinfo> {
 
 pub fn cwd(pid: u32) -> Option<PathBuf> {
     let pid = i32::try_from(pid).ok()?;
-    // SAFETY: integer-only C struct, passed with its exact allocated size.
     let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
     let n = unsafe {
         libc::proc_pidinfo(
@@ -121,20 +114,17 @@ pub fn cwd(pid: u32) -> Option<PathBuf> {
 pub fn executable(pid: u32) -> Option<PathBuf> {
     let pid = i32::try_from(pid).ok()?;
     let mut buf = [0; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: writable byte buffer and matching length.
     let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
     (n > 0).then(|| path(buf)).flatten()
 }
 
 pub fn children(pid: u32) -> Vec<u32> {
     let Ok(pid) = i32::try_from(pid) else { return vec![] };
-    // SAFETY: null/zero requests the required buffer size.
     let size = unsafe { libc::proc_listchildpids(pid, std::ptr::null_mut(), 0) };
     if size <= 0 {
         return vec![];
     }
     let mut pids = vec![0i32; (size as usize + 32).min(65536)];
-    // SAFETY: writable pid buffer with size in bytes, as required by libproc.
     let n = unsafe { libc::proc_listchildpids(pid, pids.as_mut_ptr().cast(), (pids.len() * size_of::<i32>()) as i32) };
     pids.into_iter().take(n.max(0) as usize).filter_map(|p| u32::try_from(p).ok().filter(|&p| p > 0)).collect()
 }
@@ -147,7 +137,6 @@ pub fn argv(pid: u32) -> Option<Vec<OsString>> {
     let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, i32::try_from(pid).ok()?];
     let mut buf = vec![0u8; 1024 * 1024];
     let mut size = buf.len();
-    // SAFETY: mib and output buffer have the provided lengths; no sysctl write requested.
     let result =
         unsafe { libc::sysctl(mib.as_mut_ptr(), 3, buf.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) };
     if result != 0 || size > buf.len() {
@@ -176,7 +165,6 @@ fn has_tty(pid: u32, tty: &Path) -> bool {
     let mut fds: Vec<libc::proc_fdinfo> = (0..(info.pbi_nfiles as usize + 32).min(65536))
         .map(|_| libc::proc_fdinfo { proc_fd: -1, proc_fdtype: 0 })
         .collect();
-    // SAFETY: initialized buffer of proc_fdinfo, size in bytes.
     let n = unsafe {
         libc::proc_pidinfo(
             pid as i32,
@@ -191,7 +179,6 @@ fn has_tty(pid: u32, tty: &Path) -> bool {
         if fd.proc_fd == 2 || fd.proc_fdtype != 1 {
             return false;
         }
-        // SAFETY: C integer-only structure and matching size for PROC_PIDFDVNODEPATHINFO = 2.
         let mut vnode: VnodeFdInfo = unsafe { std::mem::zeroed() };
         let n = unsafe {
             libc::proc_pidfdinfo(
@@ -262,7 +249,6 @@ mod native_tests {
     }
     #[test]
     fn stderr_only_and_ttyless_processes_do_not_hold_the_tty() {
-        // Prompt helpers like `$(git …)` keep only stderr on the tty; they must not hide the popup.
         let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize::default()).unwrap();
         let tty = pair.master.tty_name().unwrap();
         let tty_file = || std::fs::OpenOptions::new().read(true).write(true).open(&tty).unwrap();
@@ -285,8 +271,6 @@ mod native_tests {
         assert_eq!(found, (false, false));
     }
 
-    /// Runs `script` under `/bin/sh` as a process-group leader standing in for the user's shell,
-    /// with `$TTY_PATH` set; waits until its background jobs have started.
     fn fake_shell(script: &str, tty: &Path) -> std::process::Child {
         use std::os::unix::process::CommandExt;
         let child = std::process::Command::new("/bin/sh")
@@ -303,13 +287,10 @@ mod native_tests {
         while children(child.id()).is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        // Let the job exec past the shell's fork.
         std::thread::sleep(std::time::Duration::from_millis(300));
         child
     }
 
-    /// Whether `foreign_program` sees the job, polling until `expected` or a deadline:
-    /// the job may still be a forked `sh` that has not exec'd its program.
     fn foreign_in(script: &str, expected: bool) -> bool {
         let pair = portable_pty::native_pty_system().openpty(portable_pty::PtySize::default()).unwrap();
         let tty = pair.master.tty_name().unwrap();
@@ -320,7 +301,6 @@ mod native_tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
             found = foreign_program(shell.id(), &tty);
         }
-        // SAFETY: plain kill(2) on the process group this test created.
         unsafe { libc::kill(-(shell.id() as i32), libc::SIGKILL) };
         shell.wait().unwrap();
         found
@@ -328,17 +308,13 @@ mod native_tests {
 
     #[test]
     fn program_reading_the_tty_in_the_shells_group_is_foreign() {
-        // fzf via Ctrl+T: a widget child in the shell's group owns the terminal, so lig stays out of the way.
         assert!(foreign_in(r#"/bin/sleep 10 < "$TTY_PATH" & wait"#, true));
-        // Grandchildren count too (a widget that runs a pipeline or a wrapper script).
         assert!(foreign_in(r#"/bin/sh -c '/bin/sleep 10 < "$TTY_PATH"; :' & wait"#, true));
     }
 
     #[test]
     fn shells_and_stderr_only_helpers_are_not_foreign() {
-        // A nested shell waiting on the tty is still the shell, not a foreign program.
         assert!(!foreign_in(r#"/bin/zsh -fc 'read x' < "$TTY_PATH" & wait"#, false));
-        // A prompt helper with only stderr on the tty.
         assert!(!foreign_in(r#"/bin/sleep 10 2> "$TTY_PATH" & wait"#, false));
     }
 

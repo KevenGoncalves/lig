@@ -70,7 +70,6 @@ class Installer(unittest.TestCase):
         self.assertEqual(urls, '')
 
     def test_rosetta_shell_on_apple_silicon_gets_the_arm64_build(self):
-        # Rejecting this machine would tell an Apple Silicon user they need Apple Silicon.
         result, installed, urls = self.install('Darwin', 'x86_64', 'aarch64-apple-darwin', rosetta=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(installed)
@@ -84,7 +83,6 @@ class Installer(unittest.TestCase):
         self.assertEqual(urls, '')
 
     def test_sha256sum_verifies_linux_downloads(self):
-        # The path most Linux users take: GNU coreutils, no shasum.
         for corrupt in [False, True]:
             result, installed, _ = self.install('Linux', 'x86_64', 'x86_64-unknown-linux-musl',
                                                 corrupt=corrupt, checksum_tool='sha256sum')
@@ -92,7 +90,6 @@ class Installer(unittest.TestCase):
             self.assertEqual(installed, not corrupt)
 
     def test_missing_checksum_tool_refuses_to_install(self):
-        # An unverified binary must never be installed.
         result, installed, _ = self.install('Linux', 'x86_64', 'x86_64-unknown-linux-musl', checksum_tool=None)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('required to verify', result.stderr)

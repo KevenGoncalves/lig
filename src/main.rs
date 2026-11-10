@@ -420,7 +420,6 @@ fn checksum_command() -> std::process::Command {
     }
 }
 
-/// Installs the native release build after verifying its SHA-256 checksum.
 fn update(check: bool, force: bool) -> Result<()> {
     use std::process::Command;
     let current = env!("CARGO_PKG_VERSION");

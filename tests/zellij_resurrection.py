@@ -76,7 +76,6 @@ class Resurrection(unittest.TestCase):
             def dump():return cli('action','dump-layout')
             try:
                 fd=attach(True)
-                # Lig should replace its own wrapper command with the shell at idle.
                 wait(lambda:'command=' not in dump())
                 cwd=root/'work dir';cwd.mkdir()
                 output=root/'executed.json'
