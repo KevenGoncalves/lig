@@ -7,12 +7,21 @@ use serde::{Deserialize, Serialize};
 
 pub fn config_dir() -> PathBuf {
     // The XDG spec says to ignore a relative (or empty) XDG_CONFIG_HOME.
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(dirs::config_dir)
-        .unwrap_or_else(|| PathBuf::from("~/.config"))
-        .join("lig")
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    resolve_config_dir(xdg, dirs::home_dir(), dirs::config_dir())
+}
+
+/// `~/.config/lig` wins on every platform; the native dir (macOS `~/Library/Application Support`)
+/// is used only when it already holds a `lig` dir and `~/.config/lig` does not.
+fn resolve_config_dir(xdg: Option<PathBuf>, home: Option<PathBuf>, native: Option<PathBuf>) -> PathBuf {
+    if let Some(x) = xdg.filter(|p| p.is_absolute()) {
+        return x.join("lig");
+    }
+    let dotconfig = home.map_or_else(|| PathBuf::from("~/.config"), |h| h.join(".config")).join("lig");
+    match native.map(|n| n.join("lig")) {
+        Some(n) if !dotconfig.exists() && n.exists() => n,
+        _ => dotconfig,
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -321,5 +330,49 @@ pub fn sgr_color(spec: &str, base: u8) -> String {
     match s.parse::<u8>() {
         Ok(n) => format!("{base};5;{n}"),
         Err(_) => format!("{}", base + 1), // "default": the terminal's color
+    }
+}
+
+#[cfg(test)]
+mod config_dir_tests {
+    use super::resolve_config_dir;
+    use std::path::PathBuf;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("lig-cfgdir-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn dotconfig_beats_native_when_both_exist() {
+        let home = tmp("both");
+        let native = home.join("Library/Application Support");
+        std::fs::create_dir_all(home.join(".config/lig")).unwrap();
+        std::fs::create_dir_all(native.join("lig")).unwrap();
+        assert_eq!(resolve_config_dir(None, Some(home.clone()), Some(native)), home.join(".config/lig"));
+    }
+
+    #[test]
+    fn dotconfig_is_default_when_nothing_exists() {
+        let home = tmp("none");
+        let native = home.join("Library/Application Support");
+        assert_eq!(resolve_config_dir(None, Some(home.clone()), Some(native)), home.join(".config/lig"));
+    }
+
+    #[test]
+    fn native_kept_for_existing_installs() {
+        let home = tmp("native");
+        let native = home.join("Library/Application Support");
+        std::fs::create_dir_all(native.join("lig")).unwrap();
+        assert_eq!(resolve_config_dir(None, Some(home), Some(native.clone())), native.join("lig"));
+    }
+
+    #[test]
+    fn absolute_xdg_wins_relative_ignored() {
+        let home = tmp("xdg");
+        assert_eq!(resolve_config_dir(Some("/x".into()), Some(home.clone()), None), PathBuf::from("/x/lig"));
+        assert_eq!(resolve_config_dir(Some("rel".into()), Some(home.clone()), None), home.join(".config/lig"));
     }
 }

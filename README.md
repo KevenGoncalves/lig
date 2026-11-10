@@ -113,7 +113,7 @@ Then import the module, enable it, and optionally also configure it:
 
   programs.lig = {
     enable = true;
-    settings = { # gets written to ~/.config/lig/config.toml (on macOS, lig reads it only with XDG_CONFIG_HOME set)
+    settings = { # gets written to ~/.config/lig/config.toml
       ui.theme = "catppuccin";
       behavior.online = false;
     };
@@ -203,9 +203,8 @@ What to expect:
 
 ## Configuration
 
-Settings live in `~/.config/lig/config.toml` on Linux and
-`~/Library/Application Support/lig/config.toml` on macOS. Set `XDG_CONFIG_HOME`
-to use `$XDG_CONFIG_HOME/lig/config.toml` on either platform. `lig config` prints every option with its
+Settings live in `~/.config/lig/config.toml` (or `$XDG_CONFIG_HOME/lig/config.toml`).
+On macOS, `~/Library/Application Support/lig/` is still used if it exists and `~/.config/lig` does not. `lig config` prints every option with its
 default value. The ones you're most likely to change:
 
 ```toml
@@ -267,8 +266,8 @@ Changes apply to new terminal tabs.
 
 Looked up in this order:
 
-1. **Your specs** in `~/.config/lig/specs/<command>.json` or `.toml` (on macOS,
-   `~/Library/Application Support/lig/specs/` unless `XDG_CONFIG_HOME` is set).
+1. **Your specs** in `~/.config/lig/specs/<command>.json` or `.toml` (same
+   directory as `config.toml`).
 2. **Hand-written specs** in [`specs/lig/`](specs/lig) (git, docker, cargo, npm, systemctl,
    apt, dnf, asdf, kubectl, cd, …), merged with the converted one for the same command when
    there is one.
