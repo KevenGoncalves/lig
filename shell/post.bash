@@ -28,8 +28,9 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     if [[ -z $__lig_once ]]; then
       __lig_once=1
       local -a b f
-      mapfile -t b < <(compgen -b)
-      mapfile -t f < <(compgen -A function -X '_*')
+      local x
+      while IFS= read -r x; do b+=("$x"); done < <(compgen -b)
+      while IFS= read -r x; do f+=("$x"); done < <(compgen -A function -X '_*')
       local IFS=$'\x1e'
       printf '\e]6973;K;%s\a\e]6973;N;%s\a' "${b[*]}" "${f[*]}" >/dev/tty
     fi

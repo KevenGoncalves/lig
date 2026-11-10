@@ -137,7 +137,8 @@ Open a new terminal, then check the setup with `lig doctor`.
 
 `lig install` adds a small block at the top and one at the bottom of your shell config
 (`~/.zshrc`, `~/.bashrc` or `~/.config/fish/config.fish`) and keeps the original as
-`<config>.lig-backup`. To set it up by hand instead:
+`<config>.lig-backup`. On macOS, `lig install bash` also makes your login file
+(`~/.bash_profile`) source `~/.bashrc`, because Terminal starts bash as a login shell. To set it up by hand instead:
 
 ```bash
 # first line of ~/.zshrc                 # last line of ~/.zshrc

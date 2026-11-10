@@ -291,6 +291,9 @@ const PRE_BEGIN: &str = "# >>> lig pre >>>";
 const PRE_END: &str = "# <<< lig pre <<<";
 const POST_BEGIN: &str = "# >>> lig post >>>";
 const POST_END: &str = "# <<< lig post <<<";
+// macOS terminals start bash as a login shell, which skips ~/.bashrc unless the login file sources it.
+const LOGIN_BEGIN: &str = "# >>> lig bashrc >>>";
+const LOGIN_END: &str = "# <<< lig bashrc <<<";
 
 fn strip_block(text: &str, begin: &str, end: &str) -> String {
     let mut out = String::new();
@@ -370,10 +373,46 @@ fn install_at(shell: ShellKind, rc: &Path, bin: &str) -> Result<()> {
     std::fs::write(rc, new).with_context(|| format!("writing {}", rc.display()))
 }
 
+/// The file a login bash reads, in bash's order; `.bash_profile` when none exists.
+fn bash_login_file(home: &Path) -> PathBuf {
+    [".bash_profile", ".bash_login", ".profile"]
+        .iter()
+        .map(|n| home.join(n))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| home.join(".bash_profile"))
+}
+
+fn login_text(old: &str) -> String {
+    let body = strip_block(old, LOGIN_BEGIN, LOGIN_END);
+    if body.contains(".bashrc") {
+        return body;
+    }
+    let sep = if body.is_empty() || body.ends_with('\n') { "" } else { "\n" };
+    format!("{body}{sep}{LOGIN_BEGIN}\n[ -r ~/.bashrc ] && . ~/.bashrc\n{LOGIN_END}\n")
+}
+
+/// Makes a login bash source `~/.bashrc`, where lig is installed.
+fn install_bash_login(login: &Path) -> Result<()> {
+    let old = match std::fs::read_to_string(login) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let new = login_text(&old);
+    if new != old {
+        std::fs::write(login, new).with_context(|| format!("writing {}", login.display()))?;
+        println!("lig: updated {} so login shells read ~/.bashrc", login.display());
+    }
+    Ok(())
+}
+
 fn install(shell: ShellKind) -> Result<()> {
     let rc = shell.rc();
     install_at(shell, &rc, &exe())?;
     println!("lig: updated {}", rc.display());
+    if cfg!(target_os = "macos") && matches!(shell, ShellKind::Bash) {
+        install_bash_login(&bash_login_file(&dirs::home_dir().unwrap_or_default()))?;
+    }
     println!("lig: open a new terminal (or run `exec {}`) to start using it.", shell.name());
     Ok(())
 }
@@ -387,6 +426,12 @@ fn uninstall(shell: ShellKind) -> Result<()> {
     };
     std::fs::write(&rc, managed_body(&old)?)?;
     println!("lig: removed from {}", rc.display());
+    if cfg!(target_os = "macos") && matches!(shell, ShellKind::Bash) {
+        let login = bash_login_file(&dirs::home_dir().unwrap_or_default());
+        if let Ok(text) = std::fs::read_to_string(&login) {
+            std::fs::write(&login, strip_block(&text, LOGIN_BEGIN, LOGIN_END))?;
+        }
+    }
     Ok(())
 }
 
@@ -1052,6 +1097,18 @@ mod shell_tests {
         assert_eq!(managed_body(&std::fs::read_to_string(&rc).unwrap()).unwrap(), body);
         assert_eq!(std::fs::metadata(&rc).unwrap().permissions().mode() & 0o777, 0o600);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bash_login_sources_bashrc_once_and_uninstall_restores_it() {
+        let user = "export PATH=/x:$PATH";
+        let installed = login_text(user);
+        assert!(installed.starts_with(user), "user content kept");
+        assert!(installed.contains("[ -r ~/.bashrc ] && . ~/.bashrc"));
+        assert_eq!(login_text(&installed), installed, "idempotent");
+        assert_eq!(strip_block(&installed, LOGIN_BEGIN, LOGIN_END), format!("{user}\n"));
+        let own = "[ -f ~/.bashrc ] && source ~/.bashrc\n";
+        assert_eq!(login_text(own), own, "user's own bashrc hook is respected");
     }
 
     #[test]
