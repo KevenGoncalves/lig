@@ -19,8 +19,8 @@ class ShellSmoke(unittest.TestCase):
             term.send(b'\t')
             term.send(b'\r')
             self.assertEqual(term.buffer(), 'git cherry-pick')
-            term.send(b'\x03echo REGRESSION_OK\r')
-            self.assertIn(b'REGRESSION_OK', term.send(b'\x03echo REGRESSION_OK\r'))
+            term.send(b'\x03')
+            self.assertIn(b'REGRESSION_OK', term.send(b'echo REGRESSION_OK\r'))
         finally:
             self.assertEqual(term.close(17), 17)
 
