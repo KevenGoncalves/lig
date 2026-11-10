@@ -48,6 +48,7 @@ class Fish:
         if kind == 'bash':
             self.config.write_text("PS1='test> '\nbind -x '\"\\C-o\": printf \"%s\\n\" \"$READLINE_LINE\" > \"$HOME/buffer\"'\n")
         elif kind == 'zsh':
+            (self.home / '.zshenv').write_text('skip_global_compinit=1\n')
             self.config.write_text(extra_config + "\nPROMPT='test> '\n__test_buffer() { print -r -- \"$BUFFER\" > \"$HOME/buffer\"; }\nzle -N __test_buffer\nbindkey '^O' __test_buffer\n")
 
         if complete_commands:
