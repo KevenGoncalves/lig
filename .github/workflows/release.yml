@@ -102,6 +102,10 @@ jobs:
       AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
       # The Copr package's custom webhook URL; without it Copr isn't rebuilt.
       COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+      # The armored secret key that signs the APT repository; without it the repository isn't published.
+      APT_GPG_KEY: ${{ secrets.APT_GPG_KEY }}
+    outputs:
+      apt: ${{ steps.publish.outcome == 'success' && env.APT_GPG_KEY != '' }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -183,3 +187,35 @@ jobs:
       - name: Rebuild the Copr package
         if: always() && steps.publish.outcome == 'success' && env.COPR_WEBHOOK_URL != ''
         run: curl -fsS -X POST "$COPR_WEBHOOK_URL"
+
+  # The APT repository on GitHub Pages (Settings → Pages → Source: GitHub Actions), rebuilt
+  # from this release's .deb files.
+  apt:
+    needs: release
+    if: always() && needs.release.outputs.apt == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}apt/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Build the signed repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APT_GPG_KEY: ${{ secrets.APT_GPG_KEY }}
+        run: |
+          command -v apt-ftparchive >/dev/null || sudo apt-get install -y apt-utils
+          gh release download "$TAG" --pattern '*.deb' --dir "$RUNNER_TEMP/debs"
+          printf '%s\n' "$APT_GPG_KEY" | gpg --batch --import
+          sh packaging/apt/repo.sh "$RUNNER_TEMP/debs" site/apt
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

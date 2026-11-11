@@ -10,6 +10,7 @@ secret is skipped, so a release never fails for lack of one.
 | Homebrew tap | `homebrew/` | `HOMEBREW_TAP_TOKEN` | live: `brew install kevengoncalves/tap/lig` |
 | AUR (`lig-bin`) | `aur/` | `AUR_SSH_KEY` | ready, not published (see below) |
 | Fedora Copr | `rpm/lig.spec`, `../.copr/Makefile` | `COPR_WEBHOOK_URL` | live: `dnf copr enable kevengoncalves/lig` |
+| APT repository (GitHub Pages) | `apt/repo.sh` | `APT_GPG_KEY` | ready, first published by the next release |
 
 ## Homebrew
 
@@ -63,3 +64,35 @@ Setup, once:
    `/webhooks/custom/<ID>/<UUID>/`, add the package name: `…/<UUID>/lig/`, and save it:
    `gh secret set COPR_WEBHOOK_URL --repo KevenGoncalves/lig`
 5. Add `sudo dnf copr enable kevengoncalves/lig && sudo dnf install lig` to the main README.
+
+## APT repository
+
+The `apt` job of the release workflow downloads the release's `.deb` files, builds a
+repository with `apt/repo.sh` (signed with `APT_GPG_KEY`) and deploys it to GitHub Pages at
+<https://kevengoncalves.github.io/lig/apt>. It's rebuilt from scratch each release, so it
+holds only the latest version. Tested with a throwaway key in Debian containers: install
+works, and a repository signed by another key is refused.
+
+Setup, once:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. Make a signing key in a throwaway keyring and store it as the secret; keep a copy of the
+   `.asc` in a password manager (a lost key means a new one that every user must download):
+
+   ```bash
+   export GNUPGHOME="$(mktemp -d)"
+   gpg --batch --passphrase '' --quick-gen-key "lig APT repository <keven.jm.goncalves@gmail.com>" ed25519 sign never
+   gpg --armor --export-secret-keys | gh secret set APT_GPG_KEY --repo KevenGoncalves/lig
+   gpg --armor --export-secret-keys > lig-apt-key.asc   # the backup
+   gpg --fingerprint
+   ```
+
+3. After the first release with it, add to the main README:
+
+   ```bash
+   sudo install -d /etc/apt/keyrings
+   curl -fsSL https://kevengoncalves.github.io/lig/apt/lig.gpg | sudo tee /etc/apt/keyrings/lig.gpg >/dev/null
+   echo "deb [signed-by=/etc/apt/keyrings/lig.gpg] https://kevengoncalves.github.io/lig/apt stable main" \
+     | sudo tee /etc/apt/sources.list.d/lig.list
+   sudo apt update && sudo apt install lig
+   ```

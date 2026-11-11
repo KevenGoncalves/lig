@@ -511,7 +511,7 @@ tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
 install.sh            the installer attached to every release
-packaging/            .deb/.rpm, Homebrew, AUR and Copr packaging (see packaging/README.md)
+packaging/            .deb/.rpm, Homebrew, AUR, Copr and APT packaging (see packaging/README.md)
 .github/workflows/    CI and release builds
 assets/               the logo
 ```
