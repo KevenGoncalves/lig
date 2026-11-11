@@ -160,10 +160,10 @@ eval (lig init fish post | string collect)
 
 ### Update and remove
 
-- **Update**: `lig update` installs the latest release from GitHub over the current
-  binary (the native macOS or static Linux build, checked against its SHA-256).
-  `lig update --check` only tells you whether there's a newer one. Then open a new terminal tab: a tab keeps the version
-  it started with.
+- **Update**: `lig update` installs the latest release from GitHub over the current binary
+  (the native macOS or static Linux build, checked against its SHA-256).
+  `lig update --check` only tells you whether there's a newer one. Then open a new
+  terminal tab: a tab keeps the version it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
 
@@ -341,10 +341,11 @@ the popup never blocks typing.
 ## zellij
 
 On Linux, inside zellij, `lig shell` is the pane's process, so zellij's session
-resurrection would bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
-mirrors the foreground app into its own command line and working directory, once a
-second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
-idle shell as a plain pane) with the right folder, and restores it that way.
+resurrection would bring every pane back as `lig shell` in the folder lig started in. To
+avoid that, lig mirrors the foreground app into its own command line and working
+directory, once a second. zellij then saves each pane as the app that runs in it
+(`nvim foo`, `htop`, an idle shell as a plain pane) with the right folder, and restores
+it that way.
 
 On macOS, Lig uses zellij's `action set-resurrect-command` API to supply exact
 arguments and working directories without rewriting its process memory. This API
