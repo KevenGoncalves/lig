@@ -10,6 +10,8 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and isatty stdin; and isat
     end
     # An unknown parent counts as lig: wrapping again would start lig in a loop.
     if test "$LIG_TTY" != (tty); or begin; test -n "$__lig_parent"; and test "$__lig_parent" != "$LIG_PID"; end
+        # Ghostty's integration loaded here only; post.fish loads it in the shell inside lig.
+        functions -q __ghostty_setup; and set -gx LIG_GHOSTTY 1
         if status is-login
             exec @LIG_BIN@ shell --shell (status fish-path) --login
         else

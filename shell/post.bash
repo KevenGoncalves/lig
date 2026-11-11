@@ -74,4 +74,12 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     READLINE_POINT=$(( ${#left} + ${#text} - back ))
   }
   bind -x '"\e[9147~": __lig_insert'
+
+  # Ghostty's prompt marks (OSC 133) tell it the shell is idle, so closing it needs no confirmation.
+  if [[ -n $LIG_GHOSTTY ]]; then
+    unset LIG_GHOSTTY
+    if ! declare -F __ghostty_precmd >/dev/null && [[ -r $GHOSTTY_RESOURCES_DIR/shell-integration/bash/ghostty.bash ]]; then
+      builtin source "$GHOSTTY_RESOURCES_DIR/shell-integration/bash/ghostty.bash"
+    fi
+  fi
 fi

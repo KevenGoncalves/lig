@@ -90,4 +90,12 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   builtin bindkey -M emacs '\e[9147~' _lig_insert
   builtin bindkey -M viins '\e[9147~' _lig_insert
   builtin bindkey -M vicmd '\e[9147~' _lig_insert
+
+  # Ghostty's prompt marks (OSC 133) tell it the shell is idle, so closing it needs no confirmation.
+  if [[ -n $LIG_GHOSTTY ]]; then
+    builtin unset LIG_GHOSTTY
+    if (( ! ${+_ghostty_state} )) && [[ -r $GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration ]]; then
+      builtin source "$GHOSTTY_RESOURCES_DIR/shell-integration/zsh/ghostty-integration"
+    fi
+  fi
 fi

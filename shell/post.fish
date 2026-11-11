@@ -98,4 +98,13 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
         commandline --cursor $point
         commandline --function repaint
     end
+
+    # Ghostty's prompt marks (OSC 133) tell it the shell is idle, so closing it needs no confirmation.
+    if set -q LIG_GHOSTTY
+        set -e LIG_GHOSTTY
+        set -l ghostty $GHOSTTY_RESOURCES_DIR/shell-integration/fish/vendor_conf.d/ghostty-shell-integration.fish
+        if not functions -q __ghostty_setup; and test -r $ghostty
+            source $ghostty
+        end
+    end
 end

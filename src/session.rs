@@ -405,6 +405,16 @@ fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, 
     }
 }
 
+/// Where prompt marks (OSC 133;A, sent by terminal integrations like Ghostty's) start in `out`.
+fn prompt_marks(out: &[u8]) -> Vec<usize> {
+    const MARK: &[u8] = b"\x1b]133;A";
+    out.windows(MARK.len() + 1)
+        .enumerate()
+        .filter(|(_, w)| w.starts_with(MARK) && matches!(w[MARK.len()], b';' | b'\x07' | b'\x1b'))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// Answers the newest request: quick results (no commands run) first, then full ones.
 fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Behavior) {
     let mut engine = Engine::new(Store::default(), behavior);
@@ -744,16 +754,32 @@ impl Session {
             }
             // Erase the popup first so the screen matches what the shell and vt100 expect.
             self.erase(&mut w);
-            w.extend_from_slice(&fwd);
         }
-        self.write_out(&w);
         // Each message sees the screen as of its position (bash's prompt marker reads the cursor).
+        let mut marks = prompt_marks(&fwd).into_iter().peekable();
+        let mut msgs = msgs.into_iter().peekable();
         let mut at = 0;
-        for (pos, m) in msgs {
+        loop {
+            let next_msg = msgs.peek().map(|&(pos, _)| pos);
+            let Some(pos) = next_msg.into_iter().chain(marks.peek().copied()).min() else { break };
+            w.extend_from_slice(&fwd[at..pos]);
             self.parser.process(&fwd[at..pos]);
             at = pos;
-            self.on_msg(m);
+            if next_msg == Some(pos) {
+                let (_, m) = msgs.next().unwrap();
+                self.write_out(&std::mem::take(&mut w));
+                self.on_msg(m);
+            } else {
+                marks.next();
+                // The terminal starts a new line at a prompt mark; do it here so vt100 does too.
+                if self.parser.screen().cursor_position().1 != 0 {
+                    w.extend_from_slice(b"\r\n");
+                    self.parser.process(b"\r\n");
+                }
+            }
         }
+        w.extend_from_slice(&fwd[at..]);
+        self.write_out(&w);
         self.parser.process(&fwd[at..]);
         if self.editing && self.prompt_end.is_some() {
             self.read_line_from_screen();
@@ -1553,5 +1579,12 @@ mod tests {
         assert!(enter_accepts("always", false, true, false, false));
         assert!(enter_accepts("always", false, false, false, true));
         assert!(!enter_accepts("never", true, false, true, false));
+    }
+
+    #[test]
+    fn finds_prompt_marks() {
+        assert_eq!(prompt_marks(b"out\x1b]133;A;cl=line\x07$ \x1b]133;B\x07"), [3]);
+        assert_eq!(prompt_marks(b"\x1b]133;A\x07\x1b]133;A\x1b\\\x1b]133;AB\x07"), [0, 8]);
+        assert_eq!(prompt_marks(b"\x1b]133;A"), [] as [usize; 0]);
     }
 }
