@@ -200,6 +200,10 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         cmd.env("LIG_TTY", tty);
     }
     cmd.env("LIG_PID", std::process::id().to_string());
+    #[cfg(target_os = "macos")]
+    if let (Ok(session), Ok(pane)) = (std::env::var("ZELLIJ_SESSION_NAME"), std::env::var("ZELLIJ_PANE_ID")) {
+        cmd.env(crate::mirror::PANE_OWNER_ENV, crate::mirror::pane_owner(&session, &pane));
+    }
     // bash reads accepted completions from this file (see shell/post.bash).
     let insert_file =
         dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join(format!("lig-{}.insert", std::process::id()));
@@ -356,48 +360,6 @@ fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
     Ok(())
 }
 
-/// Whether a non-shell program (fzf via Ctrl+T, a pager…) uses the terminal while a line is edited.
-/// Widgets run in the shell's process group, so the foreground group can't tell: look for a non-shell
-/// descendant in that group with the tty open beyond stderr (prompt helpers like `$(git …)` only have fd 2).
-fn foreign_program(shell: u32, tty: &Path) -> bool {
-    let stat = |pid: u32| -> Option<(String, i64)> {
-        let s = crate::procfs::stat(pid)?;
-        let fields = crate::procfs::stat_fields(&s)?;
-        let comm = s[..s.rfind(')')?].split_once('(')?.1.to_string();
-        let pgrp = fields.get(2)?.parse().ok()?;
-        Some((comm, pgrp))
-    };
-    let mut todo = children(shell);
-    if todo.is_empty() {
-        return false;
-    }
-    let Some((_, group)) = stat(shell) else { return false };
-    while let Some(pid) = todo.pop() {
-        todo.extend(children(pid));
-        let Some((comm, pgrp)) = stat(pid) else { continue };
-        if pgrp != group || matches!(comm.as_str(), "zsh" | "bash" | "sh" | "dash") {
-            continue;
-        }
-        let on_tty = std::fs::read_dir(format!("/proc/{pid}/fd")).into_iter().flatten().flatten().any(|e| {
-            e.file_name() != "2" && std::fs::read_link(e.path()).is_ok_and(|t| t == tty || t == Path::new("/dev/tty"))
-        });
-        if on_tty {
-            return true;
-        }
-    }
-    false
-}
-
-fn children(pid: u32) -> Vec<u32> {
-    std::fs::read_dir(format!("/proc/{pid}/task"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|t| std::fs::read_to_string(t.path().join("children")).ok())
-        .flat_map(|s| s.split_whitespace().filter_map(|p| p.parse().ok()).collect::<Vec<u32>>())
-        .collect()
-}
-
 /// The local shell's state, kept while its `lig ssh` runs.
 struct RemoteSession {
     pid: u32,
@@ -409,11 +371,11 @@ struct RemoteSession {
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
 fn is_lig_ssh(pid: u32, control: &str) -> bool {
     let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lig");
-    let exe = |p: PathBuf| p.to_string_lossy().trim_end_matches(" (deleted)").to_string();
-    let theirs = std::fs::read_link(format!("/proc/{pid}/exe")).ok().map(exe);
+    // Both sides from the same query, so symlinks and a replaced binary resolve alike.
+    let theirs = crate::process::executable(pid);
     Path::new(control) == dir.join(format!("ssh-{pid}"))
         && theirs.is_some()
-        && theirs == std::env::current_exe().ok().map(exe)
+        && theirs == crate::process::executable(std::process::id())
 }
 
 /// Add `key` to the text typed so far, or give up (`None`) if it isn't a plain character.
@@ -690,7 +652,10 @@ impl Session {
         // `ssh` itself uses the terminal; the remote shell reports what it's doing.
         self.foreign = self.editing
             && self.remote.is_none()
-            && self.shell_pid.zip(self.tty.as_deref()).is_some_and(|(pid, tty)| foreign_program(pid, tty));
+            && self
+                .shell_pid
+                .zip(self.tty.as_deref())
+                .is_some_and(|(pid, tty)| crate::process::foreign_program(pid, tty));
         self.foreign_checked = Instant::now();
     }
 
@@ -1035,10 +1000,7 @@ impl Session {
     fn request(&mut self) {
         let mut env = self.env.clone();
         if env.cwd.as_os_str().is_empty() {
-            env.cwd = self
-                .shell_pid
-                .and_then(|p| std::fs::read_link(format!("/proc/{p}/cwd")).ok())
-                .unwrap_or_else(|| self.cwd_fallback.clone());
+            env.cwd = self.shell_pid.and_then(|p| crate::process::cwd(p)).unwrap_or_else(|| self.cwd_fallback.clone());
         }
         let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual });
         // Loading until answered (the worker may be busy with an older request);

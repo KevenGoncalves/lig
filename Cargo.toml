@@ -4,7 +4,7 @@ version = "1.1.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Keven Gonçalves"]
-description = "Fig-style IDE autocomplete for your Linux terminal"
+description = "Fig-style IDE autocomplete for your Linux or macOS terminal"
 license = "MIT"
 repository = "https://github.com/KevenGoncalves/lig"
 
