@@ -1000,7 +1000,7 @@ impl Session {
     fn request(&mut self) {
         let mut env = self.env.clone();
         if env.cwd.as_os_str().is_empty() {
-            env.cwd = self.shell_pid.and_then(|p| crate::process::cwd(p)).unwrap_or_else(|| self.cwd_fallback.clone());
+            env.cwd = self.shell_pid.and_then(crate::process::cwd).unwrap_or_else(|| self.cwd_fallback.clone());
         }
         let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual });
         // Loading until answered (the worker may be busy with an older request);
