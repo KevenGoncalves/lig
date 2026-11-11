@@ -1,0 +1,25 @@
+# Maintainer: Keven Gonçalves <keven.jm.goncalves@gmail.com>
+# Written by the release workflow of KevenGoncalves/lig (packaging/aur); edits here are replaced.
+pkgname=lig-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Fig-style IDE autocomplete for your terminal (zsh, bash and fish)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/KevenGoncalves/lig'
+license=('MIT')
+optdepends=('curl: online package search')
+provides=('lig')
+conflicts=('lig')
+options=('!strip' '!debug')
+install=lig.install
+source_x86_64=("$url/releases/download/v$pkgver/lig-$pkgver-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/lig-$pkgver-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('@SHA_x86_64-unknown-linux-musl@')
+sha256sums_aarch64=('@SHA_aarch64-unknown-linux-musl@')
+
+package() {
+  cd "lig-$pkgver-$CARCH-unknown-linux-musl"
+  install -Dm755 lig "$pkgdir/usr/bin/lig"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/lig/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

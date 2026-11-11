@@ -1,0 +1,20 @@
+pkgbase = lig-bin
+	pkgdesc = Fig-style IDE autocomplete for your terminal (zsh, bash and fish)
+	pkgver = @VERSION@
+	pkgrel = 1
+	url = https://github.com/KevenGoncalves/lig
+	install = lig.install
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	optdepends = curl: online package search
+	provides = lig
+	conflicts = lig
+	options = !strip
+	options = !debug
+	source_x86_64 = https://github.com/KevenGoncalves/lig/releases/download/v@VERSION@/lig-@VERSION@-x86_64-unknown-linux-musl.tar.gz
+	sha256sums_x86_64 = @SHA_x86_64-unknown-linux-musl@
+	source_aarch64 = https://github.com/KevenGoncalves/lig/releases/download/v@VERSION@/lig-@VERSION@-aarch64-unknown-linux-musl.tar.gz
+	sha256sums_aarch64 = @SHA_aarch64-unknown-linux-musl@
+
+pkgname = lig-bin

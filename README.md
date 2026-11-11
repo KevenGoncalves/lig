@@ -90,6 +90,15 @@ has these archives, each with a `.sha256`:
 | `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
 | `lig-<version>-aarch64-unknown-linux-gnu.tar.gz` | ARM64 with glibc 2.35+ |
 
+### Fedora, RHEL (Copr)
+
+```bash
+sudo dnf copr enable kevengoncalves/lig
+sudo dnf install lig
+```
+
+Built from source for Fedora and EPEL 9/10 (x86_64 and ARM64); `sudo dnf upgrade` updates it.
+
 ### Debian, Ubuntu, Fedora
 
 Each release also has `.deb` and `.rpm` packages of the static build (x86_64 and ARM64),
@@ -502,7 +511,7 @@ tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
 install.sh            the installer attached to every release
-packaging/            nfpm config for the release .deb and .rpm, the Homebrew formula
+packaging/            .deb/.rpm, Homebrew, AUR and Copr packaging (see packaging/README.md)
 .github/workflows/    CI and release builds
 assets/               the logo
 ```

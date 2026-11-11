@@ -98,6 +98,10 @@ jobs:
     env:
       # A token that can push to <owner>/homebrew-tap; without it the tap isn't updated.
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # The private SSH key of the AUR account that maintains lig-bin; without it the AUR isn't updated.
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+      # The Copr package's custom webhook URL; without it Copr isn't rebuilt.
+      COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -129,6 +133,7 @@ jobs:
         # Same name in every release, so releases/latest/download/install.sh works.
         run: sed "s/@VERSION@/${TAG#v}/" source/install.sh > dist/install.sh
       - name: Publish the release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -144,7 +149,8 @@ jobs:
             gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
           fi
       - name: Update the Homebrew tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        # Each channel runs even if another failed, once the release is out.
+        if: always() && steps.publish.outcome == 'success' && env.HOMEBREW_TAP_TOKEN != ''
         run: |
           version="${TAG#v}"
           tap="$RUNNER_TEMP/homebrew-tap"
@@ -156,3 +162,24 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/lig.rb
           git diff --cached --quiet || { git commit -m "lig $version" && git push; }
+      - name: Update the AUR package
+        if: always() && steps.publish.outcome == 'success' && env.AUR_SSH_KEY != ''
+        run: |
+          version="${TAG#v}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          # The ED25519 host key fingerprint published on aur.archlinux.org.
+          echo 'aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN' >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          aur="$RUNNER_TEMP/lig-bin"
+          git clone ssh://aur@aur.archlinux.org/lig-bin.git "$aur"
+          sh source/packaging/aur/aur.sh "$version" dist "$aur"
+          cd "$aur"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO lig.install
+          git diff --cached --quiet || { git commit -m "lig $version" && git push origin HEAD:master; }
+      - name: Rebuild the Copr package
+        if: always() && steps.publish.outcome == 'success' && env.COPR_WEBHOOK_URL != ''
+        run: curl -fsS -X POST "$COPR_WEBHOOK_URL"

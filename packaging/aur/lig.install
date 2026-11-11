@@ -1,0 +1,3 @@
+post_install() {
+  echo "lig: run 'lig install' as your user to turn on the popup in your shell."
+}
