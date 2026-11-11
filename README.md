@@ -32,8 +32,9 @@ subcommand and option does, values that come from your system (branches, contain
 packages), and the next thing that fits on the line.
 
 It brings the experience of [Fig](https://fig.io) (now Kiro CLI autocomplete) and
-[easy-complete](https://github.com/chen86860/easy-complete) to Linux and Apple Silicon macOS, as a single binary
-that works in any terminal: it draws the popup inside the terminal itself.
+[easy-complete](https://github.com/chen86860/easy-complete) to Linux and Apple Silicon
+macOS, as a single binary that works in any terminal: it draws the popup inside the
+terminal itself.
 
 - **~740 commands** out of the box: git, docker, kubectl, cargo, npm, aws, gh, terraform,
   systemctl, apt, dnf, asdf, ghostty… (the [withfig/autocomplete](https://github.com/withfig/autocomplete)
@@ -55,8 +56,9 @@ that works in any terminal: it draws the popup inside the terminal itself.
 ## Install
 
 Lig runs on Linux and Apple Silicon macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 or fish ≥ 4.2.1.
-On macOS, use the bundled zsh or a current bash/fish; Apple’s bundled bash 3.2 is too old. Optional: `curl` for online
-package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
+On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is too old).
+Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com) for
+icons.
 
 ### Prebuilt binary
 
@@ -138,7 +140,8 @@ Open a new terminal, then check the setup with `lig doctor`.
 `lig install` adds a small block at the top and one at the bottom of your shell config
 (`~/.zshrc`, `~/.bashrc` or `~/.config/fish/config.fish`) and keeps the original as
 `<config>.lig-backup`. On macOS, `lig install bash` also makes your login file
-(`~/.bash_profile`) source `~/.bashrc`, because Terminal starts bash as a login shell. To set it up by hand instead:
+(`~/.bash_profile`) source `~/.bashrc`, because Terminal starts bash as a login shell. To
+set it up by hand instead:
 
 ```bash
 # first line of ~/.zshrc                 # last line of ~/.zshrc
@@ -158,8 +161,8 @@ eval (lig init fish post | string collect)
 ### Update and remove
 
 - **Update**: `lig update` installs the latest release from GitHub over the current
-  binary (the native macOS or static Linux build, checked against its SHA-256). `lig update --check` only tells
-  you whether there's a newer one. Then open a new terminal tab: a tab keeps the version
+  binary (the native macOS or static Linux build, checked against its SHA-256).
+  `lig update --check` only tells you whether there's a newer one. Then open a new terminal tab: a tab keeps the version
   it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
@@ -203,9 +206,10 @@ What to expect:
 
 ## Configuration
 
-Settings live in `~/.config/lig/config.toml` (or `$XDG_CONFIG_HOME/lig/config.toml`).
-On macOS, `~/Library/Application Support/lig/` is still used if it exists and `~/.config/lig` does not. `lig config` prints every option with its
-default value. The ones you're most likely to change:
+Settings live in `~/.config/lig/config.toml` (or `$XDG_CONFIG_HOME/lig/config.toml`). On
+macOS, `~/Library/Application Support/lig/` is still used if it exists and `~/.config/lig`
+doesn't. `lig config` prints every option with its default value. The ones you're most
+likely to change:
 
 ```toml
 [ui]
@@ -336,8 +340,8 @@ the popup never blocks typing.
 
 ## zellij
 
-On Linux, inside zellij, `lig shell` is the pane's process, so zellij's session resurrection would
-bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
+On Linux, inside zellij, `lig shell` is the pane's process, so zellij's session
+resurrection would bring every pane back as `lig shell` in the folder lig started in. To avoid that, lig
 mirrors the foreground app into its own command line and working directory, once a
 second. zellij then saves each pane as the app that runs in it (`nvim foo`, `htop`, an
 idle shell as a plain pane) with the right folder, and restores it that way.
@@ -368,8 +372,9 @@ waits for ENTER in each command pane, and that is the safety net.
 
 Known limitations:
 
-- On Linux, `pkill -f <app>` inside zellij also matches the lig pane and closes it. `pkill <app>`,
-  `killall <app>` and `pgrep -x <app>` don't, because lig's process name stays `lig`.
+- On Linux, `pkill -f <app>` inside zellij also matches the lig pane and closes it.
+  `pkill <app>`, `killall <app>` and `pgrep -x <app>` don't, because lig's process name
+  stays `lig`.
   `htop` shows the pane as the app.
 - A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
 - A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
@@ -460,7 +465,8 @@ They test `target/release/lig`; set `LIG_TEST_BIN` to use another binary.
 ```
 src/                  the lig binary (session.rs: PTY + popup, engine.rs: completion,
                       popup.rs: drawing, help.rs: --help parser, specs/gens.rs: native generators,
-                      remote.rs: lig ssh)
+                      remote.rs: lig ssh, process/: Linux and macOS process queries,
+                      mirror.rs / mirror_macos.rs: zellij resurrection)
 shell/                zsh, bash and fish hooks; remote.* bootstrap them for `lig ssh`
 specs/lig/            hand-written specs (JSON)
 specs/fig/            converted withfig/autocomplete specs (generated)
@@ -488,6 +494,8 @@ Thanks to the contributors:
   shell's folder ([#14](https://github.com/KevenGoncalves/lig/pull/14)).
 - [@nadelacruz-00](https://github.com/nadelacruz-00): the zellij mirror ([#11](https://github.com/KevenGoncalves/lig/pull/11)).
 - [@jeremiasadriano](https://github.com/jeremiasadriano): the `php` and `php artisan` specs ([#16](https://github.com/KevenGoncalves/lig/pull/16)).
+- [@ammachado](https://github.com/ammachado): Apple Silicon macOS support and zellij
+  resurrection on macOS ([#18](https://github.com/KevenGoncalves/lig/pull/18)).
 
 The specs in `specs/fig/` come from [withfig/autocomplete](https://github.com/withfig/autocomplete),
 © Hercules Labs Inc. and contributors, MIT licensed (see [`specs/fig/LICENSE`](specs/fig/LICENSE)).
