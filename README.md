@@ -60,6 +60,14 @@ On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is too
 Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com) for
 icons.
 
+### Homebrew (macOS and Linux)
+
+```bash
+brew install kevengoncalves/tap/lig
+```
+
+Then run `lig install` (below). `brew upgrade lig` updates it.
+
 ### Prebuilt binary
 
 ```bash
@@ -494,7 +502,7 @@ tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
 install.sh            the installer attached to every release
-packaging/            nfpm config for the release .deb and .rpm
+packaging/            nfpm config for the release .deb and .rpm, the Homebrew formula
 .github/workflows/    CI and release builds
 assets/               the logo
 ```

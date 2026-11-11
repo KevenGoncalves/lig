@@ -95,6 +95,9 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    env:
+      # A token that can push to <owner>/homebrew-tap; without it the tap isn't updated.
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -140,3 +143,16 @@ jobs:
           else
             gh release create "$TAG" dist/* --verify-tag --title "$TAG" --generate-notes
           fi
+      - name: Update the Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          version="${TAG#v}"
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/${{ github.repository_owner }}/homebrew-tap.git" "$tap"
+          mkdir -p "$tap/Formula"
+          sh source/packaging/homebrew/formula.sh "$version" dist > "$tap/Formula/lig.rb"
+          cd "$tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lig.rb
+          git diff --cached --quiet || { git commit -m "lig $version" && git push; }
