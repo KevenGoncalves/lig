@@ -1,6 +1,7 @@
 //! `lig shell`: runs the shell in a PTY, mirrors its screen with vt100 and draws the suggestion popup.
 //! Input, output and resizes feed one event loop ([`Session`]); completion runs on a worker thread.
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -291,6 +292,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         dismissed: None,
         dismissed_by: None,
         drawn: None,
+        resized: None,
         sync_open: false,
         dirty: false,
         dirty_since: Instant::now(),
@@ -441,6 +443,13 @@ fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, 
         "after-space" => word_empty,
         _ => word_empty || !complete,
     }
+}
+
+/// `rect` moved up `by` rows (down if negative), clipped to a screen `rows` high.
+fn shifted(rect: Rect, by: i32, rows: u16) -> Option<Rect> {
+    let top = (i32::from(rect.row) - by).max(0);
+    let bottom = (i32::from(rect.row) + i32::from(rect.height) - by).min(i32::from(rows));
+    (top < bottom).then(|| Rect { row: top as u16, height: (bottom - top) as u16, ..rect })
 }
 
 /// Answers the newest request: quick results (no commands run) first, then full ones.
@@ -596,6 +605,8 @@ struct Session {
     dismissed: Option<String>,
     dismissed_by: Option<(Key, Instant)>,
     drawn: Option<Rect>,
+    /// The terminal's new size, not yet applied to the screen model (see `follow_resize`).
+    resized: Option<(u16, u16)>,
     /// A synchronized-output block is open (see `begin_sync`).
     sync_open: bool,
     /// A redraw is due, once output settles (see [`DEBOUNCE`]).
@@ -606,7 +617,9 @@ struct Session {
 
 impl Session {
     fn event_loop(&mut self, rx: &Receiver<Event>) {
+        let mut backlog = VecDeque::new();
         loop {
+            self.follow_resize(rx, &mut backlog);
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
@@ -639,7 +652,9 @@ impl Session {
                 let w = self.foreign_checked + FOREIGN_RECHECK;
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
-            let ev = if let Some(due) = deadline {
+            let ev = if let Some(ev) = backlog.pop_front() {
+                ev
+            } else if let Some(due) = deadline {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
@@ -1356,10 +1371,74 @@ impl Session {
 
     fn on_resize(&mut self) {
         let Some((rows, cols)) = winsize(0) else { return };
-        self.clear_popup();
+        self.resized = Some((rows, cols));
         let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
-        self.parser.screen_mut().set_size(rows, cols);
+    }
+
+    /// A resized terminal moves its content its own way (most keep it anchored to the cursor,
+    /// scrolling into or back out of their scrollback), while vt100 only cuts or adds rows at the
+    /// bottom: ask where the cursor went and move the screen model, and the popup on it, to match.
+    /// With the alternate screen up, the normal screen is checked once it's back.
+    fn follow_resize(&mut self, rx: &Receiver<Event>, backlog: &mut VecDeque<Event>) {
+        if self.parser.screen().alternate_screen() {
+            return;
+        }
+        let Some((rows, cols)) = self.resized.take() else { return };
+        // Without a report, assume what most terminals do: scroll just enough to keep the cursor on screen.
+        let (row, col) = self.ask_cursor(rx, backlog).unwrap_or(self.parser.screen().cursor_position());
+        let shift = self.resize_model(rows, cols, (row.min(rows - 1), col.min(cols - 1)));
+        if let Some(prompt) = &mut self.prompt_end {
+            prompt.row = (i32::from(prompt.row) - shift).clamp(0, i32::from(rows) - 1) as u16;
+        }
+        self.drawn = self.drawn.and_then(|rect| shifted(rect, shift, rows));
         self.mark_dirty();
+    }
+
+    /// Where the terminal's cursor is, 0-based. As in `terminal_origin`, but the stdin reader runs
+    /// now: events that arrive while waiting for the report are left in `backlog`.
+    fn ask_cursor(&mut self, rx: &Receiver<Event>, backlog: &mut VecDeque<Event>) -> Option<(u16, u16)> {
+        self.write_out(b"\x1b[6n");
+        let deadline = Instant::now() + Duration::from_millis(200);
+        let (mut input, mut report) = (vec![], None);
+        while report.is_none()
+            && let Ok(ev) = rx.recv_deadline(deadline)
+        {
+            match ev {
+                Event::Input(data) => {
+                    input.extend_from_slice(&data);
+                    report = take_cursor_report(&mut input);
+                }
+                ev => backlog.push_back(ev),
+            }
+        }
+        if !input.is_empty() {
+            backlog.push_back(Event::Input(input));
+        }
+        report.map(|(row, col)| (row - 1, col - 1))
+    }
+
+    /// Resize the screen model and scroll it so its cursor lands on (`row`, `col`), where the
+    /// terminal's is. Returns the rows scrolled up (down if negative).
+    fn resize_model(&mut self, rows: u16, cols: u16, (row, col): (u16, u16)) -> i32 {
+        let screen = self.parser.screen();
+        let shift = i32::from(screen.cursor_position().0) - i32::from(row);
+        let old_cols = screen.size().1;
+        if shift > 0 {
+            // Scroll up before resizing, out of the rows that shrinking cuts off the bottom.
+            self.parser.process(format!("\x1b[{shift}S").as_bytes());
+        }
+        self.parser.screen_mut().set_size(rows, cols);
+        if shift < 0 {
+            // Scroll down after resizing, into the rows that growing adds at the bottom.
+            self.parser.process(format!("\x1b[{}T", -shift).as_bytes());
+        }
+        self.parser.process(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+        if shift < 0 || cols != old_cols {
+            // Rows above came back from the terminal's scrollback or were rewrapped: unknown now
+            // (`known_from` clamps this to the rows above the cursor).
+            self.unknown_rows = u16::MAX;
+        }
+        shift
     }
 
     // ------------------------------------------------------------ drawing
@@ -1560,6 +1639,16 @@ mod tests {
         let mut parser = vt100::Parser::new(30, 100, 0);
         parser.process(b"\x1b[12;24Htest> git ch");
         assert_eq!(parser.screen().cursor_position(), (11, 35));
+    }
+
+    #[test]
+    fn shifted_popup_is_clipped_to_the_screen() {
+        let rect = Rect { row: 10, col: 4, height: 5, width: 20 };
+        assert_eq!(shifted(rect, 3, 30), Some(Rect { row: 7, ..rect }));
+        assert_eq!(shifted(rect, 12, 30), Some(Rect { row: 0, height: 3, ..rect }));
+        assert_eq!(shifted(rect, -18, 30), Some(Rect { row: 28, height: 2, ..rect }));
+        assert_eq!(shifted(rect, 0, 12), Some(Rect { height: 2, ..rect }));
+        assert_eq!(shifted(rect, 15, 30), None);
     }
 
     #[test]
