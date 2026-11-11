@@ -10,7 +10,7 @@ secret is skipped, so a release never fails for lack of one.
 | Homebrew tap | `homebrew/` | `HOMEBREW_TAP_TOKEN` | live: `brew install kevengoncalves/tap/lig` |
 | AUR (`lig-bin`) | `aur/` | `AUR_SSH_KEY` | ready, not published (see below) |
 | Fedora Copr | `rpm/lig.spec`, `../.copr/Makefile` | `COPR_WEBHOOK_URL` | live: `dnf copr enable kevengoncalves/lig` |
-| APT repository (GitHub Pages) | `apt/repo.sh` | `APT_GPG_KEY` | ready, first published by the next release |
+| APT repository (GitHub Pages) | `apt/repo.sh` | `APT_GPG_KEY` | live: `https://kevengoncalves.github.io/lig/apt` |
 
 ## Homebrew
 

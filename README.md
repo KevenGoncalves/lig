@@ -60,35 +60,33 @@ On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is too
 Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com) for
 icons.
 
+Install it one of these ways, then [set up your shell](#set-up-your-shell).
+
+### Install script
+
+```bash
+curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
+```
+
+The script downloads the latest release for your machine (x86_64/ARM64 static Linux or
+native Apple Silicon macOS), verifies its SHA-256 checksum, and puts `lig` in
+`~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
+release (`… | LIG_VERSION=1.0.6 sh`).
+
 ### Homebrew (macOS and Linux)
 
 ```bash
 brew install kevengoncalves/tap/lig
 ```
 
-Then run `lig install` (below). `brew upgrade lig` updates it.
-
-### Prebuilt binary
+### Debian, Ubuntu (APT)
 
 ```bash
-curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://kevengoncalves.github.io/lig/apt/lig.gpg | sudo tee /etc/apt/keyrings/lig.gpg >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/lig.gpg] https://kevengoncalves.github.io/lig/apt stable main" | sudo tee /etc/apt/sources.list.d/lig.list
+sudo apt update && sudo apt install lig
 ```
-
-The script downloads the latest release for your machine (x86_64/ARM64 static Linux
-or native Apple Silicon macOS), verifies its SHA-256 checksum, and puts `lig` in
-`~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
-release (`… | LIG_VERSION=1.0.6 sh`).
-
-To download it yourself, each [release](https://github.com/KevenGoncalves/lig/releases/latest)
-has these archives, each with a `.sha256`:
-
-| Archive | Runs on |
-| --- | --- |
-| `lig-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS (unsigned CLI binary) |
-| `lig-<version>-x86_64-unknown-linux-musl.tar.gz` | any x86_64 Linux (static binary) |
-| `lig-<version>-aarch64-unknown-linux-musl.tar.gz` | any ARM64 Linux (static binary) |
-| `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
-| `lig-<version>-aarch64-unknown-linux-gnu.tar.gz` | ARM64 with glibc 2.35+ |
 
 ### Fedora, RHEL (Copr)
 
@@ -97,33 +95,7 @@ sudo dnf copr enable kevengoncalves/lig
 sudo dnf install lig
 ```
 
-Built from source for Fedora and EPEL 9/10 (x86_64 and ARM64); `sudo dnf upgrade` updates it.
-
-### Debian, Ubuntu, Fedora
-
-Each release also has `.deb` and `.rpm` packages of the static build (x86_64 and ARM64),
-which put `lig` in `/usr/bin`:
-
-```bash
-# Debian, Ubuntu
-curl -fsSLO https://github.com/KevenGoncalves/lig/releases/latest/download/lig_<version>_amd64.deb
-sudo apt install ./lig_<version>_amd64.deb
-# Fedora, RHEL
-sudo dnf install https://github.com/KevenGoncalves/lig/releases/latest/download/lig-<version>-1.x86_64.rpm
-```
-
-On ARM64 the names end in `_arm64.deb` and `.aarch64.rpm`. Then run `lig install` as your
-user (next section).
-
-### From source
-
-With [Rust](https://rustup.rs) 1.85 or newer:
-
-```bash
-git clone https://github.com/KevenGoncalves/lig.git
-cd lig
-cargo install --path .
-```
+Built from source for Fedora and EPEL 9/10.
 
 ### Nix + home-manager
 
@@ -156,11 +128,36 @@ Then import the module, enable it, and optionally also configure it:
 }
 ```
 
-Lig is added to every shell home-manager manages. To leave one out, set its option to
-`false`: `programs.lig.enableFishIntegration`, `enableZshIntegration` or
-`enableBashIntegration`.
+Lig is added to every shell home-manager manages, so you can skip `lig install`. To leave a
+shell out, set its option to `false`: `programs.lig.enableFishIntegration`,
+`enableZshIntegration` or `enableBashIntegration`.
 
-To update Lig, update your Nix flake and rebuild instead of using `lig update`.
+### From source
+
+With [Rust](https://rustup.rs) 1.85 or newer:
+
+```bash
+git clone https://github.com/KevenGoncalves/lig.git
+cd lig
+cargo install --path .
+```
+
+### Manual download
+
+Each [release](https://github.com/KevenGoncalves/lig/releases/latest) has these files, each
+with a `.sha256`:
+
+| File | Runs on |
+| --- | --- |
+| `lig-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS (unsigned CLI binary) |
+| `lig-<version>-x86_64-unknown-linux-musl.tar.gz` | any x86_64 Linux (static binary) |
+| `lig-<version>-aarch64-unknown-linux-musl.tar.gz` | any ARM64 Linux (static binary) |
+| `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
+| `lig-<version>-aarch64-unknown-linux-gnu.tar.gz` | ARM64 with glibc 2.35+ |
+| `lig_<version>_amd64.deb`, `lig_<version>_arm64.deb` | Debian, Ubuntu: `sudo apt install ./lig_<version>_amd64.deb` |
+| `lig-<version>-1.x86_64.rpm`, `lig-<version>-1.aarch64.rpm` | Fedora, RHEL: `sudo dnf install ./lig-<version>-1.x86_64.rpm` |
+
+The `.deb` and `.rpm` packages hold the static build and put `lig` in `/usr/bin`.
 
 ### Set up your shell
 
@@ -168,7 +165,8 @@ To update Lig, update your Nix flake and rebuild instead of using `lig update`.
 lig install            # your $SHELL; or: lig install zsh / bash / fish
 ```
 
-Open a new terminal, then check the setup with `lig doctor`.
+Run it as your user, also after installing a package. Open a new terminal, then check the
+setup with `lig doctor`.
 
 `lig install` adds a small block at the top and one at the bottom of your shell config
 (`~/.zshrc`, `~/.bashrc` or `~/.config/fish/config.fish`) and keeps the original as
@@ -193,11 +191,11 @@ eval (lig init fish post | string collect)
 
 ### Update and remove
 
-- **Update**: `lig update` installs the latest release from GitHub over the current binary
-  (the native macOS or static Linux build, checked against its SHA-256).
-  `lig update --check` only tells you whether there's a newer one. Then open a new
-  terminal tab: a tab keeps the version it started with. A lig installed with a package
-  manager (apt, dnf, pacman, Homebrew, Nix) is updated with that package manager instead.
+- **Update**: a lig from a package manager (Homebrew, apt, dnf, Nix) is updated there, and
+  `lig update` tells you the command. Otherwise `lig update` installs the latest release
+  from GitHub over the current binary, checked against its SHA-256, and
+  `lig update --check` only tells you whether there's a newer one. Then open a new terminal
+  tab: a tab keeps the version it started with.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
 - **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`). Run it before
   removing a packaged lig, so your shell config stops calling it.
@@ -410,8 +408,7 @@ Known limitations:
 
 - On Linux, `pkill -f <app>` inside zellij also matches the lig pane and closes it.
   `pkill <app>`, `killall <app>` and `pgrep -x <app>` don't, because lig's process name
-  stays `lig`.
-  `htop` shows the pane as the app.
+  stays `lig` (`htop` still shows the pane as the app).
 - A pipeline is saved by its first command (`cat log | less` is saved as `cat log`).
 - A terminal started from a zellij pane inherits `$ZELLIJ`, so the mirror runs there too.
   On Linux this is harmless apart from how `ps` shows lig. On macOS that lig, like any lig
@@ -488,7 +485,7 @@ python3 tests/tmux_placement.py
 python3 tests/trial_launcher.py
 python3 tests/zellij_mirror.py  # Linux mirror (needs zsh, not zellij)
 python3 tests/zellij_macos.py   # macOS mirror contracts (needs zsh)
-python3 tests/install.py       # offline installer/checksum tests
+python3 tests/install.py        # offline installer/checksum tests
 # macOS end-to-end resurrection, with a zellij build supporting the new API:
 LIG_TEST_ZELLIJ=/path/to/zellij python3 tests/zellij_resurrection.py
 tools/update-fig-specs.sh       # regenerate specs/fig/ from withfig/autocomplete
