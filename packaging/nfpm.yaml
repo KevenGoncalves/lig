@@ -1,0 +1,39 @@
+# deb and rpm packages of a release binary, built by .github/workflows/release.yml:
+#
+#   cp <lig binary> target/nfpm/lig
+#   VERSION=1.2.0 ARCH=amd64 nfpm package -f packaging/nfpm.yaml -p deb -t dist/
+#
+# ARCH is amd64 or arm64; the binary is the static (musl) build, so one package fits every distro release.
+name: lig
+version: ${VERSION}
+arch: ${ARCH}
+platform: linux
+section: utils
+priority: optional
+maintainer: Keven Gonçalves <keven.jm.goncalves@gmail.com>
+description: Fig-style IDE autocomplete for your terminal (zsh, bash and fish)
+homepage: https://github.com/KevenGoncalves/lig
+license: MIT
+recommends:
+  - curl
+contents:
+  - src: target/nfpm/lig
+    dst: /usr/bin/lig
+    file_info:
+      mode: 0755
+  - src: README.md
+    dst: /usr/share/doc/lig/README.md
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/doc/lig/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/licenses/lig/LICENSE
+    packager: rpm
+    file_info:
+      mode: 0644
+scripts:
+  postinstall: packaging/postinstall.sh

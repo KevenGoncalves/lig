@@ -2,8 +2,9 @@
 #
 #   git tag -a v1.0.4 -m "1.0.4" && git push origin v1.0.4
 #
-# Assets: glibc (2.35+) and static musl archives for x86_64/aarch64, plus
-# an Apple Silicon macOS archive, checksums, and install.sh.
+# Assets: glibc (2.35+) and static musl archives for x86_64/aarch64, deb and
+# rpm packages of the musl builds, an Apple Silicon macOS archive, checksums,
+# and install.sh.
 name: Release
 
 on:
@@ -102,6 +103,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: source
+      - name: Build deb and rpm packages from the static Linux builds
+        env:
+          NFPM_VERSION: 2.48.0
+          NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+        run: |
+          nfpm="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$nfpm" "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/$nfpm"
+          echo "$NFPM_SHA256  $RUNNER_TEMP/$nfpm" | sha256sum -c
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/$nfpm" nfpm
+          export VERSION="${TAG#v}"
+          for arch in x86_64:amd64 aarch64:arm64; do
+            name="lig-$VERSION-${arch%%:*}-unknown-linux-musl"
+            tar -C "$RUNNER_TEMP" -xzf "dist/$name.tar.gz"
+            install -D "$RUNNER_TEMP/$name/lig" source/target/nfpm/lig
+            for packager in deb rpm; do
+              (cd source && ARCH="${arch#*:}" "$RUNNER_TEMP/nfpm" package -f packaging/nfpm.yaml -p "$packager" -t ../dist/)
+            done
+          done
+          cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
       - name: Add the install script, with this release's version
         # Same name in every release, so releases/latest/download/install.sh works.
         run: sed "s/@VERSION@/${TAG#v}/" source/install.sh > dist/install.sh

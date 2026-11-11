@@ -266,8 +266,52 @@ fn exe() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
+        .map(|p| homebrew_opt(&p).filter(|opt| opt.exists()).unwrap_or(p))
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "lig".into())
+}
+
+/// Homebrew keeps each version in `Cellar/<formula>/<version>`, removed after an upgrade;
+/// `opt/<formula>` always links to the current one.
+fn homebrew_opt(exe: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = exe.components().collect();
+    let cellar = parts.iter().rposition(|c| c.as_os_str() == "Cellar")?;
+    let formula = parts.get(cellar + 1)?;
+    let rest = parts.get(cellar + 3..).filter(|rest| !rest.is_empty())?;
+    let mut opt: PathBuf = parts[..cellar].iter().collect();
+    opt.push("opt");
+    opt.push(formula);
+    opt.extend(rest);
+    Some(opt)
+}
+
+/// The package manager that installed `exe`, and how to update lig with it.
+fn package_manager(exe: &Path) -> Option<(&'static str, &'static str)> {
+    if homebrew_opt(exe).is_some() {
+        return Some(("Homebrew", "brew upgrade lig"));
+    }
+    if exe.starts_with("/nix/store") {
+        return Some(("Nix", "update the flake input or channel it comes from"));
+    }
+    if !exe.starts_with("/usr") || exe.starts_with("/usr/local") {
+        return None;
+    }
+    [
+        ("dpkg", "-S", "apt", "sudo apt update && sudo apt install --only-upgrade lig"),
+        ("rpm", "-qf", "dnf", "sudo dnf upgrade lig"),
+        ("pacman", "-Qo", "pacman", "your AUR helper, e.g. yay -Syu"),
+    ]
+    .into_iter()
+    .find(|(tool, arg, ..)| {
+        std::process::Command::new(tool)
+            .arg(arg)
+            .arg(exe)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+    .map(|(_, _, name, how)| (name, how))
 }
 
 fn init_script(shell: ShellKind, part: Part) -> String {
@@ -468,6 +512,8 @@ fn checksum_command() -> std::process::Command {
 fn update(check: bool, force: bool) -> Result<()> {
     use std::process::Command;
     let current = env!("CARGO_PKG_VERSION");
+    let target = std::env::current_exe()?.canonicalize()?;
+    let manager = package_manager(&target);
     let repo = env!("CARGO_PKG_REPOSITORY").trim_start_matches("https://github.com/");
     let curl = |args: &[&str]| -> Result<String> {
         let out = Command::new("curl")
@@ -495,13 +541,17 @@ fn update(check: bool, force: bool) -> Result<()> {
         return Ok(());
     }
     if check {
-        println!("lig: {latest} is available (you have {current}). Run `lig update` to install it.");
+        let how = manager.map_or("lig update", |(_, how)| how);
+        println!("lig: {latest} is available (you have {current}). Run `{how}` to install it.");
         return Ok(());
     }
+    if let Some((name, how)) = manager {
+        anyhow::bail!("lig was installed with {name}, so update it there: {how}");
+    }
 
-    let target = release_target(std::env::consts::OS, std::env::consts::ARCH)
+    let platform = release_target(std::env::consts::OS, std::env::consts::ARCH)
         .context("no prebuilt lig for this platform; build from source instead")?;
-    let name = format!("lig-{latest}-{target}");
+    let name = format!("lig-{latest}-{platform}");
     let asset = |file: &str| {
         release["assets"]
             .as_array()
@@ -515,7 +565,6 @@ fn update(check: bool, force: bool) -> Result<()> {
     let sum_url = asset(&format!("{archive}.sha256")).with_context(|| format!("{tag} has no checksum"))?;
 
     // Next to the binary being replaced, so the final rename stays on one filesystem.
-    let target = std::env::current_exe()?.canonicalize()?;
     let dir = target.parent().context("lig has no parent folder")?;
     let work = tempfile_dir(dir).with_context(|| {
         format!("can't write to {} (install the update with sudo, or as the owner of that folder)", dir.display())
@@ -933,6 +982,21 @@ fn main() -> Result<()> {
 mod shell_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn homebrew_paths_point_at_opt() {
+        let opt = |p: &str| homebrew_opt(Path::new(p));
+        assert_eq!(opt("/opt/homebrew/Cellar/lig/1.2.0/bin/lig"), Some("/opt/homebrew/opt/lig/bin/lig".into()));
+        assert_eq!(
+            opt("/home/linuxbrew/.linuxbrew/Cellar/lig/1.2.0_1/bin/lig"),
+            Some("/home/linuxbrew/.linuxbrew/opt/lig/bin/lig".into())
+        );
+        assert_eq!(opt("/opt/homebrew/Cellar/lig"), None);
+        assert_eq!(opt("/home/me/.local/bin/lig"), None);
+        assert_eq!(package_manager(Path::new("/home/me/.local/bin/lig")), None);
+        assert_eq!(package_manager(Path::new("/usr/local/bin/lig")), None);
+        assert_eq!(package_manager(Path::new("/opt/homebrew/Cellar/lig/1.2.0/bin/lig")).unwrap().0, "Homebrew");
+    }
 
     fn os(v: &[&str]) -> Vec<std::ffi::OsString> {
         v.iter().map(std::ffi::OsString::from).collect()

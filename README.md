@@ -82,6 +82,22 @@ has these archives, each with a `.sha256`:
 | `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
 | `lig-<version>-aarch64-unknown-linux-gnu.tar.gz` | ARM64 with glibc 2.35+ |
 
+### Debian, Ubuntu, Fedora
+
+Each release also has `.deb` and `.rpm` packages of the static build (x86_64 and ARM64),
+which put `lig` in `/usr/bin`:
+
+```bash
+# Debian, Ubuntu
+curl -fsSLO https://github.com/KevenGoncalves/lig/releases/latest/download/lig_<version>_amd64.deb
+sudo apt install ./lig_<version>_amd64.deb
+# Fedora, RHEL
+sudo dnf install https://github.com/KevenGoncalves/lig/releases/latest/download/lig-<version>-1.x86_64.rpm
+```
+
+On ARM64 the names end in `_arm64.deb` and `.aarch64.rpm`. Then run `lig install` as your
+user (next section).
+
 ### From source
 
 With [Rust](https://rustup.rs) 1.85 or newer:
@@ -163,9 +179,11 @@ eval (lig init fish post | string collect)
 - **Update**: `lig update` installs the latest release from GitHub over the current binary
   (the native macOS or static Linux build, checked against its SHA-256).
   `lig update --check` only tells you whether there's a newer one. Then open a new
-  terminal tab: a tab keeps the version it started with.
+  terminal tab: a tab keeps the version it started with. A lig installed with a package
+  manager (apt, dnf, pacman, Homebrew, Nix) is updated with that package manager instead.
 - **Skip it for one shell**: `LIG_DISABLE=1 zsh`.
-- **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`).
+- **Remove it**: `lig uninstall` (or `lig uninstall fish` / `bash` / `zsh`). Run it before
+  removing a packaged lig, so your shell config stops calling it.
 
 ## Usage
 
@@ -476,6 +494,7 @@ tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)
 flake.nix, nix/       the Nix flake and home-manager module
 install.sh            the installer attached to every release
+packaging/            nfpm config for the release .deb and .rpm
 .github/workflows/    CI and release builds
 assets/               the logo
 ```
