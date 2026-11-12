@@ -791,6 +791,19 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
+        // ConPTY asks its terminal for win32-input-mode; passed on, the terminal would send lig
+        // keys it can't read. lig types plain VT, which ConPTY reads too.
+        if cfg!(windows) {
+            for mode in [b"\x1b[?9001h", b"\x1b[?9001l"] {
+                while let Some(i) = fwd.windows(mode.len()).position(|w| w == mode) {
+                    fwd.drain(i..i + mode.len());
+                    // Messages after it move back with the bytes.
+                    for (pos, _) in msgs.iter_mut().filter(|(pos, _)| *pos > i) {
+                        *pos = pos.saturating_sub(mode.len()).max(i);
+                    }
+                }
+            }
+        }
         let mut w = vec![];
         // ConPTY wraps PowerShell's replies in cursor and mode sequences: only a changed
         // screen means a changed line there (else each reply would ask again).

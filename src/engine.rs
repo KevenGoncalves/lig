@@ -233,7 +233,8 @@ impl Engine {
     /// `manual` (Ctrl+Space) completes command names and empty words regardless of config.
     pub fn complete(&mut self, line: &str, env: &ShellEnv, run_generators: bool, manual: bool) -> Completion {
         let mut cl = parser::parse(line);
-        expand_aliases(&mut cl, env);
+        let with_spec = self.spec_names();
+        expand_aliases(&mut cl, env, &with_spec);
         let mut cx = Cx {
             tokens: cl.values(),
             cl: &cl,
@@ -661,19 +662,23 @@ impl Engine {
         v
     }
 
-    /// Executables on the shell's PATH; those with a built-in or user spec first.
-    fn commands(&mut self, cx: &mut Cx<'_>) {
-        let path = self.path_commands(cx.env);
+    /// Commands with a built-in or user spec.
+    fn spec_names(&mut self) -> Arc<HashSet<String>> {
         let store = &self.store;
-        let with_spec = self
-            .spec_cmds
+        self.spec_cmds
             .get_or_insert_with(|| {
                 let mut s: HashSet<String> = specs::lig_names().map(str::to_string).collect();
                 s.extend(specs::FIG.names().map(str::to_string));
                 s.extend(store.commands());
                 Arc::new(s)
             })
-            .clone();
+            .clone()
+    }
+
+    /// Executables on the shell's PATH; those with a built-in or user spec first.
+    fn commands(&mut self, cx: &mut Cx<'_>) {
+        let path = self.path_commands(cx.env);
+        let with_spec = self.spec_names();
         let (q, d) = cx.default_query();
         for (name, value) in cx.env.aliases.iter() {
             let meta = spec::Meta {
@@ -942,8 +947,9 @@ fn loading_label(id: &str) -> String {
     .to_string()
 }
 
-/// Replace a leading alias (`gco` → `git checkout`), as zsh would.
-fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv) {
+/// Replace a leading alias (`gco` → `git checkout`), as zsh would; but not by a command lig
+/// knows nothing about when the alias's own name has a spec (PowerShell's `cd` → `Set-Location`).
+fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv, with_spec: &HashSet<String>) {
     let mut seen = HashSet::new();
     while let Some(first) = cl.tokens.first() {
         let Some(value) = env.aliases.get(&first.value) else { break };
@@ -951,7 +957,8 @@ fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv) {
             break;
         }
         let expanded = parser::parse(&format!("{value} ")).tokens;
-        if expanded.is_empty() {
+        let Some(target) = expanded.first() else { break };
+        if with_spec.contains(&first.value) && !with_spec.contains(basename(&target.value)) {
             break;
         }
         cl.tokens.splice(0..1, expanded);
