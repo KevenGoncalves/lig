@@ -62,12 +62,11 @@ class Installer(unittest.TestCase):
             self.assertTrue(installed)
             self.assertIn(target, urls)
 
-    def test_intel_mac_is_rejected_before_download(self):
-        result, installed, urls = self.install('Darwin', 'x86_64', 'unused', rosetta=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Apple Silicon', result.stderr)
-        self.assertFalse(installed)
-        self.assertEqual(urls, '')
+    def test_intel_mac_gets_the_x86_64_build(self):
+        result, installed, urls = self.install('Darwin', 'x86_64', 'x86_64-apple-darwin', rosetta=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(installed)
+        self.assertIn('x86_64-apple-darwin.tar.gz', urls)
 
     def test_rosetta_shell_on_apple_silicon_gets_the_arm64_build(self):
         result, installed, urls = self.install('Darwin', 'x86_64', 'aarch64-apple-darwin', rosetta=True)
@@ -79,7 +78,7 @@ class Installer(unittest.TestCase):
         result, installed, urls = self.install('Linux', 'riscv64', 'unused')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Linux/riscv64', result.stderr)
-        self.assertNotIn('Apple Silicon', result.stderr)
+        self.assertNotIn('macOS', result.stderr)
         self.assertEqual(urls, '')
 
     def test_sha256sum_verifies_linux_downloads(self):

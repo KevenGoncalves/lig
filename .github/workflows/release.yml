@@ -3,8 +3,8 @@
 #   git tag -a v1.0.4 -m "1.0.4" && git push origin v1.0.4
 #
 # Assets: glibc (2.35+) and static musl archives for x86_64/aarch64, deb and
-# rpm packages of the musl builds, an Apple Silicon macOS archive, checksums,
-# and install.sh.
+# rpm packages of the musl builds, Apple Silicon and Intel macOS archives,
+# checksums, and install.sh.
 name: Release
 
 on:
@@ -49,6 +49,8 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
           - target: x86_64-unknown-linux-musl

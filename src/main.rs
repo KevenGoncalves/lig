@@ -495,6 +495,7 @@ fn release_target(os: &str, arch: &str) -> Option<&'static str> {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-musl"),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         _ => None,
     }
 }
@@ -1077,11 +1078,11 @@ mod shell_tests {
     }
 
     #[test]
-    fn release_targets_preserve_linux_and_only_support_apple_silicon_macos() {
+    fn release_targets_cover_linux_and_macos() {
         assert_eq!(release_target("linux", "x86_64"), Some("x86_64-unknown-linux-musl"));
         assert_eq!(release_target("linux", "aarch64"), Some("aarch64-unknown-linux-musl"));
         assert_eq!(release_target("macos", "aarch64"), Some("aarch64-apple-darwin"));
-        assert_eq!(release_target("macos", "x86_64"), None);
+        assert_eq!(release_target("macos", "x86_64"), Some("x86_64-apple-darwin"));
         assert_eq!(release_target("windows", "aarch64"), None);
     }
     #[test]

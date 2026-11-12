@@ -32,8 +32,8 @@ subcommand and option does, values that come from your system (branches, contain
 packages), and the next thing that fits on the line.
 
 It brings the experience of [Fig](https://fig.io) (now Kiro CLI autocomplete) and
-[easy-complete](https://github.com/chen86860/easy-complete) to Linux and Apple Silicon
-macOS, as a single binary that works in any terminal: it draws the popup inside the
+[easy-complete](https://github.com/chen86860/easy-complete) to Linux and macOS, as a
+single binary that works in any terminal: it draws the popup inside the
 terminal itself.
 
 - **~740 commands** out of the box: git, docker, kubectl, cargo, npm, aws, gh, terraform,
@@ -55,10 +55,10 @@ terminal itself.
 
 ## Install
 
-Lig runs on Linux and Apple Silicon macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 or fish ≥ 4.2.1.
-On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is too old).
-Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com) for
-icons.
+Lig runs on Linux and macOS 11+ (Apple Silicon and Intel) with zsh ≥ 5.3, bash ≥ 4.4 or
+fish ≥ 4.2.1. On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is
+too old). Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com)
+for icons.
 
 Install it one of these ways, then [set up your shell](#set-up-your-shell).
 
@@ -68,8 +68,8 @@ Install it one of these ways, then [set up your shell](#set-up-your-shell).
 curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh | sh
 ```
 
-The script downloads the latest release for your machine (x86_64/ARM64 static Linux or
-native Apple Silicon macOS), verifies its SHA-256 checksum, and puts `lig` in
+The script downloads the latest release for your machine (x86_64/ARM64 static Linux, or
+Apple Silicon/Intel macOS), verifies its SHA-256 checksum, and puts `lig` in
 `~/.local/bin`. Set `LIG_INSTALL_DIR` to install elsewhere, or `LIG_VERSION` for an older
 release (`… | LIG_VERSION=1.0.6 sh`).
 
@@ -150,6 +150,7 @@ with a `.sha256`:
 | File | Runs on |
 | --- | --- |
 | `lig-<version>-aarch64-apple-darwin.tar.gz` | Apple Silicon macOS (unsigned CLI binary) |
+| `lig-<version>-x86_64-apple-darwin.tar.gz` | Intel macOS (unsigned CLI binary) |
 | `lig-<version>-x86_64-unknown-linux-musl.tar.gz` | any x86_64 Linux (static binary) |
 | `lig-<version>-aarch64-unknown-linux-musl.tar.gz` | any ARM64 Linux (static binary) |
 | `lig-<version>-x86_64-unknown-linux-gnu.tar.gz` | x86_64 with glibc 2.35+ (Ubuntu 22.04, Debian 12 and newer) |
@@ -491,7 +492,7 @@ LIG_TEST_ZELLIJ=/path/to/zellij python3 tests/zellij_resurrection.py
 tools/update-fig-specs.sh       # regenerate specs/fig/ from withfig/autocomplete
 ```
 
-CI runs unit and shell checks on Linux and Apple Silicon macOS.
+CI runs unit and shell checks on Linux and on Apple Silicon and Intel macOS.
 The PTY tests need Python 3 and the shells they test; the tmux tests use a private server.
 They test `target/release/lig`; set `LIG_TEST_BIN` to use another binary.
 

@@ -5,8 +5,10 @@ class Lig < Formula
   license "MIT"
 
   on_macos do
-    depends_on arch: :arm64
-
+    on_intel do
+      url "https://github.com/KevenGoncalves/lig/releases/download/v@VERSION@/lig-@VERSION@-x86_64-apple-darwin.tar.gz"
+      sha256 "@SHA_x86_64-apple-darwin@"
+    end
     on_arm do
       url "https://github.com/KevenGoncalves/lig/releases/download/v@VERSION@/lig-@VERSION@-aarch64-apple-darwin.tar.gz"
       sha256 "@SHA_aarch64-apple-darwin@"
