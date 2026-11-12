@@ -150,6 +150,12 @@ class Fish:
         self.wait_for(lambda: path.exists() and path.stat().st_size > 0)
         return path.read_text().strip()
 
+    def assert_buffer(self, expected):
+        """The command line is `expected`; if not, say what the terminal and lig saw."""
+        actual = self.buffer()
+        if actual != expected:
+            raise AssertionError(f'{actual!r} != {expected!r}; output: {self.output[-2000:]!r}\n{self.log()}')
+
     def clear(self):
         """Empty the command line, checked: a Ctrl+C can get lost while fish runs a binding."""
         deadline = time.monotonic() + 10
@@ -350,7 +356,7 @@ end
                 time.sleep(.002)
                 os.write(fish.fd, b'\r')
                 fish.read(.25)
-                self.assertEqual(fish.buffer(), 'git checkout')
+                fish.assert_buffer('git checkout')
         finally:
             fish.close()
 
@@ -364,7 +370,7 @@ end
                 fish.send(prefix)
                 fish.wait_text(expected.split()[-1], start)
                 fish.send(b'\r')
-                self.assertEqual(fish.buffer(), expected)
+                fish.assert_buffer(expected)
         finally:
             fish.close()
 
@@ -428,7 +434,7 @@ end
             # Tab selects; Enter accepts without running the command.
             fish.send(b'\t')
             fish.send(b'\r')
-            self.assertEqual(fish.buffer(), 'git cherry-pick')
+            fish.assert_buffer('git cherry-pick')
             fish.clear()
             alive = fish.home / 'alive'
             fish.send('printf %s WRAPPER_ALIVE > "$HOME/alive"\r')
