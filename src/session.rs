@@ -282,6 +282,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         cmd_shell: shell_name(&shell) == "cmd",
         prompt_pending: false,
         held: vec![],
+        unconfirmed: String::new(),
         fish_refresh: None,
         prompt_end: None,
         shell_nav: false,
@@ -534,6 +535,9 @@ struct Session {
     prompt_pending: bool,
     /// Keys typed while `prompt_pending`, sent once the input start is known.
     held: Vec<u8>,
+    /// Text typed to fish that no report has shown yet. Fish is asked by a signal, which can
+    /// overtake keys still in the terminal: a reply without them is for an older line.
+    unconfirmed: String,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
     insert_file: PathBuf,
@@ -932,6 +936,7 @@ impl Session {
     fn reset_line(&mut self) {
         self.editing = false;
         self.foreign = false;
+        self.unconfirmed.clear();
         self.items.clear();
         self.items_line.clear();
         self.line.clear();
@@ -940,6 +945,11 @@ impl Session {
 
     fn set_line(&mut self, line: String) {
         if line != self.line {
+            // The typed text the new line shows is confirmed; any other change starts over.
+            self.unconfirmed = match line.strip_prefix(self.line.as_str()) {
+                Some(added) if self.unconfirmed.starts_with(added) => self.unconfirmed[added.len()..].to_string(),
+                _ => String::new(),
+            };
             if std::mem::take(&mut self.close_after_insert) {
                 self.dismissed = Some(line.clone());
             }
@@ -1042,6 +1052,7 @@ impl Session {
             Msg::Finish => {
                 crate::log("reader finished");
                 self.fish_refresh = None;
+                self.unconfirmed.clear();
                 self.editing = false;
                 self.just_accepted = false;
                 self.manual = false;
@@ -1220,7 +1231,7 @@ impl Session {
                 // Enter typed fast after other keys: the line isn't updated yet, so hold
                 // Enter until the shell reports it and its suggestions are ready.
                 if key == Key::ENTER && self.enter_can_wait() {
-                    let expected = typed.take().map(|t| format!("{}{t}", self.line));
+                    let expected = typed.take().map(|t| format!("{}{}{t}", self.line, self.unconfirmed));
                     self.enter_after = Some((self.line.clone(), expected));
                     self.pending_enter = Some(Instant::now());
                     let rest: usize = keys[n..].iter().map(|(r, _)| r.len()).sum();
@@ -1232,6 +1243,10 @@ impl Session {
                 continue;
             }
             if key == Key::ENTER && self.enter_should_wait() {
+                if !self.unconfirmed.is_empty() {
+                    let expected = format!("{}{}", self.line, self.unconfirmed);
+                    self.enter_after = Some((self.line.clone(), Some(expected)));
+                }
                 self.pending_enter = Some(Instant::now());
                 let rest: usize = keys[n..].iter().map(|(r, _)| r.len()).sum();
                 self.deferred = data[data.len() - rest..].to_vec();
@@ -1315,8 +1330,17 @@ impl Session {
                         self.just_accepted = false;
                     }
                     passthrough = true;
+                    push_typed(&mut typed, &key);
                     fwd.extend_from_slice(raw);
                 }
+            }
+        }
+        // Only fish's reports can overtake keys (zsh's and bash's come in the output, PowerShell's
+        // answer a key); after other keys the line can't be predicted.
+        if !fwd.is_empty() && self.fish_refresh.is_some() && !self.report_key && self.pending_enter.is_none() {
+            match &typed {
+                Some(t) => self.unconfirmed.push_str(t),
+                None => self.unconfirmed.clear(),
             }
         }
         if !fwd.is_empty()

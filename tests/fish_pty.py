@@ -95,7 +95,8 @@ class Fish:
         os.write(self.fd, data.encode() if isinstance(data, str) else data)
         return self.read()
 
-    def wait_for(self, predicate, timeout=3):
+    # Generous: CI's macOS runners can be slow; the waits end as soon as the state is there.
+    def wait_for(self, predicate, timeout=10):
         deadline = time.monotonic() + timeout
         while not predicate():
             if time.monotonic() >= deadline:
@@ -117,12 +118,31 @@ class Fish:
         self.wait_for(lambda: prefix in self.output[start:] and b'\x07' in self.output[start:].split(prefix, 1)[1])
         return re.findall(re.escape(prefix) + rb'(.*?)\x07', self.output[start:], re.S)
 
+    def snapshot_until(self, predicate, timeout=10):
+        """Ask again until the reply shows the wanted state (fish may still be opening a pager)."""
+        deadline = time.monotonic() + timeout
+        while True:
+            messages = self.snapshot()
+            if predicate(messages) or time.monotonic() >= deadline:
+                return messages
+            self.read(.1)
+
     def buffer(self):
         path = self.home / 'buffer'
         path.unlink(missing_ok=True)
         os.write(self.fd, b'\x0f')
         self.wait_for(lambda: path.exists() and path.stat().st_size > 0)
         return path.read_text().strip()
+
+    def clear(self):
+        """Empty the command line, checked: a Ctrl+C can get lost while fish runs a binding."""
+        deadline = time.monotonic() + 10
+        while True:
+            self.send(b'\x03')
+            if self.buffer() == '':
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(f'the command line stayed {self.buffer()!r}')
 
     def insert(self, payload, expected=None):
         if expected is None:
@@ -179,7 +199,7 @@ class FishTests(unittest.TestCase):
         self.fish.insert('4;1;hello')
         self.assertIn(b'B;9;echo hello tail', self.fish.snapshot())
         self.assertFalse((self.fish.home / 'executed').exists())
-        self.fish.send(b'\x03')
+        self.fish.clear()
         self.fish.send('touch ')
         self.fish.insert(f'0;0;{self.fish.home}/executed')
         self.assertFalse((self.fish.home / 'executed').exists())
@@ -210,11 +230,11 @@ class FishTests(unittest.TestCase):
     def test_history_and_pager(self):
         self.fish.send('echo previous\r')
         self.fish.send(b'\x1b[A')
-        self.assertIn(b'H', self.fish.snapshot())
-        self.fish.send(b'\x03')
+        self.assertIn(b'H', self.fish.snapshot_until(lambda m: b'H' in m))
+        self.fish.clear()
         self.fish.send('git --')
         self.fish.send(b'\t\t')
-        self.assertIn(b'H', self.fish.snapshot())
+        self.assertIn(b'H', self.fish.snapshot_until(lambda m: b'H' in m))
 
     def test_autosuggestion_and_mode_switch(self):
         self.fish.send('echo autosuggestion_test\r')
@@ -232,7 +252,7 @@ class FishTests(unittest.TestCase):
         self.fish.send(b'\x1b[D' * 4)
         self.fish.insert('0;0;"café;🙂"\n')
         self.assertIn('B;14;echo "café;🙂"\ntail'.encode(), self.fish.snapshot())
-        self.fish.send(b'\x03')
+        self.fish.clear()
         self.fish.insert('0;0;echo A\x07B\x1bC')
         self.assertIn(b'B;10;echo A B C', self.fish.snapshot())
 
@@ -293,7 +313,7 @@ end
         fish = Fish(wrapped=True)
         try:
             for _ in range(8):
-                fish.send(b'\x03')
+                fish.clear()
                 start = len(fish.output)
                 fish.send('git ch')
                 fish.wait_text('checkout', start)
@@ -311,7 +331,7 @@ end
         try:
             for prefix, expected in [('car', 'cargo'), ('cargo bu', 'cargo build'),
                                      ('cargo build --rel', 'cargo build --release')]:
-                fish.send(b'\x03')
+                fish.clear()
                 start = len(fish.output)
                 fish.send(prefix)
                 fish.wait_text(expected.split()[-1], start)
@@ -348,7 +368,7 @@ end
             fish.wait_text('--release', start)
             fish.send(b'\r')
             self.assertEqual(fish.buffer(), 'cargo build --release')
-            fish.send(b'\x03')
+            fish.clear()
             target = fish.home / 'space file'
             target.touch()
             start = len(fish.output)
