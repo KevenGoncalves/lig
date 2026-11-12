@@ -54,11 +54,13 @@ enum Event {
     Output(Vec<u8>),
     Exit,
     Resize,
-    /// Suggestions for `line`; `loading` names what is still being fetched.
+    /// Suggestions for `line`; `loading` names what is still being fetched; `command` is the
+    /// command they complete, aliases expanded.
     Done {
         line: String,
         items: Vec<Suggestion>,
         loading: Option<String>,
+        command: String,
     },
 }
 
@@ -313,6 +315,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         req_tx,
         items: vec![],
         items_line: String::new(),
+        items_command: String::new(),
         selected: 0,
         scroll: 0,
         navigated: false,
@@ -426,6 +429,40 @@ fn enter_accepts(mode: &str, word_empty: bool, complete: bool, navigated: bool, 
     }
 }
 
+/// What Enter does while the popup is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Enter {
+    /// Insert the selected suggestion.
+    Pick,
+    /// Insert the selected suggestion, then run the line.
+    PickAndRun,
+    /// Send Enter to the shell: run the line as typed.
+    Run,
+    /// Only close the popup.
+    Close,
+}
+
+/// [`enter_accepts`], plus `runs`: the command is in `enter_runs_commands`, so a pick also
+/// runs the line, and Enter never stops at only closing the popup.
+fn enter_action(
+    mode: &str,
+    runs: bool,
+    word_empty: bool,
+    complete: bool,
+    navigated: bool,
+    just_accepted: bool,
+) -> Enter {
+    // `always`: Enter on a complete word only closes the popup.
+    if mode == "always" && !navigated && complete {
+        return if runs { Enter::Run } else { Enter::Close };
+    }
+    match (enter_accepts(mode, word_empty, complete, navigated, just_accepted), runs) {
+        (false, _) => Enter::Run,
+        (true, false) => Enter::Pick,
+        (true, true) => Enter::PickAndRun,
+    }
+}
+
 /// Where prompt marks (OSC 133;A, sent by terminal integrations like Ghostty's) start in `out`.
 fn prompt_marks(out: &[u8]) -> Vec<usize> {
     const MARK: &[u8] = b"\x1b]133;A";
@@ -444,10 +481,10 @@ fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Beh
             req = newer;
         }
         let c = engine.complete(&req.line, &req.env, false, req.manual);
-        let _ = tx.send(Event::Done { line: req.line.clone(), items: c.items, loading: c.loading });
+        let _ = tx.send(Event::Done { line: req.line.clone(), items: c.items, loading: c.loading, command: c.command });
         if c.incomplete && rx.is_empty() {
             let c = engine.complete(&req.line, &req.env, true, req.manual);
-            let _ = tx.send(Event::Done { line: req.line, items: c.items, loading: None });
+            let _ = tx.send(Event::Done { line: req.line, items: c.items, loading: None, command: c.command });
         }
     }
 }
@@ -577,6 +614,8 @@ struct Session {
     items: Vec<Suggestion>,
     /// The line `items` were computed for.
     items_line: String,
+    /// The command `items` complete, aliases expanded.
+    items_command: String,
     selected: usize,
     /// Index of the first visible item.
     scroll: usize,
@@ -689,7 +728,7 @@ impl Session {
             match ev {
                 Event::Output(data) => self.on_output(&data),
                 Event::Input(data) => self.on_input(&data),
-                Event::Done { line, items, loading } => self.on_done(line, items, loading),
+                Event::Done { line, items, loading, command } => self.on_done(line, items, loading, command),
                 Event::Resize => self.on_resize(),
                 Event::Exit => return,
             }
@@ -1150,9 +1189,13 @@ impl Session {
         })
     }
 
-    fn enter_picks(&self) -> bool {
-        enter_accepts(
+    fn enter_action(&self) -> Enter {
+        // Fish and PowerShell drop an insertion made for a line they no longer have; an
+        // Enter queued behind it would then run the half-typed line, so there a pick only picks.
+        let runs = !self.fish_shell && self.cfg.behavior.enter_runs_commands.contains(&self.items_command);
+        enter_action(
             &self.cfg.behavior.enter_accepts,
+            runs,
             self.word_empty(),
             self.word_complete(),
             self.navigated,
@@ -1176,19 +1219,20 @@ impl Session {
         }
     }
 
-    fn on_done(&mut self, line: String, items: Vec<Suggestion>, loading: Option<String>) {
+    fn on_done(&mut self, line: String, items: Vec<Suggestion>, loading: Option<String>, command: String) {
         if line != self.line {
             return; // stale
         }
         let fin = loading.is_none();
-        self.apply_done(line, items, loading);
+        self.apply_done(line, items, loading, command);
         if fin && self.pending_enter.is_some() && !self.fish_stale() && self.enter_ready() {
             self.render();
             self.resolve_pending_enter();
         }
     }
 
-    fn apply_done(&mut self, line: String, items: Vec<Suggestion>, loading: Option<String>) {
+    fn apply_done(&mut self, line: String, items: Vec<Suggestion>, loading: Option<String>, command: String) {
+        self.items_command = command;
         self.loading = match (loading, self.loading.take()) {
             // Still loading the same line: keep the original start time.
             (Some(label), Some((l, _, since))) if l == line => Some((line.clone(), label, since)),
@@ -1288,15 +1332,17 @@ impl Session {
             if action == Some(Action::Next) && self.items.len() == 1 {
                 action = Some(Action::Accept);
             }
+            let mut run = false;
             if action == Some(Action::Accept) && key == Key::ENTER {
-                // `always`: Enter on a complete word only closes the popup.
-                if self.cfg.behavior.enter_accepts == "always" && !self.navigated && self.word_complete() {
-                    self.dismiss();
-                    redraw = true;
-                    continue;
-                }
-                if !self.enter_picks() {
-                    action = None;
+                match self.enter_action() {
+                    Enter::Close => {
+                        self.dismiss();
+                        redraw = true;
+                        continue;
+                    }
+                    Enter::Run => action = None,
+                    Enter::Pick => {}
+                    Enter::PickAndRun => run = true,
                 }
             }
             match action {
@@ -1327,7 +1373,7 @@ impl Session {
                     passthrough = true;
                     // The insertion changes the line in ways not worth predicting.
                     typed = None;
-                    self.accept_selected(&mut fwd);
+                    self.accept_selected(&mut fwd, run);
                     redraw = true;
                 }
                 None => {
@@ -1469,7 +1515,8 @@ impl Session {
         self.manual = false;
     }
 
-    fn accept_selected(&mut self, fwd: &mut Vec<u8>) {
+    /// Insert the selected suggestion; with `run`, run the line after it (`enter_runs_commands`).
+    fn accept_selected(&mut self, fwd: &mut Vec<u8>, run: bool) {
         let s = &self.items[self.selected];
         if s.kind == Kind::Execute {
             // The "Enter" item: run the line.
@@ -1491,7 +1538,13 @@ impl Session {
                 format!("{};{};{}", s.delete, s.back, s.insert)
             };
             match insertion_bytes(self.insertion_transport, self.fish_shell, &self.insert_file, &payload) {
-                Ok(bytes) => fwd.extend_from_slice(&bytes),
+                Ok(bytes) => {
+                    fwd.extend_from_slice(&bytes);
+                    // The shell applies the insertion before it reads the Enter queued behind it.
+                    if run {
+                        fwd.push(b'\r');
+                    }
+                }
                 Err(error) => crate::log(&format!("completion insertion failed: {error}")),
             }
         }
@@ -1745,6 +1798,28 @@ mod tests {
         assert!(enter_accepts("always", false, true, false, false));
         assert!(enter_accepts("always", false, false, false, true));
         assert!(!enter_accepts("never", true, false, true, false));
+    }
+
+    #[test]
+    fn enter_runs_rule() {
+        use Enter::*;
+        // Args: (mode, runs, word_empty, complete, navigated, just_accepted).
+        // Other commands keep the plain rule.
+        assert_eq!(enter_action("auto", false, false, false, false, false), Pick);
+        assert_eq!(enter_action("auto", false, false, true, false, false), Run);
+        assert_eq!(enter_action("always", false, false, true, false, false), Close);
+        // `z chez`: picking the match also jumps there; so does a selection moved with Tab.
+        assert_eq!(enter_action("auto", true, false, false, false, false), PickAndRun);
+        assert_eq!(enter_action("auto", true, true, false, false, false), PickAndRun);
+        assert_eq!(enter_action("auto", true, false, true, true, false), PickAndRun);
+        // Where Enter wouldn't pick, it runs the line as typed, as before.
+        assert_eq!(enter_action("auto", true, false, true, false, false), Run);
+        assert_eq!(enter_action("auto", true, false, false, false, true), Run);
+        assert_eq!(enter_action("after-space", true, false, false, false, false), Run);
+        assert_eq!(enter_action("never", true, true, false, true, false), Run);
+        // `always` on a complete word runs instead of only closing the popup.
+        assert_eq!(enter_action("always", true, false, true, false, false), Run);
+        assert_eq!(enter_action("always", true, false, false, false, false), PickAndRun);
     }
 
     #[test]

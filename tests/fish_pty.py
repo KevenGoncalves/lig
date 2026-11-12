@@ -23,7 +23,8 @@ def fish_quote(value):
     return "'" + str(value).replace('\\', '\\\\').replace("'", "\\'") + "'"
 
 class Fish:
-    def __init__(self, wrapped=False, vi=False, shell=None, extra_config="", disabled=False, complete_commands=False, after_config=""):
+    def __init__(self, wrapped=False, vi=False, shell=None, extra_config="", disabled=False, complete_commands=False, after_config="",
+                 lig_config="", specs=None):
         shell = shell or FISH
         if not shell:
             raise unittest.SkipTest('fish is unavailable')
@@ -56,9 +57,13 @@ class Fish:
             self.config.write_text(extra_config + "\nPROMPT='test> '\n__test_buffer() { print -r -- \"$BUFFER\" > \"$HOME/buffer\"; }\nzle -N __test_buffer\nbindkey '^[[24~' __test_buffer\n")
 
         if complete_commands:
-            config = self.home / 'config/lig/config.toml'
-            config.parent.mkdir(parents=True)
-            config.write_text('[behavior]\ncomplete_commands = true\n')
+            lig_config = '[behavior]\ncomplete_commands = true\n' + lig_config
+        # lig's own config and user specs ({name: JSON text}), read when the session starts.
+        if lig_config or specs:
+            (self.home / 'config/lig/specs').mkdir(parents=True)
+            (self.home / 'config/lig/config.toml').write_text(lig_config)
+            for name, spec in (specs or {}).items():
+                (self.home / f'config/lig/specs/{name}.json').write_text(spec)
         if wrapped:
             subprocess.run([BIN, 'install', kind], env=self.env, check=True, capture_output=True)
         if after_config:
@@ -459,6 +464,23 @@ end
             fish.send('lig doctor > "$HOME/doctor.part"; mv "$HOME/doctor.part" "$HOME/doctor"\r')
             fish.wait_for(doctor.exists)
             self.assertIn('[ok  ] this terminal is running inside lig', doctor.read_text())
+        finally:
+            fish.close()
+
+    def test_enter_runs_commands_only_picks(self):
+        # fish can turn down an insertion, so an Enter queued behind it could run the
+        # half-typed line: `enter_runs_commands` keeps to picking here.
+        spec = '{"name": "jump", "args": {"name": "place", "suggestions": ["alpha", "beta"]}}'
+        fish = Fish(wrapped=True, after_config='function jump; echo "JUMPED:$argv[1]"; end\n',
+                    lig_config='[behavior]\nenter_runs_commands = ["jump"]\n', specs={'jump': spec})
+        try:
+            start = len(fish.output)
+            fish.send('jump al')
+            fish.wait_popup('alpha', start)
+            start = len(fish.output)
+            fish.send(b'\r')
+            fish.assert_buffer('jump alpha')
+            self.assertNotIn(b'JUMPED', fish.plain(start))
         finally:
             fish.close()
 

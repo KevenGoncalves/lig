@@ -198,6 +198,14 @@ pub struct Behavior {
     /// moved with Tab/arrows is always picked; except with `"always"`, the Enter right
     /// after a pick runs the line.
     pub enter_accepts: String,
+    /// Commands where an Enter that picks a suggestion (as `enter_accepts` decides) also runs
+    /// the line, so one press does both: for commands whose argument is the whole point, like
+    /// zoxide's `z` and `zi`. Where Enter wouldn't pick it runs the line as typed, as usual;
+    /// with `"always"`, Enter on a complete word runs it instead of only closing the popup.
+    /// The command is the one the cursor is in (after `&&`, `|`, `;`), aliases expanded.
+    /// bash and zsh only: fish and PowerShell can turn down an insertion, so there Enter
+    /// only picks.
+    pub enter_runs_commands: Vec<String>,
     /// Add a space after an accepted suggestion (`checkout ` vs `checkout`).
     pub insert_space: bool,
     /// List files before options and subcommands.
@@ -281,6 +289,7 @@ impl Default for Behavior {
         Behavior {
             fuzzy: true,
             enter_accepts: "auto".into(),
+            enter_runs_commands: vec![],
             insert_space: false,
             files_first: false,
             files_first_commands: FILES_FIRST_COMMANDS.iter().map(|c| c.to_string()).collect(),
