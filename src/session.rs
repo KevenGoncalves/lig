@@ -283,6 +283,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         prompt_pending: false,
         held: vec![],
         unconfirmed: String::new(),
+        unconfirmed_at: Instant::now(),
         fish_refresh: None,
         prompt_end: None,
         shell_nav: false,
@@ -538,6 +539,8 @@ struct Session {
     /// Text typed to fish that no report has shown yet. Fish is asked by a signal, which can
     /// overtake keys still in the terminal: a reply without them is for an older line.
     unconfirmed: String,
+    /// When text was last added to `unconfirmed`: older text is let go (see [`ENTER_WAIT`]).
+    unconfirmed_at: Instant,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
     insert_file: PathBuf,
@@ -590,7 +593,8 @@ struct Session {
     manual: bool,
     /// (line, message, since) while slower suggestions are being fetched.
     loading: Option<(String, String, Instant)>,
-    /// When Enter was pressed while loading (it waits, see [`ENTER_WAIT`]).
+    /// When Enter (or a popup key, see `popup_key_should_wait`) was pressed while the line or
+    /// its suggestions were on the way: it waits, up to [`ENTER_WAIT`].
     pending_enter: Option<Instant>,
     /// That Enter and the input after it, replayed in order.
     deferred: Vec<u8>,
@@ -1231,7 +1235,7 @@ impl Session {
                 // Enter typed fast after other keys: the line isn't updated yet, so hold
                 // Enter until the shell reports it and its suggestions are ready.
                 if key == Key::ENTER && self.enter_can_wait() {
-                    let expected = typed.take().map(|t| format!("{}{}{t}", self.line, self.unconfirmed));
+                    let expected = typed.take().map(|t| format!("{}{}{t}", self.line, self.unconfirmed()));
                     self.enter_after = Some((self.line.clone(), expected));
                     self.pending_enter = Some(Instant::now());
                     let rest: usize = keys[n..].iter().map(|(r, _)| r.len()).sum();
@@ -1242,9 +1246,9 @@ impl Session {
                 fwd.extend_from_slice(raw);
                 continue;
             }
-            if key == Key::ENTER && self.enter_should_wait() {
-                if !self.unconfirmed.is_empty() {
-                    let expected = format!("{}{}", self.line, self.unconfirmed);
+            if (key == Key::ENTER && self.enter_should_wait()) || self.popup_key_should_wait(&key) {
+                if !self.unconfirmed().is_empty() {
+                    let expected = format!("{}{}", self.line, self.unconfirmed());
                     self.enter_after = Some((self.line.clone(), Some(expected)));
                 }
                 self.pending_enter = Some(Instant::now());
@@ -1339,7 +1343,11 @@ impl Session {
         // answer a key); after other keys the line can't be predicted.
         if !fwd.is_empty() && self.fish_refresh.is_some() && !self.report_key && self.pending_enter.is_none() {
             match &typed {
-                Some(t) => self.unconfirmed.push_str(t),
+                Some(t) if !t.is_empty() => {
+                    self.unconfirmed.push_str(t);
+                    self.unconfirmed_at = Instant::now();
+                }
+                Some(_) => {}
                 None => self.unconfirmed.clear(),
             }
         }
@@ -1409,8 +1417,25 @@ impl Session {
             && self.editing
             && !self.hidden
             && (self.fish_stale()
+                || !self.unconfirmed().is_empty()
                 || (self.dismissed.as_deref() != Some(self.line.as_str())
                     && self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line)))
+    }
+
+    /// A popup key (Tab, arrows, accept) while the popup on screen is kept from an older line
+    /// (fish hasn't reported the new one yet): passed on, the shell would take it. It waits
+    /// like Enter does.
+    fn popup_key_should_wait(&self, key: &Key) -> bool {
+        self.pending_enter.is_none()
+            && self.shown.is_some()
+            && self.drawable()
+            && (self.fish_stale() || !self.unconfirmed().is_empty())
+            && matches!(self.bindings.action(key), Some(Action::Next | Action::Prev | Action::Accept))
+    }
+
+    /// Text typed to fish that no report has shown yet, if typed recently.
+    fn unconfirmed(&self) -> &str {
+        if self.unconfirmed_at.elapsed() < ENTER_WAIT { &self.unconfirmed } else { "" }
     }
 
     /// Close the popup, or ask for suggestions even where it doesn't open by itself (command names).

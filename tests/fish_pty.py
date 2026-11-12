@@ -278,7 +278,11 @@ class FishTests(unittest.TestCase):
         self.assertIn(b'B;10;echo A B C', self.fish.snapshot())
 
     def test_finish_and_cwd(self):
-        out = self.fish.send('cd /tmp\r')
+        start = len(self.fish.output)
+        self.fish.send('cd /tmp\r')
+        # R comes last, once fish's prompt event has sent everything else.
+        self.fish.wait_for(lambda: re.search(rb'\x1b\]6973;R;[0-9]+\x07', self.fish.output[start:]))
+        out = self.fish.output[start:]
         self.assertIn(b'\x1b]6973;F\x07', out)
         self.assertIn(b'\x1b]6973;C;/tmp\x07', out)
         self.assertRegex(out, rb'\x1b\]6973;R;[0-9]+\x07')
