@@ -960,6 +960,10 @@ impl Session {
             if self.shell_nav {
                 self.dismissed = Some(line.clone());
             }
+            // A cleared line (Ctrl+C) ends a toggled popup as running it does.
+            if line.is_empty() {
+                self.manual = false;
+            }
         }
         if line != self.line || self.items_line != line {
             if self.dismissed.as_deref() != Some(line.as_str()) {

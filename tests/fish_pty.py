@@ -329,7 +329,7 @@ end
             term.send(b'\t')
             term.send(b'\r')
             self.assertEqual(term.buffer(), 'git cherry-pick')
-            term.send(b'\x03')
+            term.clear()
             # Back at zsh's prompt once the nested fish (and its lig) are gone.
             start = len(term.output)
             term.send('exit\r')
@@ -430,9 +430,9 @@ end
             fish.send(b'\r')
             self.assertEqual(fish.buffer(), 'git cherry-pick')
             fish.clear()
-            start = len(fish.output)
-            fish.send('echo WRAPPER_ALIVE\r')
-            fish.wait_text('WRAPPER_ALIVE', start)
+            alive = fish.home / 'alive'
+            fish.send('printf %s WRAPPER_ALIVE > "$HOME/alive"\r')
+            fish.wait_for(lambda: alive.exists() and alive.read_text() == 'WRAPPER_ALIVE')
             # Written whole, then moved into place: the file is there once doctor is done.
             doctor = fish.home / 'doctor'
             fish.send('lig doctor > "$HOME/doctor.part"; mv "$HOME/doctor.part" "$HOME/doctor"\r')
