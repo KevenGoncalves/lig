@@ -1,4 +1,4 @@
-//! lig: Fig-style autocomplete for zsh, bash, and fish, in any terminal.
+//! lig: Fig-style autocomplete for zsh, bash, fish, PowerShell and cmd, in any terminal.
 //! `lig shell` ([`session`]) runs the shell in a PTY and draws the popup; [`engine`] makes the suggestions.
 
 mod config;
@@ -12,6 +12,7 @@ mod mirror;
 #[cfg(target_os = "macos")]
 #[path = "mirror_macos.rs"]
 mod mirror;
+#[cfg(unix)]
 mod mirror_policy;
 mod osc;
 mod parser;
@@ -19,11 +20,13 @@ mod popup;
 mod process;
 #[cfg(target_os = "linux")]
 mod procfs;
+mod pty;
 mod remote;
 mod session;
 mod spec;
 mod specs;
 mod store;
+mod term;
 mod theme;
 
 use std::collections::BTreeMap;
@@ -39,6 +42,7 @@ const PRE_FISH: &str = include_str!("../shell/pre.fish");
 const POST_FISH: &str = include_str!("../shell/post.fish");
 const PRE_BASH: &str = include_str!("../shell/pre.bash");
 const POST_BASH: &str = include_str!("../shell/post.bash");
+const PRE_PWSH: &str = include_str!("../shell/pre.ps1");
 
 #[derive(Parser)]
 #[command(name = "lig", version, about = "Fig-style IDE autocomplete for your terminal")]
@@ -63,7 +67,7 @@ enum Cmd {
         #[arg(hide = true, value_parser = parse_pad)]
         pad: Option<String>,
     },
-    /// Print shell integration code for fish, zsh, or bash
+    /// Print shell integration code for fish, zsh, bash or PowerShell
     Init {
         #[arg(value_enum)]
         shell: ShellKind,
@@ -71,12 +75,13 @@ enum Cmd {
         #[arg(value_enum, default_value_t = Part::All)]
         part: Part,
     },
-    /// Add lig to your fish, zsh, or bash configuration (default: your $SHELL)
+    /// Add lig to your fish, zsh, bash or PowerShell configuration (default: your shell); for
+    /// cmd, add a Windows Terminal profile
     Install {
         #[arg(value_enum)]
         shell: Option<ShellKind>,
     },
-    /// Remove lig from your fish, zsh, or bash configuration (default: your $SHELL)
+    /// Remove lig from your fish, zsh, bash or PowerShell configuration, or cmd's profile
     Uninstall {
         #[arg(value_enum)]
         shell: Option<ShellKind>,
@@ -167,24 +172,41 @@ struct PreviewArgs {
     densities: bool,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ShellKind {
     Fish,
     Zsh,
     Bash,
+    /// PowerShell 7
+    Pwsh,
+    /// Windows PowerShell 5.1
+    Powershell,
+    /// cmd.exe (a Windows Terminal profile; cmd has no configuration file)
+    Cmd,
 }
 
 impl ShellKind {
     fn detect(shell: &str) -> Result<Self> {
-        match Path::new(shell).file_name().and_then(|s| s.to_str()) {
-            Some("fish") => Ok(Self::Fish),
-            Some("bash") => Ok(Self::Bash),
-            Some("zsh") => Ok(Self::Zsh),
-            _ => anyhow::bail!("unsupported shell {shell:?}; specify fish, bash, or zsh"),
+        let name = Path::new(shell).file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
+        match name.strip_suffix(".exe").unwrap_or(&name) {
+            "fish" => Ok(Self::Fish),
+            "bash" => Ok(Self::Bash),
+            "zsh" => Ok(Self::Zsh),
+            "pwsh" => Ok(Self::Pwsh),
+            "powershell" => Ok(Self::Powershell),
+            "cmd" => Ok(Self::Cmd),
+            _ => anyhow::bail!("unsupported shell {shell:?}; specify fish, bash, zsh, pwsh, powershell or cmd"),
         }
     }
 
+    /// `$SHELL`; on Windows the shell lig was started from, or PowerShell.
     fn current() -> Result<Self> {
+        #[cfg(windows)]
+        {
+            let parent = process::parent(std::process::id()).and_then(|(_, name)| Self::detect(&name).ok());
+            Ok(parent.unwrap_or(if find_on_path("pwsh").is_some() { Self::Pwsh } else { Self::Powershell }))
+        }
+        #[cfg(unix)]
         Self::detect(&std::env::var("SHELL").unwrap_or_default())
     }
 
@@ -193,10 +215,19 @@ impl ShellKind {
             ShellKind::Fish => "fish",
             ShellKind::Zsh => "zsh",
             ShellKind::Bash => "bash",
+            ShellKind::Pwsh => "pwsh",
+            ShellKind::Powershell => "powershell",
+            ShellKind::Cmd => "cmd",
         }
     }
 
+    fn powershell(self) -> bool {
+        matches!(self, ShellKind::Pwsh | ShellKind::Powershell)
+    }
+
     fn rc(self) -> PathBuf {
+        let documents =
+            || dirs::document_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join("Documents"));
         match self {
             ShellKind::Fish => {
                 fish_rc(std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from), dirs::home_dir().unwrap_or_default())
@@ -206,8 +237,30 @@ impl ShellKind {
                 dir.join(".zshrc")
             }
             ShellKind::Bash => dirs::home_dir().unwrap_or_default().join(".bashrc"),
+            ShellKind::Pwsh if cfg!(windows) => documents().join("PowerShell/Microsoft.PowerShell_profile.ps1"),
+            ShellKind::Pwsh => {
+                dirs::config_dir().unwrap_or_default().join("powershell/Microsoft.PowerShell_profile.ps1")
+            }
+            ShellKind::Powershell => documents().join("WindowsPowerShell/Microsoft.PowerShell_profile.ps1"),
+            // A Windows Terminal profile fragment (see `cmd_profile`).
+            ShellKind::Cmd => {
+                dirs::data_local_dir().unwrap_or_default().join("Microsoft/Windows Terminal/Fragments/lig/lig.json")
+            }
         }
     }
+}
+
+/// A program on `PATH`, trying `PATHEXT`'s extensions on Windows.
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE".into()).split(';').map(str::to_string).collect()
+    } else {
+        vec![String::new()]
+    };
+    engine::path_dirs(&path)
+        .flat_map(|d| exts.iter().map(move |e| Path::new(d).join(format!("{name}{e}"))))
+        .find(|p| engine::command_name(p).is_some())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -267,8 +320,18 @@ fn exe() -> String {
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| homebrew_opt(&p).filter(|opt| opt.exists()).unwrap_or(p))
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|p| plain_path(&p.to_string_lossy()).to_string())
         .unwrap_or_else(|| "lig".into())
+}
+
+/// Windows' canonical paths start with `\\?\`, which shells and profiles don't expect.
+fn plain_path(p: &str) -> &str {
+    p.strip_prefix(r"\\?\").filter(|rest| rest.as_bytes().get(1) == Some(&b':')).unwrap_or(p)
+}
+
+/// A PowerShell single-quoted string.
+fn ps_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
 }
 
 /// Homebrew keeps each version in `Cellar/<formula>/<version>`, removed after an upgrade;
@@ -315,10 +378,13 @@ fn package_manager(exe: &Path) -> Option<(&'static str, &'static str)> {
 }
 
 fn init_script(shell: ShellKind, part: Part) -> String {
+    // PowerShell's integration is loaded by lig itself (see shell/lig.ps1); cmd has none.
     let (pre, post) = match shell {
         ShellKind::Fish => (PRE_FISH, POST_FISH),
         ShellKind::Zsh => (PRE_ZSH, POST_ZSH),
         ShellKind::Bash => (PRE_BASH, POST_BASH),
+        ShellKind::Pwsh | ShellKind::Powershell => (PRE_PWSH, ""),
+        ShellKind::Cmd => ("", ""),
     };
     let mut s = String::new();
     if part != Part::Post {
@@ -327,7 +393,13 @@ fn init_script(shell: ShellKind, part: Part) -> String {
     if part != Part::Pre {
         s.push_str(post);
     }
-    s.replace("@LIG_BIN@", &if matches!(shell, ShellKind::Fish) { fish_quote(&exe()) } else { exe() })
+    let bin = match shell {
+        ShellKind::Fish => fish_quote(&exe()),
+        // Inside '…' in pre.ps1.
+        ShellKind::Pwsh | ShellKind::Powershell => exe().replace('\'', "''"),
+        _ => exe(),
+    };
+    s.replace("@LIG_BIN@", &bin)
 }
 
 // Markers around the blocks `lig install` adds to the rc file.
@@ -386,6 +458,11 @@ fn managed_body(old: &str) -> Result<String> {
 fn installed_text(shell: ShellKind, old: &str, bin: &str) -> Result<String> {
     let body = managed_body(old)?;
     let sh = shell.name();
+    if shell.powershell() {
+        // Only the top: lig loads the rest itself.
+        let line = format!("Invoke-Expression (& {} init {sh} pre | Out-String)", ps_quote(bin));
+        return Ok(format!("{PRE_BEGIN}\n{line}\n{PRE_END}\n{body}"));
+    }
     let command = |part| {
         if matches!(shell, ShellKind::Fish) {
             format!("eval ({} init fish {part} | string collect)", fish_quote(bin))
@@ -450,19 +527,50 @@ fn install_bash_login(login: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A Windows Terminal profile that runs cmd inside lig (cmd reads no configuration file).
+fn cmd_profile(bin: &str) -> String {
+    let profile = serde_json::json!({
+        "profiles": [{
+            "name": "Command Prompt (lig)",
+            "commandline": format!("\"{bin}\" shell --shell cmd.exe"),
+            "icon": "ms-appx:///ProfileIcons/{0caa0dad-35be-5f56-a8ff-afceeeaa6101}.png",
+            "startingDirectory": "%USERPROFILE%",
+        }]
+    });
+    serde_json::to_string_pretty(&profile).unwrap_or_default() + "\n"
+}
+
 fn install(shell: ShellKind) -> Result<()> {
     let rc = shell.rc();
+    if shell == ShellKind::Cmd {
+        std::fs::create_dir_all(rc.parent().context("no folder for the profile")?)?;
+        std::fs::write(&rc, cmd_profile(&exe()))?;
+        println!("lig: added the Windows Terminal profile \"Command Prompt (lig)\" ({})", rc.display());
+        println!("lig: open it from Windows Terminal's new-tab menu (restart Windows Terminal if it isn't there).");
+        return Ok(());
+    }
     install_at(shell, &rc, &exe())?;
     println!("lig: updated {}", rc.display());
     if cfg!(target_os = "macos") && matches!(shell, ShellKind::Bash) {
         install_bash_login(&bash_login_file(&dirs::home_dir().unwrap_or_default()))?;
     }
-    println!("lig: open a new terminal (or run `exec {}`) to start using it.", shell.name());
+    if shell.powershell() {
+        println!("lig: open a new terminal to start using it.");
+    } else {
+        println!("lig: open a new terminal (or run `exec {}`) to start using it.", shell.name());
+    }
     Ok(())
 }
 
 fn uninstall(shell: ShellKind) -> Result<()> {
     let rc = shell.rc();
+    if shell == ShellKind::Cmd {
+        if rc.exists() {
+            std::fs::remove_file(&rc)?;
+            println!("lig: removed {}", rc.display());
+        }
+        return Ok(());
+    }
     let old = match std::fs::read_to_string(&rc) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -496,18 +604,37 @@ fn release_target(os: &str, arch: &str) -> Option<&'static str> {
         ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
         _ => None,
     }
 }
 
-fn checksum_command() -> std::process::Command {
-    if cfg!(target_os = "macos") {
+/// Checks `archive` in `dir` against its `.sha256` file, with the system's tool.
+fn verify_checksum(dir: &Path, archive: &str) -> Result<()> {
+    if cfg!(windows) {
+        let expected = std::fs::read_to_string(dir.join(format!("{archive}.sha256")))?;
+        let expected = expected.split_whitespace().next().unwrap_or_default().to_lowercase();
+        let out =
+            std::process::Command::new("certutil").arg("-hashfile").arg(dir.join(archive)).arg("SHA256").output()?;
+        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        // The hash is the line of hex digits (older Windows spaces them out).
+        let actual = text
+            .lines()
+            .map(|l| l.replace(' ', ""))
+            .find(|l| l.len() == 64 && l.bytes().all(|b| b.is_ascii_hexdigit()));
+        anyhow::ensure!(actual.as_deref() == Some(expected.as_str()), "the download doesn't match its checksum");
+        return Ok(());
+    }
+    let mut cmd = if cfg!(target_os = "macos") {
         let mut cmd = std::process::Command::new("shasum");
         cmd.args(["-a", "256"]);
         cmd
     } else {
         std::process::Command::new("sha256sum")
-    }
+    };
+    run(cmd.arg("-c").arg(format!("{archive}.sha256")).current_dir(dir))
+        .context("the download doesn't match its checksum")
 }
 
 fn update(check: bool, force: bool) -> Result<()> {
@@ -561,7 +688,7 @@ fn update(check: bool, force: bool) -> Result<()> {
             .find(|a| a["name"] == file)
             .and_then(|a| a["browser_download_url"].as_str().map(str::to_string))
     };
-    let archive = format!("{name}.tar.gz");
+    let archive = if cfg!(windows) { format!("{name}.zip") } else { format!("{name}.tar.gz") };
     let url = asset(&archive).with_context(|| format!("{tag} has no {archive}"))?;
     let sum_url = asset(&format!("{archive}.sha256")).with_context(|| format!("{tag} has no checksum"))?;
 
@@ -574,12 +701,18 @@ fn update(check: bool, force: bool) -> Result<()> {
         println!("lig: downloading {archive}");
         run(Command::new("curl").args(["-fsSL", "--max-time", "300", "-o"]).arg(work.join(&archive)).arg(&url))?;
         std::fs::write(work.join(format!("{archive}.sha256")), curl(&[&sum_url])?)?;
-        run(checksum_command().arg("-c").arg(format!("{archive}.sha256")).current_dir(&work))
-            .context("the download doesn't match its checksum")?;
-        run(Command::new("tar").args(["xzf", &archive]).current_dir(&work))?;
-        let new = work.join(&name).join("lig");
+        verify_checksum(&work, &archive)?;
+        // Windows' tar also reads zip files.
+        run(Command::new("tar").args(["xf", &archive]).current_dir(&work))?;
+        let new = work.join(&name).join(if cfg!(windows) { "lig.exe" } else { "lig" });
         let version = Command::new(&new).arg("--version").output().context("the new lig doesn't run")?;
         anyhow::ensure!(version.status.success(), "the new lig doesn't run");
+        if cfg!(windows) {
+            // A running program can't be replaced on Windows, but it can be renamed.
+            let old = target.with_extension("old.exe");
+            let _ = std::fs::remove_file(&old);
+            std::fs::rename(&target, &old).with_context(|| format!("moving {} aside", target.display()))?;
+        }
         std::fs::rename(&new, &target).with_context(|| format!("replacing {}", target.display()))?;
         Ok(())
     })();
@@ -599,7 +732,7 @@ fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// `read` returns the lig shell's `/proc/<pid>/cmdline`, already polled.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
     if !zellij {
         return "[off ] zellij mirror: not in zellij".into();
@@ -616,7 +749,7 @@ fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(all(unix, any(target_os = "linux", test)))]
 fn shows_doctor(cmdline: &[u8]) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let mut args = cmdline.split(|&b| b == 0);
@@ -639,22 +772,45 @@ fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
     last
 }
 
+/// Whether this command runs in a shell that lig started.
+fn inside_lig() -> bool {
+    #[cfg(unix)]
+    {
+        let tty = unsafe {
+            let p = libc::ttyname(0);
+            (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+        };
+        tty.is_some() && std::env::var("LIG_TTY").ok() == tty
+    }
+    #[cfg(windows)]
+    {
+        // lig → the shell → this command.
+        let lig = std::env::var("LIG_PID").ok().and_then(|p| p.parse::<u32>().ok());
+        let shell = process::parent(std::process::id()).map(|(pid, _)| pid);
+        lig.is_some() && shell.and_then(process::parent).map(|(pid, _)| pid) == lig
+    }
+}
+
 fn doctor() -> Result<()> {
     let ok = |b: bool| if b { "ok  " } else { "FAIL" };
-    for shell in [ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish] {
+    let shells: &[ShellKind] = if cfg!(windows) {
+        &[ShellKind::Pwsh, ShellKind::Powershell, ShellKind::Cmd]
+    } else {
+        &[ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish]
+    };
+    for &shell in shells {
         let path = shell.rc();
         let rc = std::fs::read_to_string(&path).unwrap_or_default();
-        let has = rc.contains(PRE_BEGIN) && rc.contains(POST_BEGIN);
-        if has || ShellKind::current().is_ok_and(|current| shell.name() == current.name()) {
+        let has = match shell {
+            ShellKind::Cmd => path.exists(),
+            s if s.powershell() => rc.contains(PRE_BEGIN),
+            _ => rc.contains(PRE_BEGIN) && rc.contains(POST_BEGIN),
+        };
+        if has || ShellKind::current().is_ok_and(|current| shell == current) {
             println!("[{}] {} integration", ok(has), path.display());
         }
     }
-    let tty = unsafe {
-        let p = libc::ttyname(0);
-        (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
-    };
-    let inside = tty.is_some() && std::env::var("LIG_TTY").ok() == tty;
-    println!("[{}] this terminal is running inside lig", ok(inside));
+    println!("[{}] this terminal is running inside lig", ok(inside_lig()));
     let cfg = config::config_path();
     if cfg.exists() {
         let valid =
@@ -668,8 +824,12 @@ fn doctor() -> Result<()> {
         engine::ShellEnv { cwd: std::env::current_dir()?, path: std::env::var("PATH").ok(), ..Default::default() };
     let n = e.complete("git ", &env, false, false).items.len();
     println!("[{}] engine: `git ` → {n} suggestions", ok(n > 0));
-    let n = e.complete("ls --", &env, true, false).items.len();
-    println!("[{}] --help parsing: `ls --` → {n} suggestions", ok(n > 0));
+    // Windows has no `ls` program to parse.
+    if cfg!(unix) {
+        let n = e.complete("ls --", &env, true, false).items.len();
+        println!("[{}] --help parsing: `ls --` → {n} suggestions", ok(n > 0));
+    }
+    #[cfg(unix)]
     let lig_pid = std::env::var("LIG_PID").ok().and_then(|v| v.parse::<u32>().ok());
     #[cfg(target_os = "linux")]
     println!(
@@ -869,10 +1029,7 @@ fn preview(args: PreviewArgs) {
     if let Some(d) = args.description {
         ui.description_position = d;
     }
-    let cols = unsafe {
-        let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 { ws.ws_col } else { 100 }
-    };
+    let cols = term::size().map_or(100, |(_, cols)| cols);
     if args.densities {
         for d in ["compact", "normal", "relaxed"] {
             ui.density = d.into();
@@ -891,14 +1048,19 @@ fn preview(args: PreviewArgs) {
 }
 
 fn default_shell() -> PathBuf {
+    if cfg!(windows) {
+        return find_on_path("pwsh").unwrap_or_else(|| "powershell.exe".into());
+    }
     std::env::var_os("SHELL").map(PathBuf::from).filter(|p| Path::new(p).exists()).unwrap_or_else(|| "/bin/zsh".into())
 }
 
 /// Bytes of padding the zellij re-exec appends to `lig shell`'s argv.
+#[cfg(unix)]
 const ARGV_PAD: usize = 4096;
 
 /// Re-exec `lig shell` with a pad positional so the zellij mirror has room for long
 /// command lines. Detected by the positional, not an env var, so a nested lig doesn't inherit it.
+#[cfg(unix)]
 fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let padded = args.iter().skip(2).any(|a| !a.is_empty() && a.as_bytes().iter().all(|&b| b == b' '));
@@ -906,8 +1068,11 @@ fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> b
 }
 
 fn main() -> Result<()> {
+    #[cfg(unix)]
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    #[cfg(unix)]
     let zellij = std::env::var_os("ZELLIJ").is_some();
+    #[cfg(unix)]
     if cfg!(target_os = "linux") && needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new("/proc/self/exe")
@@ -979,7 +1144,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod shell_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -1078,12 +1243,14 @@ mod shell_tests {
     }
 
     #[test]
-    fn release_targets_cover_linux_and_macos() {
+    fn release_targets_cover_linux_macos_and_windows() {
         assert_eq!(release_target("linux", "x86_64"), Some("x86_64-unknown-linux-musl"));
         assert_eq!(release_target("linux", "aarch64"), Some("aarch64-unknown-linux-musl"));
         assert_eq!(release_target("macos", "aarch64"), Some("aarch64-apple-darwin"));
         assert_eq!(release_target("macos", "x86_64"), Some("x86_64-apple-darwin"));
-        assert_eq!(release_target("windows", "aarch64"), None);
+        assert_eq!(release_target("windows", "x86_64"), Some("x86_64-pc-windows-msvc"));
+        assert_eq!(release_target("windows", "aarch64"), Some("aarch64-pc-windows-msvc"));
+        assert_eq!(release_target("freebsd", "x86_64"), None);
     }
     #[test]
     fn release_versions_compare_as_numbers() {

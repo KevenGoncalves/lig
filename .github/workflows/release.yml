@@ -4,7 +4,7 @@
 #
 # Assets: glibc (2.35+) and static musl archives for x86_64/aarch64, deb and
 # rpm packages of the musl builds, Apple Silicon and Intel macOS archives,
-# checksums, and install.sh.
+# Windows zips (x86_64, ARM64), checksums, install.sh and install.ps1.
 name: Release
 
 on:
@@ -59,7 +59,15 @@ jobs:
             os: ubuntu-22.04-arm
           - target: aarch64-unknown-linux-musl
             os: ubuntu-22.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+          # Cross-compiled: the x64 runner can't run it.
+          - target: aarch64-pc-windows-msvc
+            os: windows-2022
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,23 +81,32 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Check the binary runs
+        if: matrix.target != 'aarch64-pc-windows-msvc'
         run: target/${{ matrix.target }}/release/lig --version
       - name: Package
         run: |
           name="lig-${TAG#v}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp target/${{ matrix.target }}/release/lig README.md LICENSE "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          if [ "${{ runner.os }}" = Windows ]; then
+            cp target/${{ matrix.target }}/release/lig.exe README.md LICENSE "dist/$name/"
+            archive="$name.zip"
+            (cd dist && 7z a -tzip "$archive" "$name" >/dev/null)
           else
-            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+            cp target/${{ matrix.target }}/release/lig README.md LICENSE "dist/$name/"
+            archive="$name.tar.gz"
+            tar -C dist -czf "dist/$archive" "$name"
+          fi
+          (cd dist && if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
           fi)
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.sha256
 
   release:
@@ -135,9 +152,11 @@ jobs:
             done
           done
           cd dist && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done
-      - name: Add the install script, with this release's version
-        # Same name in every release, so releases/latest/download/install.sh works.
-        run: sed "s/@VERSION@/${TAG#v}/" source/install.sh > dist/install.sh
+      - name: Add the install scripts, with this release's version
+        # Same names in every release, so releases/latest/download/install.sh works.
+        run: |
+          sed "s/@VERSION@/${TAG#v}/" source/install.sh > dist/install.sh
+          sed "s/@VERSION@/${TAG#v}/" source/install.ps1 > dist/install.ps1
       - name: Publish the release
         id: publish
         env:

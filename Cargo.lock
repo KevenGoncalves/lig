@@ -350,6 +350,7 @@ dependencies = [
  "toml",
  "unicode-width",
  "vt100",
+ "windows-sys",
 ]
 
 [[package]]

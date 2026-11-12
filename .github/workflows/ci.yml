@@ -39,3 +39,42 @@ jobs:
         run: |
           python3 tests/shell_smoke.py
           python3 tests/zellij_mirror.py
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Server 2022 is close to Windows 10, Server 2025 to Windows 11.
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - run: cargo build --release --locked
+      - name: End to end in PowerShell 7, Windows PowerShell and cmd
+        timeout-minutes: 15
+        run: cargo run --release --manifest-path tests/windows/Cargo.toml -- target/release/lig.exe
+      - name: Package for testing
+        if: matrix.os == 'windows-2025'
+        run: |
+          cargo build --release --locked --target aarch64-pc-windows-msvc
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          for arch in x86_64 aarch64; do
+            name="lig-$version-$arch-pc-windows-msvc"
+            bin=target/release/lig.exe
+            [ "$arch" = aarch64 ] && bin=target/aarch64-pc-windows-msvc/release/lig.exe
+            mkdir -p "dist/$name"
+            cp "$bin" README.md LICENSE "dist/$name/"
+            (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
+          done
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-2025'
+        with:
+          name: lig-windows
+          path: dist/*.zip
+      - run: cargo test --locked

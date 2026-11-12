@@ -7,7 +7,7 @@
 <p align="center">
   <b>IDE-style autocomplete for your Linux or macOS terminal.</b><br>
   Subcommands, options, branches, packages and paths in a popup as you type.<br>
-  For zsh, bash and fish, in any terminal. Written in Rust.
+  For zsh, bash, fish, PowerShell and cmd, in any terminal. Written in Rust.
 </p>
 
 <p align="center">
@@ -56,9 +56,9 @@ terminal itself.
 ## Install
 
 Lig runs on Linux and macOS 11+ (Apple Silicon and Intel) with zsh ≥ 5.3, bash ≥ 4.4 or
-fish ≥ 4.2.1. On macOS, use the bundled zsh or a current bash or fish (Apple's bash 3.2 is
-too old). Optional: `curl` for online package search, a [Nerd Font](https://www.nerdfonts.com)
-for icons.
+fish ≥ 4.2.1, and on Windows 10+ with PowerShell or cmd. On macOS, use the bundled zsh or a
+current bash or fish (Apple's bash 3.2 is too old). Optional: `curl` for online package
+search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 Install it one of these ways, then [set up your shell](#set-up-your-shell).
 
@@ -96,6 +96,24 @@ sudo dnf install lig
 ```
 
 Built from source for Fedora and EPEL 9/10.
+
+### Windows (PowerShell and cmd)
+
+```powershell
+irm https://github.com/KevenGoncalves/lig/releases/latest/download/install.ps1 | iex
+lig install            # PowerShell 7 (pwsh), or: lig install powershell (Windows PowerShell 5.1)
+lig install cmd        # a "Command Prompt (lig)" profile in Windows Terminal
+```
+
+The script installs `lig.exe` in `%LOCALAPPDATA%\Programs\lig` and adds it to your `PATH`.
+`lig install` adds a line at the top of your PowerShell profile that starts PowerShell inside
+lig; scripts (`pwsh -Command`, `-File`) and other hosts (VS Code's extension) start as usual.
+cmd has no configuration file, so `lig install cmd` adds a Windows Terminal profile that runs
+`lig shell --shell cmd.exe` instead. Any terminal works the same way: run
+`lig shell --shell pwsh` (or `powershell`, `cmd`) as its command.
+
+Lig needs Windows 10 1809 or newer (for ConPTY), and PSReadLine, which PowerShell loads by
+default. In cmd, lig reads the line off the screen and types the completions as keys.
 
 ### Nix + home-manager
 

@@ -2,14 +2,11 @@
 //! Input, output and resizes feed one event loop ([`Session`]); completion runs on a worker thread.
 
 use std::io::{Read, Write};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
-use nix::sys::termios::{SetArg, Termios, cfmakeraw, tcgetattr, tcsetattr};
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
@@ -17,8 +14,10 @@ use crate::engine::{Engine, Kind, ShellEnv, Suggestion};
 use crate::keys::{self, Action, Bindings, Key};
 use crate::osc::{Msg, OscFilter};
 use crate::popup::{self, Rect};
+use crate::pty::{self, Pty};
 use crate::remote::Remote;
 use crate::store::Store;
+use crate::term;
 
 /// Wait for output to settle this long before drawing.
 const DEBOUNCE: Duration = Duration::from_millis(4);
@@ -35,6 +34,20 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 const SNAPSHOT_ATTEMPTS: u8 = 3;
 /// Key sequence bound to the insert function in bash and zsh.
 const INSERT_KEY: &str = "\x1b[9147~";
+/// Ctrl+Alt+Shift+F12: the insert key of fish and PowerShell.
+const SNAPSHOT_INSERT_KEY: &str = "\x1b[24;8~";
+/// Ctrl+Alt+Shift+F11: asks PowerShell for its line (fish gets `SIGUSR1`).
+const REPORT_KEY: &str = "\x1b[23;8~";
+/// cmd's prompt marker arrives ahead of the prompt it marks (ConPTY passes it through
+/// before drawing), so the input starts where the cursor rests once output pauses this long.
+const PROMPT_SETTLE: Duration = Duration::from_millis(30);
+/// cmd's internal commands, for command names (cmd can't report them).
+const CMD_BUILTINS: &[&str] = &[
+    "assoc", "break", "call", "cd", "chdir", "cls", "color", "copy", "date", "del", "dir", "echo", "endlocal", "erase",
+    "exit", "for", "ftype", "goto", "if", "md", "mkdir", "mklink", "move", "path", "pause", "popd", "prompt", "pushd",
+    "rd", "rem", "ren", "rename", "rmdir", "set", "setlocal", "shift", "start", "time", "title", "type", "ver",
+    "verify", "vol",
+];
 
 enum Event {
     Input(Vec<u8>),
@@ -54,12 +67,6 @@ struct Request {
     env: ShellEnv,
     /// Asked for with the toggle key.
     manual: bool,
-}
-
-fn winsize(fd: i32) -> Option<(u16, u16)> {
-    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let ok = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } == 0;
-    (ok && ws.ws_row > 0 && ws.ws_col > 0).then_some((ws.ws_row, ws.ws_col))
 }
 
 /// Remove one complete ANSI cursor report, preserving typeahead and other replies.
@@ -85,27 +92,14 @@ fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
 /// real origin before forwarding child output; a new vt100 screen assumes (1,1).
 fn terminal_origin() -> (Option<(u16, u16)>, Vec<u8>) {
     let mut input = Vec::new();
-    let mut out = std::io::stdout().lock();
-    if out.write_all(b"\x1b[6n").and_then(|_| out.flush()).is_err() {
+    if term::write(b"\x1b[6n").is_err() {
         return (None, input);
     }
     let deadline = Instant::now() + Duration::from_millis(200);
     while Instant::now() < deadline {
-        let wait = deadline.saturating_duration_since(Instant::now()).as_millis().max(1) as i32;
-        let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-        let ready = unsafe { libc::poll(&mut fd, 1, wait) };
-        if ready < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
-            continue;
-        }
-        if ready <= 0 || fd.revents & libc::POLLIN == 0 {
-            break;
-        }
         let mut bytes = [0; 4096];
-        let n = unsafe { libc::read(0, bytes.as_mut_ptr().cast(), bytes.len()) };
-        if n <= 0 {
-            break;
-        }
-        input.extend_from_slice(&bytes[..n as usize]);
+        let Some(n) = term::read_timeout(&mut bytes, deadline.saturating_duration_since(Instant::now())) else { break };
+        input.extend_from_slice(&bytes[..n]);
         if let Some(position) = take_cursor_report(&mut input) {
             return (Some(position), input);
         }
@@ -114,7 +108,9 @@ fn terminal_origin() -> (Option<(u16, u16)>, Vec<u8>) {
 }
 
 /// Replace this process with the plain shell (used when lig can't run).
+#[cfg(unix)]
 fn exec_shell(shell: &Path, login: bool) -> ! {
+    use std::os::unix::process::CommandExt;
     let mut c = std::process::Command::new(shell);
     if login {
         c.arg("-l");
@@ -124,21 +120,15 @@ fn exec_shell(shell: &Path, login: bool) -> ! {
     std::process::exit(127);
 }
 
-struct RawMode(Termios);
-
-impl RawMode {
-    fn enable() -> Result<RawMode> {
-        let orig = tcgetattr(std::io::stdin())?;
-        let mut raw = orig.clone();
-        cfmakeraw(&mut raw);
-        tcsetattr(std::io::stdin(), SetArg::TCSANOW, &raw)?;
-        Ok(RawMode(orig))
-    }
-}
-
-impl Drop for RawMode {
-    fn drop(&mut self) {
-        let _ = tcsetattr(std::io::stdin(), SetArg::TCSANOW, &self.0);
+/// Run the plain shell in this console and exit with its status (Windows can't replace a process).
+#[cfg(windows)]
+fn exec_shell(shell: &Path, _login: bool) -> ! {
+    match std::process::Command::new(shell).env("LIG_DISABLE", "1").status() {
+        Ok(st) => std::process::exit(st.code().unwrap_or(1)),
+        Err(err) => {
+            eprintln!("lig: cannot run {}: {err}", shell.display());
+            std::process::exit(127);
+        }
     }
 }
 
@@ -153,15 +143,37 @@ enum ShellKind {
 enum InsertionTransport {
     Inline,
     File,
+    /// Typed as keys: backspaces, the text, then Left (cmd has no way to bind a function).
+    Keys,
+}
+
+/// The shell's name without `.exe`, lowercase: `pwsh`, `cmd`, `bash`.
+fn shell_name(shell: &Path) -> String {
+    let name = shell.file_name().and_then(|s| s.to_str()).unwrap_or_default().to_lowercase();
+    name.strip_suffix(".exe").map(str::to_string).unwrap_or(name)
+}
+
+fn is_powershell(shell: &Path) -> bool {
+    matches!(shell_name(shell).as_str(), "pwsh" | "powershell")
 }
 
 impl InsertionTransport {
     fn for_shell(shell: &Path) -> Self {
-        match shell.file_name().and_then(|s| s.to_str()) {
-            Some("bash" | "fish") => Self::File,
+        match shell_name(shell).as_str() {
+            "bash" | "fish" | "pwsh" | "powershell" => Self::File,
+            "cmd" => Self::Keys,
             _ => Self::Inline,
         }
     }
+}
+
+/// The keys that make the edit `<delete>;<back>;<text>`.
+fn insertion_keys(payload: &str) -> Option<Vec<u8>> {
+    let mut parts = payload.splitn(3, ';');
+    let delete: usize = parts.next()?.parse().ok()?;
+    let back: usize = parts.next()?.parse().ok()?;
+    let text = parts.next()?;
+    Some(format!("{}{text}{}", "\x7f".repeat(delete), "\x1b[D".repeat(back)).into_bytes())
 }
 
 /// Build the insertion only after its file payload has been written successfully.
@@ -169,63 +181,67 @@ fn insertion_bytes(transport: InsertionTransport, fish: bool, file: &Path, paylo
     match transport {
         InsertionTransport::File => {
             std::fs::write(file, payload)?;
-            Ok(if fish { b"\x1b[24;8~".to_vec() } else { INSERT_KEY.as_bytes().to_vec() })
+            Ok(if fish { SNAPSHOT_INSERT_KEY.as_bytes().to_vec() } else { INSERT_KEY.as_bytes().to_vec() })
         }
         InsertionTransport::Inline => Ok(format!("{INSERT_KEY}{payload}\x07").into_bytes()),
+        InsertionTransport::Keys => insertion_keys(payload).ok_or_else(|| std::io::Error::other("bad insertion")),
     }
 }
 
-pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
-    if unsafe { libc::isatty(0) == 0 || libc::isatty(1) == 0 } {
-        exec_shell(&shell, login);
-    }
-    let (rows, cols) = winsize(0).unwrap_or((24, 80));
-    let size = PtySize { rows, cols, pixel_width: 0, pixel_height: 0 };
-    let pair = match native_pty_system().openpty(size) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("lig: openpty failed: {e}");
-            exec_shell(&shell, login);
-        }
-    };
-    let mut cmd = CommandBuilder::new(&shell);
-    if login {
+/// PowerShell's integration (see shell/lig.ps1), run after its profile.
+const PWSH_INIT: &str = include_str!("../shell/lig.ps1");
+
+/// How the shell starts inside lig: its arguments and what it's told through the environment.
+fn shell_command(shell: &Path, login: bool) -> pty::Command {
+    let mut cmd = pty::Command::new(shell);
+    if is_powershell(shell) {
+        // Encoded (UTF-16LE, base64): no quoting, and no execution policy, which a script file
+        // would need (Windows PowerShell's default allows none).
+        let utf16: Vec<u8> = PWSH_INIT.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        cmd.arg("-NoLogo").arg("-NoExit").arg("-EncodedCommand").arg(crate::remote::base64(&utf16));
+    } else if shell_name(shell) == "cmd" {
+        // A prompt marker and the folder ahead of the prompt the user has (or cmd's default).
+        let prompt = std::env::var("PROMPT").unwrap_or_else(|_| "$P$G".into());
+        cmd.env("PROMPT", format!("$E]6973;C;$P\x07$E]6973;S\x07{prompt}"));
+    } else if login {
         cmd.arg("-l");
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        cmd.cwd(cwd);
-    }
-    let tty = pair.master.tty_name();
-    if let Some(tty) = &tty {
-        cmd.env("LIG_TTY", tty);
-    }
+    cmd.cwd = std::env::current_dir().ok();
     cmd.env("LIG_PID", std::process::id().to_string());
+    cmd
+}
+
+pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
+    if !term::is_terminal() {
+        exec_shell(&shell, login);
+    }
+    let (rows, cols) = term::size().unwrap_or((24, 80));
+    // bash reads accepted completions from this file (see shell/post.bash).
+    let runtime = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let insert_file = runtime.join(format!("lig-{}.insert", std::process::id()));
+    let query_file = insert_file.with_extension("query");
+    let mut cmd = shell_command(&shell, login);
     #[cfg(target_os = "macos")]
     if let (Ok(session), Ok(pane)) = (std::env::var("ZELLIJ_SESSION_NAME"), std::env::var("ZELLIJ_PANE_ID")) {
         cmd.env(crate::mirror::PANE_OWNER_ENV, crate::mirror::pane_owner(&session, &pane));
     }
-    // bash reads accepted completions from this file (see shell/post.bash).
-    let insert_file =
-        dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join(format!("lig-{}.insert", std::process::id()));
-    let query_file = insert_file.with_extension("query");
     cmd.env("LIG_INSERT_FILE", &insert_file);
     cmd.env("LIG_QUERY_FILE", &query_file);
-    let mut child = match pair.slave.spawn_command(cmd) {
-        Ok(c) => c,
+    let (pty_handle, reader, writer) = match Pty::spawn(&cmd, rows, cols) {
+        Ok(spawned) => spawned,
         Err(e) => {
-            eprintln!("lig: spawning {} failed: {e}", shell.display());
+            eprintln!("lig: starting {} failed: {e:#}", shell.display());
             exec_shell(&shell, login);
         }
     };
-    drop(pair.slave);
-    let shell_pid = child.process_id();
+    let tty = pty_handle.tty_name();
+    let shell_pid = pty_handle.pid();
+    #[cfg(unix)]
     let _mirror = shell_pid.and_then(|pid| {
         crate::mirror::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
     });
 
-    let reader = pair.master.try_clone_reader()?;
-    let writer = pair.master.take_writer()?;
-    let raw = RawMode::enable()?;
+    let raw = term::RawMode::enable()?;
     let (origin, typeahead) = terminal_origin();
     crate::log(&format!(
         "startup shell={} size={rows}x{cols} origin={origin:?} typeahead={}",
@@ -245,7 +261,12 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     }
     spawn_stdin_reader(tx.clone());
     spawn_pty_reader(reader, tx.clone());
-    spawn_resize_watcher(tx.clone())?;
+    let resized = tx.clone();
+    term::watch_resize(move || resized.send(Event::Resize).is_ok())?;
+    let exited = tx.clone();
+    pty_handle.on_exit(move || {
+        let _ = exited.send(Event::Exit);
+    });
     let (req_tx, req_rx) = unbounded::<Request>();
     let behavior = cfg.behavior.clone();
     std::thread::spawn(move || worker(req_rx, tx, behavior));
@@ -256,22 +277,32 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         fish_sequence: 0,
         unknown_rows: origin.map_or(0, |(row, _)| row.saturating_sub(1).min(rows)),
         insertion_transport: InsertionTransport::for_shell(&shell),
-        fish_shell: shell.file_name().is_some_and(|name| name == "fish"),
+        fish_shell: shell_name(&shell) == "fish" || is_powershell(&shell),
+        report_key: is_powershell(&shell),
+        cmd_shell: shell_name(&shell) == "cmd",
+        prompt_pending: false,
+        held: vec![],
         fish_refresh: None,
         prompt_end: None,
         shell_nav: false,
         cwd_fallback: std::env::current_dir().unwrap_or_else(|_| "/".into()),
         bindings: Bindings::new(&cfg.keys),
         cfg,
-        out: std::io::stdout(),
         pty: writer,
-        master: pair.master,
+        shell_pty: pty_handle,
         parser,
         osc: OscFilter::default(),
         editing: false,
         hidden: false,
         line: String::new(),
-        env: ShellEnv::default(),
+        env: if shell_name(&shell) == "cmd" {
+            ShellEnv {
+                builtins: std::sync::Arc::new(CMD_BUILTINS.iter().map(|b| b.to_string()).collect()),
+                ..Default::default()
+            }
+        } else {
+            ShellEnv::default()
+        },
         shell_pid,
         tty,
         foreign: false,
@@ -306,24 +337,23 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     let _ = std::fs::remove_file(&s.insert_file);
     let _ = std::fs::remove_file(&s.query_file);
     drop(raw);
-    let code = child.wait().map(|st| st.exit_code() as i32).unwrap_or(0);
-    Ok(code)
+    Ok(s.shell_pty.wait())
 }
 
 fn spawn_stdin_reader(tx: Sender<Event>) {
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         loop {
-            let n = unsafe { libc::read(0, buf.as_mut_ptr().cast(), buf.len()) };
-            if n <= 0 {
-                if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
-                    continue;
+            match term::read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    if tx.send(Event::Input(buf[..n].to_vec())).is_err() {
+                        break;
+                    }
                 }
-                let _ = tx.send(Event::Exit);
-                break;
-            }
-            if tx.send(Event::Input(buf[..n as usize].to_vec())).is_err() {
-                break;
+                _ => {
+                    let _ = tx.send(Event::Exit);
+                    break;
+                }
             }
         }
     });
@@ -348,20 +378,9 @@ fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>) {
     });
 }
 
-fn spawn_resize_watcher(tx: Sender<Event>) -> Result<()> {
-    let mut signals = signal_hook::iterator::Signals::new([libc::SIGWINCH])?;
-    std::thread::spawn(move || {
-        for _ in signals.forever() {
-            if tx.send(Event::Resize).is_err() {
-                break;
-            }
-        }
-    });
-    Ok(())
-}
-
 /// The local shell's state, kept while its `lig ssh` runs.
 struct RemoteSession {
+    #[cfg_attr(windows, allow(dead_code))]
     pid: u32,
     local_env: ShellEnv,
     fish_shell: bool,
@@ -503,7 +522,18 @@ struct Session {
     /// Rows above the startup cursor are absent from the screen model.
     unknown_rows: u16,
     insertion_transport: InsertionTransport,
+    /// The shell reports its line when asked, as fish does; PowerShell speaks the same
+    /// protocol (see shell/lig.ps1).
     fish_shell: bool,
+    /// Asked with [`REPORT_KEY`] instead of `SIGUSR1` (PowerShell).
+    report_key: bool,
+    /// cmd: the line is read off the screen like bash's, but the marker comes early
+    /// (see [`PROMPT_SETTLE`]), and Enter ends the line.
+    cmd_shell: bool,
+    /// cmd's prompt marker arrived and output hasn't paused yet.
+    prompt_pending: bool,
+    /// Keys typed while `prompt_pending`, sent once the input start is known.
+    held: Vec<u8>,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
     insert_file: PathBuf,
@@ -513,9 +543,8 @@ struct Session {
     /// no popup, so those keys keep going to the shell. Typing ends it.
     shell_nav: bool,
     bindings: Bindings,
-    out: std::io::Stdout,
     pty: Box<dyn Write + Send>,
-    master: Box<dyn MasterPty + Send>,
+    shell_pty: Pty,
     parser: vt100::Parser,
     osc: OscFilter,
 
@@ -582,10 +611,8 @@ impl Session {
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
-                    let sent = std::fs::write(&self.query_file, self.fish_sequence.to_string()).is_ok()
-                        && self
-                            .shell_pid
-                            .is_some_and(|pid| unsafe { libc::kill(pid as libc::pid_t, libc::SIGUSR1) } == 0);
+                    let sent =
+                        std::fs::write(&self.query_file, self.fish_sequence.to_string()).is_ok() && self.ask_for_line();
                     if !sent {
                         crate::log("fish snapshot request failed");
                         self.fish_refresh = None;
@@ -611,10 +638,17 @@ impl Session {
                 let w = self.foreign_checked + FOREIGN_RECHECK;
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
+            if self.prompt_pending {
+                let w = self.last_output + PROMPT_SETTLE;
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
             let ev = if let Some(due) = deadline {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        if self.prompt_pending && self.last_output.elapsed() >= PROMPT_SETTLE {
+                            self.prompt_settled();
+                        }
                         if self.foreign && self.foreign_checked.elapsed() >= FOREIGN_RECHECK {
                             self.update_foreign();
                             if self.foreign {
@@ -654,18 +688,30 @@ impl Session {
         }
     }
 
+    /// Ask fish (a signal) or PowerShell (a key) to report its line.
+    fn ask_for_line(&mut self) -> bool {
+        if self.report_key {
+            self.write_pty(REPORT_KEY.as_bytes());
+            return true;
+        }
+        #[cfg(unix)]
+        return self.shell_pid.is_some_and(|pid| unsafe { libc::kill(pid as libc::pid_t, libc::SIGUSR1) } == 0);
+        #[cfg(windows)]
+        return false;
+    }
+
     fn update_foreign(&mut self) {
         // A `lig ssh` killed before it could say so.
+        #[cfg(unix)]
         if self.remote.as_ref().is_some_and(|r| unsafe { libc::kill(r.pid as i32, 0) } != 0) {
             self.end_remote();
         }
+        // Windows has no tty to look for: any program the shell runs counts.
+        let tty = self.tty.clone().or_else(|| cfg!(windows).then(PathBuf::new));
         // `ssh` itself uses the terminal; the remote shell reports what it's doing.
         self.foreign = self.editing
             && self.remote.is_none()
-            && self
-                .shell_pid
-                .zip(self.tty.as_deref())
-                .is_some_and(|(pid, tty)| crate::process::foreign_program(pid, tty));
+            && self.shell_pid.zip(tty.as_deref()).is_some_and(|(pid, tty)| crate::process::foreign_program(pid, tty));
         self.foreign_checked = Instant::now();
     }
 
@@ -673,9 +719,7 @@ impl Session {
         if bytes.is_empty() {
             return;
         }
-        let mut out = self.out.lock();
-        let _ = out.write_all(bytes);
-        let _ = out.flush();
+        let _ = term::write(bytes);
     }
 
     fn write_pty(&mut self, bytes: &[u8]) {
@@ -950,6 +994,12 @@ impl Session {
                 self.switch_shell(ShellKind::Zsh);
                 self.on_buffer(cursor, &text);
             }
+            Msg::PromptEnd if self.cmd_shell => {
+                // The prompt itself is still to come (see `PROMPT_SETTLE`).
+                self.prompt_pending = true;
+                self.prompt_end = None;
+                self.editing = false;
+            }
             Msg::PromptEnd => {
                 self.switch_shell(ShellKind::Bash);
                 let screen = self.parser.screen();
@@ -1125,6 +1175,11 @@ impl Session {
             self.deferred.extend_from_slice(data);
             return;
         }
+        // Until cmd's prompt is drawn, typed text would be taken for part of it.
+        if self.prompt_pending {
+            self.held.extend_from_slice(data);
+            return;
+        }
         let mut fwd: Vec<u8> = vec![];
         let mut redraw = false;
         let keys = keys::split(data);
@@ -1248,6 +1303,28 @@ impl Session {
             self.render();
         }
         self.write_pty(&fwd);
+        // cmd says nothing when a line runs; Enter (or a pasted newline) runs it.
+        if self.cmd_shell && self.editing && fwd.contains(&b'\r') {
+            self.on_msg(Msg::Finish);
+        }
+    }
+
+    /// cmd's output paused after its prompt marker: the input starts at the cursor.
+    fn prompt_settled(&mut self) {
+        self.prompt_pending = false;
+        let screen = self.parser.screen();
+        let (row, col) = screen.cursor_position();
+        let prefix = screen.contents_between(row, 0, row, col);
+        crate::log(&format!("cmd prompt at {row},{col}"));
+        self.prompt_end = Some(PromptEnd { row, col, prefix });
+        self.editing = true;
+        self.hidden = false;
+        self.line.clear();
+        self.request();
+        let held = std::mem::take(&mut self.held);
+        if !held.is_empty() {
+            self.on_input(&held);
+        }
     }
 
     /// The popup may be shown now (the shell is editing a line, nothing hides it).
@@ -1326,7 +1403,8 @@ impl Session {
                 self.line.chars().take(n.saturating_sub(s.delete)).collect()
             };
             let result = format!("{kept}{}", s.insert);
-            self.close_after_insert = !(result.is_empty() || result.ends_with(|c: char| c.is_whitespace() || c == '/'));
+            self.close_after_insert =
+                !(result.is_empty() || result.ends_with(|c: char| c.is_whitespace() || crate::engine::is_sep(c)));
             // Fish checks the expected prefix before changing the buffer.
             let payload = if self.fish_shell {
                 format!("{};{};{};{}{}", s.delete, s.back, self.line.chars().count(), self.line, s.insert)
@@ -1343,9 +1421,9 @@ impl Session {
     }
 
     fn on_resize(&mut self) {
-        let Some((rows, cols)) = winsize(0) else { return };
+        let Some((rows, cols)) = term::size() else { return };
         self.clear_popup();
-        let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+        self.shell_pty.resize(rows, cols);
         self.parser.screen_mut().set_size(rows, cols);
         self.mark_dirty();
     }
@@ -1558,6 +1636,15 @@ mod tests {
             insertion_bytes(InsertionTransport::Inline, false, &missing, "2;1;café;").unwrap(),
             format!("{INSERT_KEY}2;1;café;\x07").into_bytes()
         );
+    }
+
+    #[test]
+    fn cmd_gets_insertions_as_keys() {
+        assert_eq!(InsertionTransport::for_shell(Path::new("cmd.exe")), InsertionTransport::Keys);
+        assert_eq!(InsertionTransport::for_shell(Path::new("pwsh.exe")), InsertionTransport::File);
+        assert_eq!(insertion_keys("2;1;checkout ").unwrap(), b"\x7f\x7fcheckout \x1b[D");
+        assert_eq!(insertion_keys("0;0;a;b").unwrap(), b"a;b");
+        assert_eq!(insertion_keys("x;0;a"), None);
     }
 
     #[test]

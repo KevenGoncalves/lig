@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,22 +43,39 @@ fn fnv(s: &str) -> u64 {
 }
 
 fn which(name: &str, path: &str) -> Option<PathBuf> {
-    if name.contains('/') {
+    if name.contains(crate::engine::is_sep) {
         return Some(PathBuf::from(name));
     }
-    path.split(':')
-        .filter(|d| !d.is_empty())
-        .map(|d| Path::new(d).join(name))
-        .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+    // On Windows `git` is `git.exe` (or `.cmd`, …): try what PATHEXT lists.
+    let exts: Vec<String> = if cfg!(windows) && Path::new(name).extension().is_none() {
+        std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE".into()).split(';').map(str::to_string).collect()
+    } else {
+        vec![String::new()]
+    };
+    crate::engine::path_dirs(path)
+        .flat_map(|d| exts.iter().map(move |e| Path::new(d).join(format!("{name}{e}"))))
+        .find(|p| crate::engine::command_name(p).is_some())
+}
+
+/// Whether a Windows program (`MZ`… `PE`) runs in the console: a GUI one (Notepad) would
+/// open a window for `--help`.
+fn console_program(head: &[u8]) -> bool {
+    const CONSOLE: u16 = 3;
+    let at = |i: usize, n: usize| head.get(i..i + n);
+    let Some(pe) = at(0x3c, 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else { return false };
+    // After "PE\0\0" and the 20-byte file header, the subsystem is at offset 68 of the optional one.
+    head.starts_with(b"MZ")
+        && at(pe, 4) == Some(b"PE\0\0")
+        && at(pe + 92, 2).is_some_and(|b| u16::from_le_bytes([b[0], b[1]]) == CONSOLE)
 }
 
 /// May `--help` be executed for this file?
 fn help_is_safe(exe: &Path) -> bool {
     let Ok(mut f) = std::fs::File::open(exe) else { return false };
-    let mut head = [0u8; 128];
+    let mut head = [0u8; 4096];
     let n = f.read(&mut head).unwrap_or(0);
     let head = &head[..n];
-    if head.starts_with(b"\x7fELF") {
+    if head.starts_with(b"\x7fELF") || cfg!(windows) && console_program(head) {
         return true;
     }
     if head.starts_with(b"#!") {
@@ -120,7 +136,10 @@ impl HelpLoader {
             return Lookup::Found(None);
         };
         let stamp = match std::fs::metadata(&exe) {
-            Ok(m) => format!("{}:{}:{}", exe.display(), m.mtime(), m.size()),
+            Ok(m) => {
+                let mtime = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+                format!("{}:{}:{}", exe.display(), mtime.map_or(0, |d| d.as_secs()), m.len())
+            }
             Err(_) => return Lookup::Found(None),
         };
         let file = self.cache_dir.join(format!("{:016x}.json", fnv(&key)));
@@ -169,7 +188,7 @@ impl HelpLoader {
                 return clean(&text);
             }
         }
-        if argv.len() == 1 {
+        if argv.len() == 1 && cfg!(unix) {
             let a = vec!["man".to_string(), "-P".into(), "cat".into(), argv[0].clone()];
             let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout, None);
             if out.status == 0 {
@@ -445,6 +464,22 @@ fn parse_positional(left: &str, desc: &str) -> Option<crate::spec::Arg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_console_programs_count_as_console() {
+        let pe = |subsystem: u16| {
+            let mut h = vec![0u8; 512];
+            h[..2].copy_from_slice(b"MZ");
+            h[0x3c..0x40].copy_from_slice(&128u32.to_le_bytes());
+            h[128..132].copy_from_slice(b"PE\0\0");
+            h[128 + 92..128 + 94].copy_from_slice(&subsystem.to_le_bytes());
+            h
+        };
+        assert!(console_program(&pe(3)));
+        assert!(!console_program(&pe(2)));
+        assert!(!console_program(b"MZ"));
+        assert!(!console_program(&pe(3)[..200]));
+    }
 
     #[test]
     fn positional_arguments() {

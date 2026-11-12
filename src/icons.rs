@@ -15,6 +15,17 @@ const NO: u8 = 2;
 static NERD: AtomicU8 = AtomicU8::new(UNKNOWN);
 
 fn nerd_font_installed() -> bool {
+    if cfg!(windows) {
+        // Font files named like "JetBrainsMonoNerdFont-Regular.ttf", for all users or one.
+        let dirs = [
+            std::env::var_os("WINDIR").map(|w| std::path::PathBuf::from(w).join("Fonts")),
+            dirs::data_local_dir().map(|d| d.join(r"Microsoft\Windows\Fonts")),
+        ];
+        return dirs.into_iter().flatten().flat_map(std::fs::read_dir).flatten().flatten().any(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            name.contains("nerdfont") || name.contains("nerd font") || name.contains("nf-")
+        });
+    }
     let out = std::process::Command::new("fc-list").args([":", "family"]).output();
     out.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("Nerd Font"))
 }

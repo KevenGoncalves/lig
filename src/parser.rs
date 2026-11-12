@@ -28,6 +28,10 @@ impl CommandLine {
     }
 }
 
+/// The escape character: `\` in POSIX shells; on Windows `\` separates paths and PowerShell
+/// escapes with a backtick (cmd's `^` is rare enough to treat as text).
+const ESCAPE: char = if cfg!(windows) { '`' } else { '\\' };
+
 #[allow(unused_assignments)]
 pub fn parse(line: &str) -> CommandLine {
     let mut tokens: Vec<Token> = Vec::new();
@@ -73,7 +77,7 @@ pub fn parse(line: &str) -> CommandLine {
                 cur.raw.push(c);
                 if c == '"' {
                     quote = None;
-                } else if c == '\\' && matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) {
+                } else if c == ESCAPE && matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) {
                     let n = chars.next().unwrap();
                     cur.raw.push(n);
                     cur.value.push(n);
@@ -85,7 +89,7 @@ pub fn parse(line: &str) -> CommandLine {
             _ => {}
         }
         match c {
-            '\\' => {
+            c if c == ESCAPE => {
                 cur.raw.push(c);
                 escape = true;
                 in_token = true;
@@ -96,6 +100,7 @@ pub fn parse(line: &str) -> CommandLine {
                 in_token = true;
             }
             ' ' | '\t' => finish!(),
+            // On Windows the backtick is the escape character, matched above.
             '\n' | ';' | '|' | '&' | '(' | ')' | '`' => {
                 finish!();
                 // A command separator: start over with a fresh command.
@@ -150,8 +155,20 @@ fn is_assignment(s: &str) -> bool {
     }
 }
 
+/// Windows shells take a word with spaces or special characters in double quotes.
+fn quote_windows(value: &str, special: &str) -> String {
+    if value.contains(|c: char| c.is_whitespace() || special.contains(c)) {
+        format!("\"{value}\"")
+    } else {
+        value.to_string()
+    }
+}
+
 /// Escape a value for insertion into an unquoted shell word.
 pub fn escape(value: &str) -> String {
+    if cfg!(windows) {
+        return quote_windows(value, "'&|;<>()[]{}`$#,@^");
+    }
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         if " \t\n'\"\\$`&|;<>()[]{}*?!#~".contains(c) {
@@ -164,6 +181,9 @@ pub fn escape(value: &str) -> String {
 
 /// Escape only characters that would split or terminate the word.
 pub fn escape_minimal(value: &str) -> String {
+    if cfg!(windows) {
+        return quote_windows(value, "&|;<>()`");
+    }
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         if " \t\n'\"\\$`&|;<>()".contains(c) {

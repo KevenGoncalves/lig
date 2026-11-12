@@ -2,7 +2,6 @@
 //! produces ranked suggestions.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,6 +17,40 @@ use crate::spec::{
 pub use crate::spec::{Icon, Kind};
 use crate::specs;
 use crate::store::Store;
+
+/// The separator lig puts after folder names.
+const SEP: char = std::path::MAIN_SEPARATOR;
+
+/// A path separator: `/`, and on Windows `\\` too.
+pub fn is_sep(c: char) -> bool {
+    c == '/' || (cfg!(windows) && c == '\\')
+}
+
+/// The name a command is typed as, if `path` is a program: on Windows, one whose extension
+/// is in `PATHEXT` (shown without it); elsewhere an executable file.
+pub fn command_name(path: &std::path::Path) -> Option<String> {
+    let m = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        (m.permissions().mode() & 0o111 != 0).then_some(name)
+    }
+    #[cfg(windows)]
+    {
+        let _ = m;
+        let ext = path.extension()?.to_string_lossy().to_lowercase();
+        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into()).to_lowercase();
+        exts.split(';')
+            .any(|e| e.trim_start_matches('.') == ext)
+            .then(|| name[..name.len() - ext.len() - 1].to_string())
+    }
+}
+
+/// `PATH`'s folders: separated by `;` on Windows, `:` elsewhere.
+pub fn path_dirs(path: &str) -> impl Iterator<Item = &str> {
+    path.split(if cfg!(windows) { ';' } else { ':' }).filter(|d| !d.is_empty())
+}
 
 #[derive(Debug, Clone)]
 pub struct Suggestion {
@@ -222,7 +255,7 @@ impl Engine {
         } else if cl.tokens.is_empty() {
             let v = &cl.current.value;
             if (self.cfg.complete_commands && !v.is_empty()) || cx.manual {
-                if v.contains('/') {
+                if v.contains(is_sep) {
                     self.files(&mut cx, false);
                 } else {
                     self.commands(&mut cx);
@@ -577,11 +610,11 @@ impl Engine {
             cx.push(&meta, Kind::Arg, "", &cur.value, cur.raw.chars().count());
             cx.offer_dot = false;
         }
-        let (dir_part, base) = match cur.value.rfind('/') {
+        let (dir_part, base) = match cur.value.rfind(is_sep) {
             Some(i) => (&cur.value[..=i], &cur.value[i + 1..]),
             None => ("", cur.value.as_str()),
         };
-        let delete = match cur.raw.rfind('/') {
+        let delete = match cur.raw.rfind(is_sep) {
             Some(i) => cur.raw[i + 1..].chars().count(),
             None => cur.raw.chars().count(),
         };
@@ -598,7 +631,7 @@ impl Engine {
         entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
         for (is_dir, name) in entries {
             let (kind, label, suffix) =
-                if is_dir { (Kind::Folder, format!("{name}/"), "") } else { (Kind::File, name, " ") };
+                if is_dir { (Kind::Folder, format!("{name}{SEP}"), "") } else { (Kind::File, name, " ") };
             let meta = spec::Meta { names: vec![label], ..Default::default() };
             cx.push(&meta, kind, suffix, base, delete);
         }
@@ -696,13 +729,10 @@ impl Engine {
             self.path_cmds = Some((Instant::now(), key, set.clone()));
             return set;
         }
-        for dir in path.split(':').filter(|d| !d.is_empty()) {
+        for dir in path_dirs(&path) {
             for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-                if let Ok(m) = std::fs::metadata(e.path())
-                    && m.is_file()
-                    && m.permissions().mode() & 0o111 != 0
-                {
-                    set.insert(e.file_name().to_string_lossy().into_owned());
+                if let Some(name) = command_name(&e.path()) {
+                    set.insert(name);
                 }
             }
         }
@@ -815,7 +845,7 @@ fn folder_navigation(cx: &mut Cx<'_>) {
     }
     let cl = cx.cl;
     let cur = &cl.current;
-    if cur.value.ends_with('/') && !cx.cands.iter().any(|c| c.kind == Kind::Execute) {
+    if cur.value.ends_with(is_sep) && !cx.cands.iter().any(|c| c.kind == Kind::Execute) {
         let line = cl.tokens.iter().map(|t| t.raw.as_str()).chain([cur.raw.as_str()]).collect::<Vec<_>>().join(" ");
         let meta = spec::Meta {
             names: vec![String::new()],
@@ -826,7 +856,7 @@ fn folder_navigation(cx: &mut Cx<'_>) {
         };
         cx.push(&meta, Kind::Execute, "", "", 0).unfiltered = true;
     }
-    if (cur.value.is_empty() || cur.value.ends_with('/'))
+    if (cur.value.is_empty() || cur.value.ends_with(is_sep))
         && !cx.cands.iter().any(|c| c.kind == Kind::Back)
         && let Some(up) = parent_path(&cur.raw)
     {
@@ -877,17 +907,18 @@ fn generator_icon(id: &str) -> Option<Icon> {
 /// A typed directory path (as typed, quotes/escapes kept) one level up:
 /// `src/app/` → `src/`, `src/` → ``, `` → `../`, `../` → `../../`.
 fn parent_path(raw: &str) -> Option<String> {
-    if raw == "/" {
+    let trimmed = raw.trim_end_matches(is_sep);
+    // A root: `/`, or a drive (`C:\\`).
+    if trimmed.is_empty() && !raw.is_empty() || cfg!(windows) && trimmed.len() == 2 && trimmed.ends_with(':') {
         return None;
     }
-    let trimmed = raw.trim_end_matches('/');
-    let (head, last) = match trimmed.rfind('/') {
+    let (head, last) = match trimmed.rfind(is_sep) {
         Some(i) => (&trimmed[..=i], &trimmed[i + 1..]),
         None => ("", trimmed),
     };
     Some(match last {
         // Nothing to strip: go further up.
-        "" | "." | ".." | "~" => format!("{raw}../"),
+        "" | "." | ".." | "~" => format!("{raw}..{SEP}"),
         _ => head.to_string(),
     })
 }
@@ -934,11 +965,12 @@ fn insertion(c: &Cand, name: &str, cur: &Token, space: bool) -> (String, usize) 
             None => (iv.clone(), 0),
         };
     }
-    let is_dir = c.kind == Kind::Folder || name.ends_with('/');
-    let bare = if is_dir { name.trim_end_matches('/') } else { name };
+    let is_dir = c.kind == Kind::Folder || name.ends_with(is_sep);
+    let bare = if is_dir { name.trim_end_matches(is_sep) } else { name };
+    let sep = SEP.to_string();
     // A trailing space only with `insert_space`; `=` and `/` always.
     let suffix = match (is_dir, c.suffix.as_str()) {
-        (true, _) => "/",
+        (true, _) => sep.as_str(),
         (false, " ") if !space => "",
         (false, s) => s,
     };
@@ -955,7 +987,7 @@ fn insertion(c: &Cand, name: &str, cur: &Token, space: bool) -> (String, usize) 
                 }),
             };
             let open = if c.delete >= cur.raw.chars().count() { q.to_string() } else { String::new() };
-            if is_dir { (format!("{open}{body}/"), 0) } else { (format!("{open}{body}{q}{suffix}"), 0) }
+            if is_dir { (format!("{open}{body}{SEP}"), 0) } else { (format!("{open}{body}{q}{suffix}"), 0) }
         }
         _ if matches!(c.kind, Kind::File | Kind::Folder) => (format!("{}{suffix}", parser::escape(bare)), 0),
         // Values from specs may be globs or `~/…`; only escape what would break the word.
@@ -1001,7 +1033,7 @@ fn secret(name: &str) -> bool {
 fn local_dir(cwd: &std::path::Path, dir_part: &str) -> Listing {
     let dir = if dir_part.is_empty() {
         cwd.to_path_buf()
-    } else if let Some(rel) = dir_part.strip_prefix("~/") {
+    } else if let Some(rel) = dir_part.strip_prefix('~').filter(|r| r.starts_with(is_sep)).map(|r| &r[1..]) {
         dirs::home_dir().unwrap_or_default().join(rel)
     } else {
         // An absolute `dir_part` replaces the cwd.
@@ -1023,8 +1055,16 @@ fn is_flag(t: &str) -> bool {
     t.starts_with('-') && t.len() > 1
 }
 
+/// The command a word runs: `/usr/bin/git` → `git`; on Windows `C:\\Git\\git.EXE` → `git`.
 fn basename(s: &str) -> &str {
-    s.rsplit('/').next().unwrap_or(s)
+    let name = s.rsplit(is_sep).next().unwrap_or(s);
+    if cfg!(windows)
+        && let Some((stem, ext)) = name.rsplit_once('.')
+        && ["exe", "cmd", "bat", "com"].iter().any(|e| ext.eq_ignore_ascii_case(e))
+    {
+        return stem;
+    }
+    name
 }
 
 fn current_arg(node: &Subcommand, idx: usize) -> Option<Arc<Arg>> {

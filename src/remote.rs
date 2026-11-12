@@ -6,6 +6,7 @@
 //! before ssh starts and `Y` after it ends; in between, the remote shell's messages drive
 //! the popup and commands for suggestions run on the host.
 
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -114,7 +115,7 @@ fn remote_command() -> String {
     format!("echo {} | base64 -d | sh", base64(script.as_bytes()))
 }
 
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in bytes.chunks(3) {
@@ -126,13 +127,22 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+#[cfg(unix)]
 fn in_lig_session() -> bool {
     let tty = unsafe { libc::ttyname(0) };
     !tty.is_null()
         && std::env::var("LIG_TTY").is_ok_and(|t| t.as_bytes() == unsafe { std::ffi::CStr::from_ptr(tty) }.to_bytes())
 }
 
+/// Windows: plain ssh (the remote popup needs lig's Unix PTY handling).
+#[cfg(windows)]
+pub fn ssh(args: &[String]) -> Result<i32> {
+    let _ = (destination(args), remote_command);
+    Ok(std::process::Command::new("ssh").args(args).status()?.code().unwrap_or(255))
+}
+
 /// `lig ssh <ssh args>`: plain ssh outside lig, or with a remote command.
+#[cfg(unix)]
 pub fn ssh(args: &[String]) -> Result<i32> {
     let Some(dest) = destination(args).filter(|_| in_lig_session()) else {
         use std::os::unix::process::CommandExt;

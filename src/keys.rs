@@ -1,7 +1,7 @@
 //! Terminal input as keys, key names for the `[keys]` config, and the bindings between them.
 //! Names look like `ctrl-n` or `alt-shift-up`; any other sequence is bound by its escape (`\x1b[…`).
 
-use std::io::{Read, Write};
+use std::io::Write;
 
 /// The base key, without modifiers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,20 +404,15 @@ impl Bindings {
 }
 
 /// `lig keys`: prints each pressed key's name and binding; `q` or Ctrl-C quits.
-pub fn show(bindings: &Bindings) -> std::io::Result<()> {
-    use nix::sys::termios::{SetArg, cfmakeraw, tcgetattr, tcsetattr};
-    let stdin = std::io::stdin();
-    let orig = tcgetattr(&stdin)?;
-    let mut raw = orig.clone();
-    cfmakeraw(&mut raw);
-    tcsetattr(&stdin, SetArg::TCSANOW, &raw)?;
+pub fn show(bindings: &Bindings) -> anyhow::Result<()> {
+    let raw = crate::term::RawMode::enable()?;
     let mut out = std::io::stdout();
     write!(out, "Press keys to see their names for the [keys] config (q or Ctrl-C quits).\r\n\r\n")?;
     write!(out, "  {:<18} {:<20} bound to\r\n", "terminal sends", "name")?;
     out.flush()?;
     let mut buf = [0u8; 256];
     'read: loop {
-        let n = stdin.lock().read(&mut buf)?;
+        let n = crate::term::read(&mut buf)?;
         if n == 0 {
             break;
         }
@@ -430,7 +425,7 @@ pub fn show(bindings: &Bindings) -> std::io::Result<()> {
             out.flush()?;
         }
     }
-    tcsetattr(&stdin, SetArg::TCSANOW, &orig)?;
+    drop(raw);
     Ok(())
 }
 
