@@ -41,7 +41,8 @@ terminal itself.
   specs converted to JSON, plus hand-written ones, all embedded in the binary).
 - **Live values**: git branches, docker containers, systemd units, ssh hosts, make targets,
   npm scripts, zoxide directories, PIDs…
-- **Package search as you type**: npm, crates.io, Docker Hub, PyPI and the Snap Store.
+- **Package search as you type**: npm, crates.io, Docker Hub, PyPI, the Snap Store
+  and Flathub.
 - **Any other command** gets its options, subcommands and argument values from its
   `--help` or man page.
 - Knows your **aliases, functions and builtins** (`gco ` completes like `git checkout `),
@@ -318,7 +319,7 @@ Looked up in this order:
 `lig specs list` shows which source each command uses.
 
 **Online search** (`npm i`, `pnpm add`, `cargo add`, `docker pull`, `pip install`,
-`snap install`) sends the package name you're typing to that registry through `curl`, with
+`snap install`, `flatpak install`) sends the package name you're typing to that registry through `curl`, with
 results cached for 30 minutes. Turn it off with `online = false`.
 
 ### Writing a spec

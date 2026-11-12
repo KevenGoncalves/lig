@@ -1020,6 +1020,9 @@ pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("apt:installed", "installed packages"),
     ("apt:available", "packages in the apt index"),
     ("snap:installed", "installed snaps"),
+    ("flatpak:installed", "installed flatpak apps and runtimes"),
+    ("flatpak:apps", "installed flatpak apps"),
+    ("flatpak:remotes", "flatpak remotes"),
     ("extrepo:available", "repositories in the extrepo index"),
     ("extrepo:enabled", "enabled extrepo repositories"),
     ("extrepo:disabled", "disabled extrepo repositories"),
@@ -1039,6 +1042,7 @@ pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("online:pypi", "PyPI versions after name=="),
     ("online:pypi-top", "the 15,000 most downloaded PyPI packages"),
     ("online:snap", "Snap Store search"),
+    ("online:flathub", "Flathub search (local appstream when offline)"),
 ];
 
 /// Native generators referenced by id from spec files (`{"builtin": "git:branches"}`).
@@ -1110,6 +1114,9 @@ pub fn builtin(id: &str) -> Option<Generator> {
         "ssh:hosts-colon" => ssh_hosts_colon(),
         "sys:users" => sys_users(),
         "snap:installed" => snaps_installed(),
+        "flatpak:installed" => flatpak_installed(false),
+        "flatpak:apps" => flatpak_installed(true),
+        "flatpak:remotes" => flatpak_remotes(),
         "extrepo:available" => extrepo_available(),
         "extrepo:enabled" => extrepo_installed(Some(true)),
         "extrepo:disabled" => extrepo_installed(Some(false)),
@@ -1120,6 +1127,7 @@ pub fn builtin(id: &str) -> Option<Generator> {
         "online:pypi" => pypi_versions(),
         "online:pypi-top" => pypi_top(),
         "online:snap" => snap_store(),
+        "online:flathub" => flathub(),
         "cargo:packages" => cargo_packages(),
         "cargo:installed" => cargo_installed(),
         "cargo:features" => cargo_features(),
@@ -1501,6 +1509,235 @@ pub fn snaps_installed() -> Generator {
             .collect()
     })
     .ttl(30_000)
+}
+
+// ---------------------------------------------------------------- flatpak
+
+/// Flathub's search API response → suggestions, most installed first, then
+/// app ids starting with `q` ahead. `None` if it isn't a search response.
+fn flathub_hits(q: &str, json: &str) -> Option<Vec<SuggestionDef>> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let mut hits: Vec<(u64, SuggestionDef)> = v["hits"]
+        .as_array()?
+        .iter()
+        .filter_map(|h| {
+            let installs = h["installs_last_month"].as_u64().unwrap_or(0);
+            let count =
+                if installs > 0 { format!(" · {} installs/month", human_count(installs)) } else { String::new() };
+            let (name, summary) = (h["name"].as_str().unwrap_or(""), h["summary"].as_str().unwrap_or("").trim());
+            Some((installs, sug(h["app_id"].as_str()?).desc(format!("{name}: {summary}{count}"))))
+        })
+        .collect();
+    hits.sort_by_key(|h| std::cmp::Reverse(h.0));
+    Some(rank_by_prefix(q, hits.into_iter().map(|h| h.1).collect()))
+}
+
+/// `flatpak search --columns=application,name,description` lines (one per remote) → suggestions.
+fn flatpak_search_lines(lines: &[String]) -> Vec<SuggestionDef> {
+    let mut seen = std::collections::HashSet::new();
+    lines
+        .iter()
+        .filter_map(|l| {
+            let mut c = l.split('\t').map(str::trim);
+            let id = c.next()?;
+            (id.contains('.') && seen.insert(id.to_string())).then(|| {
+                let (name, desc) = (c.next().unwrap_or(""), c.next().unwrap_or(""));
+                sug(id).desc(format!("{name}: {desc}"))
+            })
+        })
+        .collect()
+}
+
+/// `flatpak list --columns=application,name,version,branch,installation` lines → one
+/// suggestion per id (an id installed for both user and system, or in several branches,
+/// is listed once). Runtimes without a version show their branch.
+fn flatpak_list_lines(lines: &[String]) -> Vec<SuggestionDef> {
+    let mut seen = std::collections::HashSet::new();
+    lines
+        .iter()
+        .filter_map(|l| {
+            let c: Vec<&str> = l.split('\t').map(str::trim).collect();
+            let id = *c.first().filter(|id| !id.is_empty())?;
+            if !seen.insert(id) {
+                return None;
+            }
+            let get = |i: usize| c.get(i).copied().unwrap_or("");
+            let ver = if get(2).is_empty() { get(3) } else { get(2) };
+            Some(sug(id).desc(format!("{} · {ver} · {}", get(1), get(4))))
+        })
+        .collect()
+}
+
+/// `flatpak remotes --columns=name,title` lines → one suggestion per remote name.
+fn flatpak_remote_lines(lines: &[String]) -> Vec<SuggestionDef> {
+    let mut seen = std::collections::HashSet::new();
+    lines
+        .iter()
+        .filter_map(|l| {
+            let (name, title) = l.split_once('\t').unwrap_or((l, ""));
+            let name = name.trim();
+            (!name.is_empty() && seen.insert(name)).then(|| sug(name).desc(title.trim()).priority(60.0))
+        })
+        .collect()
+}
+
+/// Whether `q` is worth sending to Flathub: 2+ characters, not an option or a path.
+fn flathub_query_ok(q: &str) -> bool {
+    q.chars().count() >= 2 && !q.starts_with('-') && !q.contains('/')
+}
+
+/// Flathub search for `flatpak install`; the local appstream (`flatpak search`) when offline.
+pub fn flathub() -> Generator {
+    gen_fn("online:flathub", |cx| {
+        let q = cx.current();
+        if !flathub_query_ok(q) {
+            return vec![];
+        }
+        let body = serde_json::json!({ "query": q, "hits_per_page": 25 }).to_string();
+        let online = cx.run(&[
+            "curl",
+            "-fsSL",
+            "--max-time",
+            "4",
+            "-A",
+            "lig (https://github.com/lig autocomplete)",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+            "https://flathub.org/api/v2/search",
+        ]);
+        if let Some(hits) = online.and_then(|json| flathub_hits(q, &json)) {
+            return hits;
+        }
+        flatpak_search_lines(&cx.lines(&["flatpak", "search", "--columns=application,name,description", q]))
+    })
+    .trigger(Trigger::Change)
+    .unfiltered()
+    .ttl(30 * 60_000)
+}
+
+/// Installed refs (`apps_only`: applications, not runtimes), user and system merged.
+pub fn flatpak_installed(apps_only: bool) -> Generator {
+    let id = if apps_only { "flatpak:apps" } else { "flatpak:installed" };
+    gen_fn(id, move |cx| {
+        let mut argv = vec!["flatpak", "list", "--columns=application,name,version,branch,installation"];
+        if apps_only {
+            argv.push("--app");
+        }
+        flatpak_list_lines(&cx.lines(&argv))
+    })
+    .ttl(30_000)
+}
+
+/// Configured remotes, user and system merged.
+pub fn flatpak_remotes() -> Generator {
+    gen_fn("flatpak:remotes", |cx| flatpak_remote_lines(&cx.lines(&["flatpak", "remotes", "--columns=name,title"])))
+        .ttl(60_000)
+}
+
+#[cfg(test)]
+mod flatpak_tests {
+    use super::*;
+
+    fn lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn names(v: &[SuggestionDef]) -> Vec<&str> {
+        v.iter().map(|s| s.meta.names[0].as_str()).collect()
+    }
+
+    fn desc(s: &SuggestionDef) -> &str {
+        s.meta.description.as_deref().unwrap_or("")
+    }
+
+    #[test]
+    fn flathub_hits_sorted_by_installs_then_prefix() {
+        let json = r#"{"hits": [
+            {"app_id": "one.ablaze.floorp", "name": "Floorp", "summary": "Browser ", "installs_last_month": 8000},
+            {"app_id": "org.mozilla.firefox", "name": "Firefox", "summary": "Web Browser", "installs_last_month": 205528},
+            {"name": "No id, skipped"},
+            {"app_id": "org.mozilla.vpn", "name": "Mozilla VPN", "summary": "VPN"}
+        ]}"#;
+        let v = flathub_hits("firef", json).unwrap();
+        assert_eq!(names(&v), ["org.mozilla.firefox", "one.ablaze.floorp", "org.mozilla.vpn"]);
+        assert_eq!(desc(&v[0]), "Firefox: Web Browser · 206K installs/month");
+        assert_eq!(desc(&v[1]), "Floorp: Browser · 8K installs/month");
+        assert_eq!(desc(&v[2]), "Mozilla VPN: VPN");
+
+        // A typed app id prefix outranks install counts.
+        let v = flathub_hits("org.mozilla.v", json).unwrap();
+        assert_eq!(names(&v)[0], "org.mozilla.vpn");
+    }
+
+    #[test]
+    fn flathub_hits_rejects_non_search_responses() {
+        assert!(flathub_hits("x", "not json").is_none());
+        assert!(flathub_hits("x", r#"{"detail": "error"}"#).is_none());
+        assert_eq!(flathub_hits("x", r#"{"hits": []}"#).map(|v| v.len()), Some(0));
+    }
+
+    #[test]
+    fn flathub_query_threshold() {
+        assert!(!flathub_query_ok(""));
+        assert!(!flathub_query_ok("f"));
+        assert!(!flathub_query_ok("--user"));
+        assert!(!flathub_query_ok("./app.flatpakref"));
+        assert!(flathub_query_ok("fi"));
+        assert!(flathub_query_ok("org.gnome.Calc"));
+    }
+
+    #[test]
+    fn local_search_fallback_dedups_across_remotes() {
+        let v = flatpak_search_lines(&lines(&[
+            "org.mozilla.firefox\tFirefox\tFast, Private & Safe Web Browser",
+            "org.mozilla.firefox\tFirefox\tFast, Private & Safe Web Browser",
+            "dev.qwery.AddWater\tAdd Water\tKeep Firefox in fashion",
+            "No matches found",
+        ]));
+        assert_eq!(names(&v), ["org.mozilla.firefox", "dev.qwery.AddWater"]);
+        assert_eq!(desc(&v[1]), "Add Water: Keep Firefox in fashion");
+    }
+
+    #[test]
+    fn installed_list_dedups_and_falls_back_to_branch() {
+        let v = flatpak_list_lines(&lines(&[
+            "com.spotify.Client\tSpotify\t1.2.95\tstable\tuser",
+            "com.spotify.Client\tSpotify\t1.2.95\tstable\tsystem",
+            "org.freedesktop.Platform.GL.default\tMesa\t\t25.08\tuser",
+            "org.freedesktop.Platform.GL.default\tMesa\t\t24.08\tuser",
+        ]));
+        assert_eq!(names(&v), ["com.spotify.Client", "org.freedesktop.Platform.GL.default"]);
+        assert_eq!(desc(&v[0]), "Spotify · 1.2.95 · user");
+        assert_eq!(desc(&v[1]), "Mesa · 25.08 · user");
+    }
+
+    #[test]
+    fn remotes_dedup_user_and_system() {
+        let v = flatpak_remote_lines(&lines(&[
+            "flathub\tFlatpak Official Flathub",
+            "flathub-beta\tFlathub beta",
+            "flathub\tFlatpak Official Flathub",
+            "local",
+        ]));
+        assert_eq!(names(&v), ["flathub", "flathub-beta", "local"]);
+        assert_eq!(desc(&v[0]), "Flatpak Official Flathub");
+        assert_eq!(v[2].meta.description, None);
+    }
+
+    /// The spec wires each argument to the right generator.
+    #[test]
+    fn spec_uses_flatpak_generators() {
+        let spec = crate::specs::builtin("flatpak").unwrap();
+        let gens = |sub: &str| -> Vec<String> {
+            spec.find_subcommand(sub).unwrap().args[0].generators.iter().map(|g| g.id.clone()).collect()
+        };
+        assert_eq!(gens("install"), ["flatpak:remotes", "online:flathub"]);
+        assert_eq!(gens("uninstall"), ["flatpak:installed"]);
+        assert_eq!(gens("run"), ["flatpak:apps"]);
+        assert_eq!(gens("remote-delete"), ["flatpak:remotes"]);
+    }
 }
 
 #[cfg(test)]
