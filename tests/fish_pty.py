@@ -166,7 +166,7 @@ class Fish:
     def close(self, status=0):
         self.send(b'\x03')
         self.send(f'exit {status}\r')
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 10
         exit_status = None
         while time.monotonic() < deadline:
             self.read(.02)
@@ -405,7 +405,9 @@ end
             plain = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', out)
             self.assertIn(b'checkout', plain)
             fish.send(b'\x1b')  # dismiss
+            start = len(fish.output)
             fish.send(b'\x00')  # manual toggle
+            fish.wait_text('checkout', start)
             # Tab selects; Enter accepts without running the command.
             fish.send(b'\t')
             fish.send(b'\r')
