@@ -1,0 +1,510 @@
+{
+  "name": "flatpak",
+  "description": "Build, install and run desktop applications",
+  "options": [
+    {
+      "name": "--user",
+      "description": "Work on the per-user installation",
+      "isPersistent": true
+    },
+    {
+      "name": "--system",
+      "description": "Work on the system-wide installation",
+      "isPersistent": true
+    },
+    {
+      "name": [
+        "-v",
+        "--verbose"
+      ],
+      "description": "Show debug information",
+      "isPersistent": true
+    }
+  ],
+  "subcommands": [
+    {
+      "name": "install",
+      "description": "Install an application or runtime",
+      "args": {
+        "name": "remote or ref",
+        "isVariadic": true,
+        "template": "filepaths",
+        "generators": [
+          {
+            "builtin": "flatpak:remotes"
+          },
+          {
+            "builtin": "online:flathub"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": [
+            "-y",
+            "--assumeyes"
+          ],
+          "description": "Answer yes to all questions"
+        },
+        {
+          "name": "--noninteractive",
+          "description": "Produce minimal output and don't ask questions"
+        },
+        {
+          "name": "--arch",
+          "description": "Architecture to use",
+          "args": {
+            "name": "arch",
+            "suggestions": [
+              "x86_64",
+              "aarch64"
+            ]
+          }
+        },
+        {
+          "name": "--or-update",
+          "description": "Update the ref if it's already installed"
+        },
+        {
+          "name": "--from",
+          "description": "Install from a .flatpakref file",
+          "args": {
+            "name": "file",
+            "template": "filepaths"
+          }
+        },
+        {
+          "name": "--bundle",
+          "description": "Install from a .flatpak bundle file",
+          "args": {
+            "name": "file",
+            "template": "filepaths"
+          }
+        },
+        {
+          "name": "--runtime",
+          "description": "Look for a runtime with this name"
+        },
+        {
+          "name": "--app",
+          "description": "Look for an application with this name"
+        },
+        {
+          "name": "--no-deps",
+          "description": "Don't install related runtimes"
+        },
+        {
+          "name": "--no-related",
+          "description": "Don't install related refs"
+        },
+        {
+          "name": "--reinstall",
+          "description": "Uninstall first if already installed"
+        }
+      ]
+    },
+    {
+      "name": [
+        "uninstall",
+        "remove"
+      ],
+      "description": "Uninstall an application or runtime",
+      "args": {
+        "name": "ref",
+        "isVariadic": true,
+        "generators": [
+          {
+            "builtin": "flatpak:installed"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": [
+            "-y",
+            "--assumeyes"
+          ],
+          "description": "Answer yes to all questions"
+        },
+        {
+          "name": "--noninteractive",
+          "description": "Produce minimal output and don't ask questions"
+        },
+        {
+          "name": "--unused",
+          "description": "Uninstall unused runtimes"
+        },
+        {
+          "name": "--all",
+          "description": "Uninstall everything"
+        },
+        {
+          "name": "--delete-data",
+          "description": "Delete the app's data in ~/.var/app"
+        },
+        {
+          "name": "--keep-ref",
+          "description": "Keep the ref in the local repository"
+        }
+      ]
+    },
+    {
+      "name": [
+        "update",
+        "upgrade"
+      ],
+      "description": "Update installed applications and runtimes",
+      "args": {
+        "name": "ref",
+        "isVariadic": true,
+        "generators": [
+          {
+            "builtin": "flatpak:installed"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": [
+            "-y",
+            "--assumeyes"
+          ],
+          "description": "Answer yes to all questions"
+        },
+        {
+          "name": "--noninteractive",
+          "description": "Produce minimal output and don't ask questions"
+        },
+        {
+          "name": "--no-deps",
+          "description": "Don't update related runtimes"
+        },
+        {
+          "name": "--appstream",
+          "description": "Update appstream data for the remote"
+        }
+      ]
+    },
+    {
+      "name": "run",
+      "description": "Run an application",
+      "args": [
+        {
+          "name": "app",
+          "generators": [
+            {
+              "builtin": "flatpak:apps"
+            }
+          ]
+        },
+        {
+          "name": "args",
+          "isOptional": true,
+          "isVariadic": true,
+          "template": "filepaths"
+        }
+      ],
+      "options": [
+        {
+          "name": "--command",
+          "description": "Command to run instead of the default",
+          "args": {
+            "name": "command"
+          }
+        },
+        {
+          "name": "--branch",
+          "description": "Branch to use",
+          "args": {
+            "name": "branch"
+          }
+        },
+        {
+          "name": "--devel",
+          "description": "Use the development runtime"
+        },
+        {
+          "name": "--file-forwarding",
+          "description": "Forward @@ file arguments into the sandbox"
+        }
+      ]
+    },
+    {
+      "name": "info",
+      "description": "Show information about an installed application or runtime",
+      "args": {
+        "name": "ref",
+        "generators": [
+          {
+            "builtin": "flatpak:installed"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": [
+            "-m",
+            "--show-metadata"
+          ],
+          "description": "Show the metadata"
+        },
+        {
+          "name": [
+            "-M",
+            "--show-permissions"
+          ],
+          "description": "Show the permissions"
+        }
+      ]
+    },
+    {
+      "name": [
+        "list",
+        "ls"
+      ],
+      "description": "List installed applications and runtimes",
+      "options": [
+        {
+          "name": "--app",
+          "description": "List applications only"
+        },
+        {
+          "name": "--runtime",
+          "description": "List runtimes only"
+        },
+        {
+          "name": "--columns",
+          "description": "Columns to show",
+          "args": {
+            "name": "columns"
+          }
+        }
+      ]
+    },
+    {
+      "name": "search",
+      "description": "Search remote apps and runtimes",
+      "args": {
+        "name": "text",
+        "generators": [
+          {
+            "builtin": "online:flathub"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ps",
+      "description": "List running sandboxes"
+    },
+    {
+      "name": "kill",
+      "description": "Stop a running application",
+      "args": {
+        "name": "app",
+        "generators": [
+          {
+            "builtin": "flatpak:apps"
+          }
+        ]
+      }
+    },
+    {
+      "name": "override",
+      "description": "Override permissions for an application",
+      "args": {
+        "name": "app",
+        "isOptional": true,
+        "generators": [
+          {
+            "builtin": "flatpak:apps"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": "--show",
+          "description": "Show the current overrides"
+        },
+        {
+          "name": "--reset",
+          "description": "Remove the overrides"
+        },
+        {
+          "name": "--filesystem",
+          "description": "Expose a filesystem location",
+          "args": {
+            "name": "path"
+          }
+        },
+        {
+          "name": "--nofilesystem",
+          "description": "Don't expose a filesystem location",
+          "args": {
+            "name": "path"
+          }
+        },
+        {
+          "name": "--env",
+          "description": "Set an environment variable",
+          "args": {
+            "name": "VAR=VALUE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "history",
+      "description": "Show the install and update history"
+    },
+    {
+      "name": "repair",
+      "description": "Repair the flatpak installation"
+    },
+    {
+      "name": [
+        "remotes",
+        "remote-list"
+      ],
+      "description": "List remote repositories"
+    },
+    {
+      "name": "remote-add",
+      "description": "Add a remote repository",
+      "args": [
+        {
+          "name": "name"
+        },
+        {
+          "name": "location",
+          "template": "filepaths",
+          "suggestions": [
+            "https://dl.flathub.org/repo/flathub.flatpakrepo"
+          ]
+        }
+      ],
+      "options": [
+        {
+          "name": "--if-not-exists",
+          "description": "Do nothing if the remote already exists"
+        },
+        {
+          "name": "--from",
+          "description": "LOCATION is a .flatpakrepo file"
+        }
+      ]
+    },
+    {
+      "name": "remote-delete",
+      "description": "Delete a remote repository",
+      "args": {
+        "name": "remote",
+        "generators": [
+          {
+            "builtin": "flatpak:remotes"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": "--force",
+          "description": "Remove it even if it's in use"
+        }
+      ]
+    },
+    {
+      "name": "remote-modify",
+      "description": "Modify a remote repository",
+      "args": {
+        "name": "remote",
+        "generators": [
+          {
+            "builtin": "flatpak:remotes"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": "--enable",
+          "description": "Enable the remote"
+        },
+        {
+          "name": "--disable",
+          "description": "Disable the remote"
+        }
+      ]
+    },
+    {
+      "name": "remote-ls",
+      "description": "List the contents of a remote",
+      "args": {
+        "name": "remote",
+        "isOptional": true,
+        "generators": [
+          {
+            "builtin": "flatpak:remotes"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": "--app",
+          "description": "List applications only"
+        },
+        {
+          "name": "--runtime",
+          "description": "List runtimes only"
+        },
+        {
+          "name": "--updates",
+          "description": "Show only updates"
+        }
+      ]
+    },
+    {
+      "name": "remote-info",
+      "description": "Show information about a ref in a remote",
+      "args": [
+        {
+          "name": "remote",
+          "generators": [
+            {
+              "builtin": "flatpak:remotes"
+            }
+          ]
+        },
+        {
+          "name": "ref",
+          "generators": [
+            {
+              "builtin": "online:flathub"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "make-current",
+      "description": "Make a branch of an app the current one",
+      "args": {
+        "name": "app",
+        "generators": [
+          {
+            "builtin": "flatpak:apps"
+          }
+        ]
+      }
+    },
+    {
+      "name": "enter",
+      "description": "Enter the namespace of a running application",
+      "args": {
+        "name": "instance"
+      }
+    },
+    {
+      "name": "permissions",
+      "description": "List permissions"
+    }
+  ]
+}

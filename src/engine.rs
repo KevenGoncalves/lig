@@ -922,7 +922,12 @@ fn generator_icon(id: &str) -> Option<Icon> {
         ("sys", "pids" | "process-names") => Icon::Process,
         ("sys", "users") => Icon::User,
         ("systemd", _) => Icon::Service,
-        ("apt", _) | ("snap", _) | ("extrepo", _) | ("online", "snap") => Icon::Package,
+        ("apt", _)
+        | ("snap", _)
+        | ("extrepo", _)
+        | ("flatpak", "installed" | "apps")
+        | ("online", "snap" | "flathub") => Icon::Package,
+        ("flatpak", "remotes") => Icon::Cloud,
         ("ssh", _) => Icon::Host,
         ("tmux", _) => Icon::Terminal,
         ("pip", _) | ("online", "pypi" | "pypi-top") => Icon::Python,
@@ -962,6 +967,7 @@ fn loading_label(id: &str) -> String {
         "online:pypi" => "Fetching versions from PyPI",
         "online:pypi-top" => "Fetching popular PyPI packages",
         "online:snap" => "Searching the Snap Store",
+        "online:flathub" => "Searching Flathub",
         "apt:available" => "Searching apt packages",
         "extrepo:available" => "Fetching the extrepo index",
         "asdf:versions" => "Fetching versions with asdf",

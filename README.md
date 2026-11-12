@@ -31,7 +31,7 @@ itself.
   from the [withfig/autocomplete](https://github.com/withfig/autocomplete) specs and
   hand-written ones; any other command is read from its `--help`.
 - **Live values**: git branches, containers, systemd units, ssh hosts, make targets, npm
-  scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI and Snap.
+  scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI, Snap and Flathub.
 - Knows your **aliases, functions and variables** (`gco ` completes like `git checkout `,
   `$HO` → `$HOME`).
 - Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.

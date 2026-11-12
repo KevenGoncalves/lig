@@ -211,7 +211,7 @@ pub struct Behavior {
     /// commands run with one Enter; the toggle key (Ctrl+Space) always shows them.
     pub complete_commands: bool,
     /// Search package registries while you type (npm, crates.io, Docker Hub,
-    /// PyPI versions, Snap Store). What you type for the package name is sent
+    /// PyPI versions, Snap Store, Flathub). What you type for the package name is sent
     /// to them.
     pub online: bool,
     /// Kill generator commands after this many milliseconds.
