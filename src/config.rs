@@ -369,6 +369,8 @@ mod config_dir_tests {
         assert_eq!(resolve_config_dir(None, Some(home), Some(native.clone())), native.join("lig"));
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn absolute_xdg_wins_relative_ignored() {
         let home = tmp("xdg");

@@ -1152,6 +1152,16 @@ mod tests {
     use super::*;
     use crate::spec::{arg, cmd, gen_fn, opt, sug};
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_parent_paths_and_command_names() {
+        assert_eq!(parent_path(r"src\app\").as_deref(), Some(r"src\"));
+        assert_eq!(parent_path(r"C:\"), None);
+        assert_eq!(parent_path("").as_deref(), Some(r"..\"));
+        assert_eq!(basename(r"C:\Program Files\Git\cmd\git.EXE"), "git");
+        assert!(is_sep('\\') && is_sep('/'));
+    }
+
     fn tool() -> Subcommand {
         cmd("tool", "")
             .opts([
@@ -1221,6 +1231,8 @@ mod tests {
         assert_eq!(c.items[0].description, "••••••");
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn options_args_and_generators() {
         let (mut e, env) = engine();
@@ -1236,6 +1248,8 @@ mod tests {
         assert_eq!((c.items[0].insert.as_str(), c.items[0].back), ("-m ''", 1));
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn files_and_option_args() {
         let (mut e, env) = engine();
@@ -1256,6 +1270,8 @@ mod tests {
         assert_eq!(r, vec![("sub dir/".into(), "\"sub dir/".into(), 3)]);
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn generators_are_deferred() {
         let (mut e, env) = engine();
@@ -1327,6 +1343,8 @@ mod tests {
         assert!(opt < file, "{r:?}");
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn files_first_for_commands_that_open_them() {
         let (mut e, env) = engine();
@@ -1341,6 +1359,8 @@ mod tests {
         assert_eq!(labels(&mut e, &env, "java ")[0].0, "-jar");
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn no_space_after_completion_by_default() {
         let (_, env) = engine();
@@ -1358,6 +1378,8 @@ mod tests {
         assert_eq!(labels(&mut e, &env, "tool -o \"fi")[0].1, "\"file.txt\"");
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn enter_item_on_top_of_folders() {
         let (mut e, env) = engine();
@@ -1373,6 +1395,8 @@ mod tests {
         assert!(e.complete("tool -o sub\\ dir/", &env, true, false).items.iter().all(|s| s.kind != Kind::Execute));
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn parent_paths() {
         assert_eq!(parent_path("src/app/").as_deref(), Some("src/"));

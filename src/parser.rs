@@ -198,6 +198,17 @@ pub fn escape_minimal(value: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_and_quoting() {
+        assert_eq!(parse(r"cd C:\Users\me\Doc").current.value, r"C:\Users\me\Doc");
+        let cl = parse(r#"cat "my file" a` b"#);
+        assert_eq!(vals(&cl), ["cat", "my file"]);
+        assert_eq!(cl.current.value, "a b");
+        assert_eq!(escape("My Files"), "\"My Files\"");
+        assert_eq!(escape(r"src\app"), r"src\app");
+    }
+
     fn vals(cl: &CommandLine) -> Vec<&str> {
         cl.tokens.iter().map(|t| t.value.as_str()).collect()
     }
@@ -216,6 +227,8 @@ mod tests {
         assert_eq!(cl.current.raw, "");
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn quotes_and_escapes() {
         let cl = parse(r#"cat "my file" a\ b 'c d"#);
@@ -247,6 +260,8 @@ mod tests {
         assert_eq!(vals(&cl), ["cmd"]);
     }
 
+    // POSIX paths and quoting; Windows has its own tests.
+    #[cfg(unix)]
     #[test]
     fn escape_roundtrip() {
         assert_eq!(escape("a b(1).txt"), r"a\ b\(1\).txt");
