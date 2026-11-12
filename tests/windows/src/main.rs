@@ -225,9 +225,9 @@ fn run_shell(r: &mut Report, lig: &Path, shell: &str) -> anyhow::Result<()> {
         t.type_text(line);
         let shown = t.wait(15_000, |t| t.popup_has(want));
         ok &= r.check(format!("{shell}: `{line}` offers `{want}`"), shown, t.cursor_line());
-        // Close the popup, then clear the line.
+        // Close the popup, then clear the line (lig keeps an Esc within 500 ms of the first).
         t.send("\x1b");
-        t.settle(300);
+        t.settle(800);
         t.send("\x1b");
         t.wait(3_000, |t| t.at_prompt());
         t.settle(500);
