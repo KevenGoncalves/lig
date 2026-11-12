@@ -108,6 +108,23 @@ mod tests {
         assert!(m.find_subcommand("freeze").is_some());
     }
 
+    /// `uv add` and `uv pip install` search PyPI like `pip install`, next to Fig's options.
+    #[test]
+    fn uv_packages_come_from_pypi() {
+        let uv = super::builtin("uv").unwrap();
+        let gens = |path: &[&str]| -> Vec<String> {
+            let mut node = uv.clone();
+            for name in path {
+                node = (*node.find_subcommand(name).unwrap().clone()).clone();
+            }
+            node.args[0].generators.iter().map(|g| g.id.clone()).collect()
+        };
+        assert_eq!(gens(&["add"]), ["online:pypi-top", "online:pypi"]);
+        assert_eq!(gens(&["pip", "install"]), ["online:pypi-top", "online:pypi"]);
+        // Fig's options are still there.
+        assert!(uv.find_subcommand("add").unwrap().options.iter().any(|o| o.meta.names.iter().any(|n| n == "--dev")));
+    }
+
     /// Specs round-trip through JSON unchanged (no unknown keys) and use only existing generators.
     #[test]
     fn lig_specs_are_valid() {

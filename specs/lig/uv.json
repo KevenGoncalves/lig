@@ -1,0 +1,46 @@
+{
+  "name": "uv",
+  "description": "An extremely fast Python package and project manager",
+  "subcommands": [
+    {
+      "name": "add",
+      "description": "Add dependencies to the project",
+      "args": {
+        "name": "packages",
+        "isVariadic": true,
+        "template": "filepaths",
+        "generators": [
+          {
+            "builtin": "online:pypi-top"
+          },
+          {
+            "builtin": "online:pypi"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pip",
+      "description": "Manage Python packages with a pip-compatible interface",
+      "subcommands": [
+        {
+          "name": "install",
+          "description": "Install packages into an environment",
+          "args": {
+            "name": "packages",
+            "isVariadic": true,
+            "template": "filepaths",
+            "generators": [
+              {
+                "builtin": "online:pypi-top"
+              },
+              {
+                "builtin": "online:pypi"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
