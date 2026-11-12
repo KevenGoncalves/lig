@@ -1,5 +1,5 @@
 {
-  description = "Fig-style IDE autocomplete for your Linux or macOS terminal";
+  description = "IDE-style autocomplete for your terminal on macOS, Linux and Windows";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -25,7 +25,7 @@
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             meta = {
-              description = "Fig-style IDE autocomplete for your Linux or macOS terminal";
+              description = "IDE-style autocomplete for your terminal on macOS, Linux and Windows";
               homepage = "https://github.com/KevenGoncalves/lig";
               license = nixpkgs.lib.licenses.mit;
               mainProgram = "lig";

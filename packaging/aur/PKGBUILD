@@ -3,7 +3,7 @@
 pkgname=lig-bin
 pkgver=@VERSION@
 pkgrel=1
-pkgdesc='Fig-style IDE autocomplete for your terminal (zsh, bash and fish)'
+pkgdesc='IDE-style autocomplete for your terminal (zsh, bash and fish)'
 arch=('x86_64' 'aarch64')
 url='https://github.com/KevenGoncalves/lig'
 license=('MIT')

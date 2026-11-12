@@ -11,7 +11,7 @@ platform: linux
 section: utils
 priority: optional
 maintainer: Keven Gonçalves <keven.jm.goncalves@gmail.com>
-description: Fig-style IDE autocomplete for your terminal (zsh, bash and fish)
+description: IDE-style autocomplete for your terminal (zsh, bash and fish)
 homepage: https://github.com/KevenGoncalves/lig
 license: MIT
 recommends:

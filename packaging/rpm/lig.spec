@@ -5,7 +5,7 @@
 Name:           lig
 Version:        @VERSION@
 Release:        1%{?dist}
-Summary:        Fig-style IDE autocomplete for your terminal
+Summary:        IDE-style autocomplete for your terminal
 License:        MIT
 URL:            https://github.com/KevenGoncalves/lig
 Source0:        lig-%{version}.tar.gz
@@ -16,7 +16,7 @@ BuildRequires:  gcc
 Recommends:     curl
 
 %description
-lig shows Fig-style IDE autocomplete suggestions as you type in zsh, bash
+lig shows IDE-style autocomplete suggestions as you type in zsh, bash
 and fish: subcommands, options, files, git branches and more, from over
 740 commands.
 

@@ -1,6 +1,6 @@
 # Written by the release workflow of KevenGoncalves/lig (packaging/homebrew); edits here are replaced.
 class Lig < Formula
-  desc "Fig-style IDE autocomplete for your terminal (zsh, bash and fish)"
+  desc "IDE-style autocomplete for your terminal (zsh, bash and fish)"
   homepage "https://github.com/KevenGoncalves/lig"
   license "MIT"
 

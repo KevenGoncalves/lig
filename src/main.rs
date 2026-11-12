@@ -1,4 +1,4 @@
-//! lig: Fig-style autocomplete for zsh, bash, fish, PowerShell and cmd, in any terminal.
+//! lig: IDE-style autocomplete for zsh, bash, fish, PowerShell and cmd, in any terminal.
 //! `lig shell` ([`session`]) runs the shell in a PTY and draws the popup; [`engine`] makes the suggestions.
 
 mod config;
@@ -45,7 +45,7 @@ const POST_BASH: &str = include_str!("../shell/post.bash");
 const PRE_PWSH: &str = include_str!("../shell/pre.ps1");
 
 #[derive(Parser)]
-#[command(name = "lig", version, about = "Fig-style IDE autocomplete for your terminal")]
+#[command(name = "lig", version, about = "IDE-style autocomplete for your terminal")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

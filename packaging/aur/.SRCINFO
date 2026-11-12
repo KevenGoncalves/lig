@@ -1,5 +1,5 @@
 pkgbase = lig-bin
-	pkgdesc = Fig-style IDE autocomplete for your terminal (zsh, bash and fish)
+	pkgdesc = IDE-style autocomplete for your terminal (zsh, bash and fish)
 	pkgver = @VERSION@
 	pkgrel = 1
 	url = https://github.com/KevenGoncalves/lig

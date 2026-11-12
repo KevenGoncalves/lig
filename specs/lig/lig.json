@@ -1,6 +1,6 @@
 {
   "name": "lig",
-  "description": "IDE-style autocomplete for your Linux terminal",
+  "description": "IDE-style autocomplete for your terminal on macOS, Linux and Windows",
   "options": [
     {
       "name": [
