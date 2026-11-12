@@ -56,9 +56,6 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
       - run: cargo build --release --locked
-      - name: End to end in PowerShell 7, Windows PowerShell and cmd
-        timeout-minutes: 15
-        run: cargo run --release --manifest-path tests/windows/Cargo.toml -- target/release/lig.exe
       - name: Package for testing
         if: matrix.os == 'windows-2025'
         run: |
@@ -77,4 +74,7 @@ jobs:
         with:
           name: lig-windows
           path: dist/*.zip
+      - name: End to end in PowerShell 7, Windows PowerShell and cmd
+        timeout-minutes: 15
+        run: cargo run --release --manifest-path tests/windows/Cargo.toml -- target/release/lig.exe
       - run: cargo test --locked

@@ -792,8 +792,11 @@ impl Session {
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
         let mut w = vec![];
+        // ConPTY wraps PowerShell's replies in cursor and mode sequences: only a changed
+        // screen means a changed line there (else each reply would ask again).
+        let before = self.report_key.then(|| self.screen_state());
         if !fwd.is_empty() {
-            if let Some(refresh) = &mut self.fish_refresh {
+            if let Some(refresh) = self.fish_refresh.as_mut().filter(|_| before.is_none()) {
                 refresh.changed();
             }
             // Erase the popup first so the screen matches what the shell and vt100 expect.
@@ -825,6 +828,11 @@ impl Session {
         w.extend_from_slice(&fwd[at..]);
         self.write_out(&w);
         self.parser.process(&fwd[at..]);
+        if before.is_some_and(|b| b != self.screen_state())
+            && let Some(refresh) = &mut self.fish_refresh
+        {
+            refresh.changed();
+        }
         if self.editing && self.prompt_end.is_some() {
             self.read_line_from_screen();
         }
@@ -839,6 +847,11 @@ impl Session {
             self.render();
             self.resolve_pending_enter();
         }
+    }
+
+    fn screen_state(&self) -> (String, (u16, u16)) {
+        let screen = self.parser.screen();
+        (screen.contents(), screen.cursor_position())
     }
 
     fn on_buffer(&mut self, cursor: usize, text: &str) {

@@ -24,6 +24,8 @@ struct Term {
     pty: pty::Pty,
     rx: Receiver<Vec<u8>>,
     parser: vt100::Parser,
+    /// Everything lig wrote, for the report when a check fails.
+    raw: Vec<u8>,
 }
 
 impl Term {
@@ -38,7 +40,7 @@ impl Term {
                 }
             }
         });
-        Ok(Term { w, pty, rx, parser: vt100::Parser::new(ROWS, COLS, 0) })
+        Ok(Term { w, pty, rx, parser: vt100::Parser::new(ROWS, COLS, 0), raw: vec![] })
     }
 
     fn pump(&mut self, until: Instant) -> bool {
@@ -46,8 +48,10 @@ impl Term {
         match self.rx.recv_timeout(left) {
             Ok(b) => {
                 self.parser.process(&b);
+                self.raw.extend(b);
                 while let Ok(b) = self.rx.try_recv() {
                     self.parser.process(&b);
+                    self.raw.extend(b);
                 }
                 true
             }
@@ -72,9 +76,9 @@ impl Term {
         while self.pump(Instant::now() + Duration::from_millis(ms)) {}
     }
 
+    /// Keys for lig; lost if it already exited (the checks then fail and say so).
     fn send(&mut self, s: &str) {
-        self.w.write_all(s.as_bytes()).unwrap();
-        self.w.flush().unwrap();
+        let _ = self.w.write_all(s.as_bytes()).and_then(|_| self.w.flush());
     }
 
     /// Types like a person: one key at a time.
@@ -115,7 +119,13 @@ impl Term {
                 out += &format!("{i:2}| {}\n", r.trim_end());
             }
         }
-        out + &format!("cursor {:?}\n", self.parser.screen().cursor_position())
+        let tail = &self.raw[self.raw.len().saturating_sub(3000)..];
+        out + &format!(
+            "cursor {:?}, {} bytes from lig, the last:\n{}\n",
+            self.parser.screen().cursor_position(),
+            self.raw.len(),
+            tail.escape_ascii()
+        )
     }
 }
 
