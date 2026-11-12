@@ -215,6 +215,24 @@ fn run_shell(r: &mut Report, lig: &Path, shell: &str) -> anyhow::Result<()> {
     let moved = t.wait(15_000, |t| t.at_prompt() && t.cursor_line().contains("alpha"));
     ok &= r.check(format!("{shell}: the line ran in the new folder"), moved, t.cursor_line());
 
+    // Shell-specific suggestions: cmd's `/` switches, PowerShell's cmdlets and `$env:`.
+    let checks: &[(&str, &str)] = match shell {
+        "cmd" => &[("dir /", "/s"), ("ipconfig /", "/all")],
+        "pwsh" | "powershell" => &[("Get-ChildItem -Rec", "-Recurse"), ("echo $env:PAT", "env:PATH")],
+        _ => &[],
+    };
+    for &(line, want) in checks {
+        t.type_text(line);
+        let shown = t.wait(15_000, |t| t.popup_has(want));
+        ok &= r.check(format!("{shell}: `{line}` offers `{want}`"), shown, t.cursor_line());
+        // Close the popup, then clear the line.
+        t.send("\x1b");
+        t.settle(300);
+        t.send("\x1b");
+        t.wait(3_000, |t| t.at_prompt());
+        t.settle(500);
+    }
+
     if !ok {
         println!("--- {shell} screen\n{}--- lig.log\n{}", t.dump(), log_tail());
     }
