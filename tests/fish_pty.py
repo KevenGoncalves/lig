@@ -170,7 +170,11 @@ class Fish:
         return self.send(b'\x1b[24;8~')
 
     def close(self, status=0):
-        self.send(b'\x03')
+        # Checked like any other clear: a lost Ctrl+C would leave `exit` typed after the line.
+        try:
+            self.clear()
+        except AssertionError:
+            self.send(b'\x03')
         self.send(f'exit {status}\r')
         deadline = time.monotonic() + 10
         exit_status = None
