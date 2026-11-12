@@ -1,0 +1,94 @@
+{
+  "name": "get-help",
+  "description": "Show help for a command (help, man)",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "The command",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-Full",
+      "description": "Everything"
+    },
+    {
+      "name": "-Detailed",
+      "description": "Parameters too"
+    },
+    {
+      "name": "-Examples",
+      "description": "Only examples"
+    },
+    {
+      "name": "-Online",
+      "description": "Open the online version"
+    },
+    {
+      "name": "-Parameter",
+      "description": "One parameter",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-ShowWindow",
+      "description": "In a window"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name",
+    "isOptional": true
+  }
+}

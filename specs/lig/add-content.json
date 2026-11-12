@@ -1,0 +1,121 @@
+{
+  "name": "add-content",
+  "description": "Append to a file",
+  "options": [
+    {
+      "name": "-Path",
+      "description": "Path of the item",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-LiteralPath",
+      "description": "Path, taken literally (no wildcards)",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-Value",
+      "description": "What to append",
+      "args": {
+        "name": "value"
+      }
+    },
+    {
+      "name": "-Encoding",
+      "description": "Text encoding",
+      "args": {
+        "name": "encoding",
+        "suggestions": [
+          "utf8",
+          "utf8NoBOM",
+          "utf8BOM",
+          "ascii",
+          "unicode",
+          "utf32",
+          "bigendianunicode",
+          "oem",
+          "default"
+        ]
+      }
+    },
+    {
+      "name": "-NoNewline",
+      "description": "No newline at the end"
+    },
+    {
+      "name": "-Force",
+      "description": "Include hidden and read-only items, or overwrite"
+    },
+    {
+      "name": "-PassThru",
+      "description": "Output the item it works on"
+    },
+    {
+      "name": "-WhatIf",
+      "description": "Show what would happen without doing it"
+    },
+    {
+      "name": "-Confirm",
+      "description": "Ask before doing it"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "path",
+    "template": "filepaths"
+  }
+}

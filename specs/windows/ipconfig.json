@@ -1,0 +1,64 @@
+{
+  "name": "ipconfig",
+  "description": "Show network configuration",
+  "options": [
+    {
+      "name": "/all",
+      "description": "Everything"
+    },
+    {
+      "name": "/release",
+      "description": "Release the IPv4 address",
+      "args": {
+        "name": "adapter",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/release6",
+      "description": "Release the IPv6 address",
+      "args": {
+        "name": "adapter",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/renew",
+      "description": "Renew the IPv4 address",
+      "args": {
+        "name": "adapter",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/renew6",
+      "description": "Renew the IPv6 address",
+      "args": {
+        "name": "adapter",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/flushdns",
+      "description": "Clear the DNS cache"
+    },
+    {
+      "name": "/displaydns",
+      "description": "Show the DNS cache"
+    },
+    {
+      "name": "/registerdns",
+      "description": "Refresh DHCP leases and register DNS names"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

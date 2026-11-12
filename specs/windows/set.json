@@ -1,0 +1,28 @@
+{
+  "name": "set",
+  "description": "Show or set environment variables (cmd)",
+  "options": [
+    {
+      "name": "/a",
+      "description": "Arithmetic expression"
+    },
+    {
+      "name": "/p",
+      "description": "Ask the user for the value"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "variable",
+    "isOptional": true
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

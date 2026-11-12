@@ -1,0 +1,90 @@
+{
+  "name": "get-filehash",
+  "description": "Hash of a file",
+  "options": [
+    {
+      "name": "-Path",
+      "description": "Path of the item",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-LiteralPath",
+      "description": "Path, taken literally (no wildcards)",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-Algorithm",
+      "description": "Hash algorithm",
+      "args": {
+        "name": "algorithm",
+        "suggestions": [
+          "SHA256",
+          "SHA1",
+          "SHA384",
+          "SHA512",
+          "MD5"
+        ]
+      }
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "path",
+    "template": "filepaths"
+  }
+}

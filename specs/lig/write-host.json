@@ -1,0 +1,128 @@
+{
+  "name": "write-host",
+  "description": "Write to the console",
+  "options": [
+    {
+      "name": "-Object",
+      "description": "What to write",
+      "args": {
+        "name": "text"
+      }
+    },
+    {
+      "name": "-NoNewline",
+      "description": "No newline at the end"
+    },
+    {
+      "name": "-ForegroundColor",
+      "description": "Text color",
+      "args": {
+        "name": "color",
+        "suggestions": [
+          "Black",
+          "DarkBlue",
+          "DarkGreen",
+          "DarkCyan",
+          "DarkRed",
+          "DarkMagenta",
+          "DarkYellow",
+          "Gray",
+          "DarkGray",
+          "Blue",
+          "Green",
+          "Cyan",
+          "Red",
+          "Magenta",
+          "Yellow",
+          "White"
+        ]
+      }
+    },
+    {
+      "name": "-BackgroundColor",
+      "description": "Background color",
+      "args": {
+        "name": "color",
+        "suggestions": [
+          "Black",
+          "DarkBlue",
+          "DarkGreen",
+          "DarkCyan",
+          "DarkRed",
+          "DarkMagenta",
+          "DarkYellow",
+          "Gray",
+          "DarkGray",
+          "Blue",
+          "Green",
+          "Cyan",
+          "Red",
+          "Magenta",
+          "Yellow",
+          "White"
+        ]
+      }
+    },
+    {
+      "name": "-Separator",
+      "description": "Between objects",
+      "args": {
+        "name": "text"
+      }
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "text",
+    "isOptional": true
+  }
+}

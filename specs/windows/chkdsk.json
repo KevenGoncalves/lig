@@ -1,0 +1,48 @@
+{
+  "name": "chkdsk",
+  "description": "Check a disk",
+  "options": [
+    {
+      "name": "/f",
+      "description": "Fix errors"
+    },
+    {
+      "name": "/r",
+      "description": "Find bad sectors (implies /f)"
+    },
+    {
+      "name": "/x",
+      "description": "Dismount first"
+    },
+    {
+      "name": "/scan",
+      "description": "Online scan"
+    },
+    {
+      "name": "/spotfix",
+      "description": "Fix what /scan found"
+    },
+    {
+      "name": "/i",
+      "description": "Lighter index check"
+    },
+    {
+      "name": "/c",
+      "description": "Skip folder cycles"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "volume",
+    "isOptional": true
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

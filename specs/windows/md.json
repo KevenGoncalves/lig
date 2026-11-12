@@ -1,0 +1,21 @@
+{
+  "name": "md",
+  "description": "Create folders (and their parents)",
+  "options": [
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "dir",
+    "isVariadic": true,
+    "template": "folders"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "name": "ping",
+  "description": "Check that a host answers (Windows)",
+  "options": [
+    {
+      "name": "-t",
+      "description": "Until stopped (Ctrl+C)"
+    },
+    {
+      "name": "-n",
+      "description": "This many requests",
+      "args": {
+        "name": "count"
+      }
+    },
+    {
+      "name": "-l",
+      "description": "Payload size",
+      "args": {
+        "name": "bytes"
+      }
+    },
+    {
+      "name": "-w",
+      "description": "Timeout per reply, in ms",
+      "args": {
+        "name": "ms"
+      }
+    },
+    {
+      "name": "-i",
+      "description": "Time to live",
+      "args": {
+        "name": "ttl"
+      }
+    },
+    {
+      "name": "-a",
+      "description": "Resolve addresses to names"
+    },
+    {
+      "name": "-f",
+      "description": "Don't fragment"
+    },
+    {
+      "name": "-4",
+      "description": "IPv4"
+    },
+    {
+      "name": "-6",
+      "description": "IPv6"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "host"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

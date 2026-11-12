@@ -1,0 +1,137 @@
+{
+  "name": "start-process",
+  "description": "Start a program (start, saps)",
+  "options": [
+    {
+      "name": "-FilePath",
+      "description": "Program or file to open",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-ArgumentList",
+      "description": "Its arguments",
+      "args": {
+        "name": "args"
+      }
+    },
+    {
+      "name": "-WorkingDirectory",
+      "description": "Folder to start in",
+      "args": {
+        "name": "path",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "-Verb",
+      "description": "How to open it",
+      "args": {
+        "name": "verb",
+        "suggestions": [
+          "Open",
+          "RunAs",
+          "Edit",
+          "Print"
+        ]
+      }
+    },
+    {
+      "name": "-Wait",
+      "description": "Wait until it exits"
+    },
+    {
+      "name": "-NoNewWindow",
+      "description": "Run in this console"
+    },
+    {
+      "name": "-PassThru",
+      "description": "Output the process"
+    },
+    {
+      "name": "-WindowStyle",
+      "description": "Window state",
+      "args": {
+        "name": "style",
+        "suggestions": [
+          "Normal",
+          "Hidden",
+          "Minimized",
+          "Maximized"
+        ]
+      }
+    },
+    {
+      "name": "-RedirectStandardOutput",
+      "description": "Save its output to a file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-RedirectStandardError",
+      "description": "Save its errors to a file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "file",
+    "template": "filepaths"
+  }
+}

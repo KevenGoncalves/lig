@@ -1,0 +1,32 @@
+{
+  "name": "systeminfo",
+  "description": "Show the system's configuration",
+  "options": [
+    {
+      "name": "/fo",
+      "description": "Format",
+      "args": {
+        "name": "format",
+        "suggestions": [
+          "table",
+          "list",
+          "csv"
+        ]
+      }
+    },
+    {
+      "name": "/nh",
+      "description": "No header"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

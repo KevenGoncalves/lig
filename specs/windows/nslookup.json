@@ -1,0 +1,8 @@
+{
+  "name": "nslookup",
+  "description": "Look up DNS records",
+  "args": {
+    "name": "host",
+    "isOptional": true
+  }
+}

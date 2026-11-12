@@ -1,0 +1,20 @@
+{
+  "name": "ren",
+  "description": "Rename files",
+  "options": [
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "file",
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

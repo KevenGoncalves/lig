@@ -1,0 +1,100 @@
+{
+  "name": "set-executionpolicy",
+  "description": "Which scripts PowerShell runs",
+  "options": [
+    {
+      "name": "-ExecutionPolicy",
+      "description": "The policy",
+      "args": {
+        "name": "policy",
+        "suggestions": [
+          "RemoteSigned",
+          "AllSigned",
+          "Restricted",
+          "Unrestricted",
+          "Bypass",
+          "Undefined"
+        ]
+      }
+    },
+    {
+      "name": "-Scope",
+      "description": "Where it applies",
+      "args": {
+        "name": "scope",
+        "suggestions": [
+          "CurrentUser",
+          "LocalMachine",
+          "Process",
+          "UserPolicy",
+          "MachinePolicy"
+        ]
+      }
+    },
+    {
+      "name": "-Force",
+      "description": "Include hidden and read-only items, or overwrite"
+    },
+    {
+      "name": "-WhatIf",
+      "description": "Show what would happen without doing it"
+    },
+    {
+      "name": "-Confirm",
+      "description": "Ask before doing it"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "policy"
+  }
+}

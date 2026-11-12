@@ -1,0 +1,29 @@
+{
+  "name": "move",
+  "description": "Move or rename files and folders",
+  "options": [
+    {
+      "name": "/y",
+      "description": "Overwrite without asking"
+    },
+    {
+      "name": "/-y",
+      "description": "Ask before overwriting"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "source",
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

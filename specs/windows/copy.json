@@ -1,0 +1,49 @@
+{
+  "name": "copy",
+  "description": "Copy files",
+  "options": [
+    {
+      "name": "/y",
+      "description": "Overwrite without asking"
+    },
+    {
+      "name": "/-y",
+      "description": "Ask before overwriting"
+    },
+    {
+      "name": "/v",
+      "description": "Verify the copies"
+    },
+    {
+      "name": "/b",
+      "description": "Binary file"
+    },
+    {
+      "name": "/a",
+      "description": "ASCII text file"
+    },
+    {
+      "name": "/z",
+      "description": "Restartable (network)"
+    },
+    {
+      "name": "/l",
+      "description": "Copy a link, not its target"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "source",
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "name": "dir",
+  "description": "List files and folders",
+  "options": [
+    {
+      "name": "/a",
+      "description": "Only these attributes (D folders, H hidden, S system, R read-only, -X not)",
+      "args": {
+        "name": "attributes",
+        "isOptional": true,
+        "suggestions": [
+          "D",
+          "H",
+          "S",
+          "R",
+          "A",
+          "-D",
+          "-H",
+          "-S",
+          "-R"
+        ]
+      }
+    },
+    {
+      "name": "/b",
+      "description": "Bare names only"
+    },
+    {
+      "name": "/s",
+      "description": "Include subfolders"
+    },
+    {
+      "name": "/w",
+      "description": "Wide list"
+    },
+    {
+      "name": "/d",
+      "description": "Wide list, sorted by column"
+    },
+    {
+      "name": "/o",
+      "description": "Sort order (N name, E extension, S size, D date, G folders first, - reverse)",
+      "args": {
+        "name": "order",
+        "isOptional": true,
+        "suggestions": [
+          "N",
+          "-N",
+          "E",
+          "S",
+          "-S",
+          "D",
+          "-D",
+          "G"
+        ]
+      }
+    },
+    {
+      "name": "/t",
+      "description": "Which time to show and sort by",
+      "args": {
+        "name": "time",
+        "suggestions": [
+          "C",
+          "A",
+          "W"
+        ]
+      }
+    },
+    {
+      "name": "/q",
+      "description": "Show the owner"
+    },
+    {
+      "name": "/r",
+      "description": "Show alternate data streams"
+    },
+    {
+      "name": "/l",
+      "description": "Lowercase"
+    },
+    {
+      "name": "/n",
+      "description": "Long list format"
+    },
+    {
+      "name": "/x",
+      "description": "Short (8.3) names too"
+    },
+    {
+      "name": "/p",
+      "description": "Pause after each screen"
+    },
+    {
+      "name": "/c",
+      "description": "Thousands separators (default)"
+    },
+    {
+      "name": "/-c",
+      "description": "No thousands separators"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "path",
+    "isOptional": true,
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

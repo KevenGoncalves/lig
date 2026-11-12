@@ -1,0 +1,97 @@
+{
+  "name": "findstr",
+  "description": "Search for text or patterns in files",
+  "options": [
+    {
+      "name": "/i",
+      "description": "Ignore case"
+    },
+    {
+      "name": "/s",
+      "description": "In subfolders too"
+    },
+    {
+      "name": "/n",
+      "description": "Line numbers"
+    },
+    {
+      "name": "/m",
+      "description": "Only file names"
+    },
+    {
+      "name": "/v",
+      "description": "Lines that don't match"
+    },
+    {
+      "name": "/r",
+      "description": "Regular expressions (default)"
+    },
+    {
+      "name": "/l",
+      "description": "Literal text"
+    },
+    {
+      "name": "/c",
+      "description": "This exact text, spaces included",
+      "args": {
+        "name": "text"
+      }
+    },
+    {
+      "name": "/b",
+      "description": "At the start of a line"
+    },
+    {
+      "name": "/e",
+      "description": "At the end of a line"
+    },
+    {
+      "name": "/x",
+      "description": "Whole lines"
+    },
+    {
+      "name": "/p",
+      "description": "Skip binary files"
+    },
+    {
+      "name": "/o",
+      "description": "Character offsets"
+    },
+    {
+      "name": "/f",
+      "description": "Files listed in this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/g",
+      "description": "Patterns from this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/d",
+      "description": "In these folders (;-separated)",
+      "args": {
+        "name": "dirs"
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "pattern"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

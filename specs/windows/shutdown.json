@@ -1,0 +1,78 @@
+{
+  "name": "shutdown",
+  "description": "Shut down or restart the computer",
+  "options": [
+    {
+      "name": "/s",
+      "description": "Shut down"
+    },
+    {
+      "name": "/r",
+      "description": "Restart"
+    },
+    {
+      "name": "/g",
+      "description": "Restart and reopen apps"
+    },
+    {
+      "name": "/l",
+      "description": "Sign out"
+    },
+    {
+      "name": "/h",
+      "description": "Hibernate"
+    },
+    {
+      "name": "/a",
+      "description": "Cancel a pending shutdown"
+    },
+    {
+      "name": "/t",
+      "description": "In this many seconds",
+      "args": {
+        "name": "seconds",
+        "suggestions": [
+          "0",
+          "60",
+          "300"
+        ]
+      }
+    },
+    {
+      "name": "/f",
+      "description": "Close apps without warning"
+    },
+    {
+      "name": "/c",
+      "description": "Reason shown",
+      "args": {
+        "name": "comment"
+      }
+    },
+    {
+      "name": "/m",
+      "description": "Remote computer",
+      "args": {
+        "name": "\\\\computer"
+      }
+    },
+    {
+      "name": "/o",
+      "description": "Restart to the advanced boot menu (with /r)"
+    },
+    {
+      "name": "/fw",
+      "description": "Restart to the firmware (with /r)"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

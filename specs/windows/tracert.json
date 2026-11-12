@@ -1,0 +1,45 @@
+{
+  "name": "tracert",
+  "description": "Show the route to a host",
+  "options": [
+    {
+      "name": "-d",
+      "description": "Don't resolve names"
+    },
+    {
+      "name": "-h",
+      "description": "At most this many hops",
+      "args": {
+        "name": "hops"
+      }
+    },
+    {
+      "name": "-w",
+      "description": "Timeout per reply, in ms",
+      "args": {
+        "name": "ms"
+      }
+    },
+    {
+      "name": "-4",
+      "description": "IPv4"
+    },
+    {
+      "name": "-6",
+      "description": "IPv6"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "host"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

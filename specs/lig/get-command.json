@@ -1,0 +1,97 @@
+{
+  "name": "get-command",
+  "description": "Find commands (gcm)",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "Command names (wildcards)",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-CommandType",
+      "description": "Kinds of command",
+      "args": {
+        "name": "type",
+        "suggestions": [
+          "Alias",
+          "Function",
+          "Cmdlet",
+          "Application",
+          "ExternalScript",
+          "All"
+        ]
+      }
+    },
+    {
+      "name": "-Module",
+      "description": "From these modules",
+      "args": {
+        "name": "module"
+      }
+    },
+    {
+      "name": "-Syntax",
+      "description": "Show the syntax"
+    },
+    {
+      "name": "-All",
+      "description": "Every match, also hidden ones"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name",
+    "isOptional": true
+  }
+}

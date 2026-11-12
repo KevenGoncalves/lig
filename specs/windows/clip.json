@@ -1,0 +1,16 @@
+{
+  "name": "clip",
+  "description": "Copy input to the clipboard",
+  "options": [
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

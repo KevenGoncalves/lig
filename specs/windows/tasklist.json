@@ -1,0 +1,62 @@
+{
+  "name": "tasklist",
+  "description": "List running processes",
+  "options": [
+    {
+      "name": "/v",
+      "description": "Verbose"
+    },
+    {
+      "name": "/svc",
+      "description": "Services in each process"
+    },
+    {
+      "name": "/m",
+      "description": "Processes using this module",
+      "args": {
+        "name": "module",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/fi",
+      "description": "Filter (e.g. \"IMAGENAME eq notepad.exe\")",
+      "args": {
+        "name": "filter"
+      }
+    },
+    {
+      "name": "/fo",
+      "description": "Format",
+      "args": {
+        "name": "format",
+        "suggestions": [
+          "table",
+          "list",
+          "csv"
+        ]
+      }
+    },
+    {
+      "name": "/nh",
+      "description": "No header"
+    },
+    {
+      "name": "/s",
+      "description": "Remote computer",
+      "args": {
+        "name": "computer"
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

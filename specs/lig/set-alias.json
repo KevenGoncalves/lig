@@ -1,0 +1,107 @@
+{
+  "name": "set-alias",
+  "description": "Create or change an alias (sal)",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "The alias",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-Value",
+      "description": "The command it runs",
+      "args": {
+        "name": "command"
+      }
+    },
+    {
+      "name": "-Scope",
+      "description": "Where it applies",
+      "args": {
+        "name": "scope",
+        "suggestions": [
+          "Global",
+          "Local",
+          "Script"
+        ]
+      }
+    },
+    {
+      "name": "-Option",
+      "description": "Options",
+      "args": {
+        "name": "option",
+        "suggestions": [
+          "None",
+          "ReadOnly",
+          "Constant",
+          "Private",
+          "AllScope"
+        ]
+      }
+    },
+    {
+      "name": "-Force",
+      "description": "Include hidden and read-only items, or overwrite"
+    },
+    {
+      "name": "-PassThru",
+      "description": "Output the item it works on"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name"
+  }
+}

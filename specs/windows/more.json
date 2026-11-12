@@ -1,0 +1,45 @@
+{
+  "name": "more",
+  "description": "Show output one screen at a time",
+  "options": [
+    {
+      "name": "/e",
+      "description": "Extended features"
+    },
+    {
+      "name": "/c",
+      "description": "Clear the screen first"
+    },
+    {
+      "name": "/p",
+      "description": "Expand form feeds"
+    },
+    {
+      "name": "/s",
+      "description": "Squeeze blank lines"
+    },
+    {
+      "name": "/t",
+      "description": "Tabs to this many spaces",
+      "args": {
+        "name": "n"
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "file",
+    "isOptional": true,
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

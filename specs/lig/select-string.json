@@ -1,0 +1,148 @@
+{
+  "name": "select-string",
+  "description": "Search text with a regular expression (sls)",
+  "options": [
+    {
+      "name": "-Pattern",
+      "description": "Regular expression to find",
+      "args": {
+        "name": "pattern"
+      }
+    },
+    {
+      "name": "-Path",
+      "description": "Files to search",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-CaseSensitive",
+      "description": "Match case"
+    },
+    {
+      "name": "-SimpleMatch",
+      "description": "Plain text, not a regular expression"
+    },
+    {
+      "name": "-NotMatch",
+      "description": "Lines that don't match"
+    },
+    {
+      "name": "-AllMatches",
+      "description": "Every match in a line"
+    },
+    {
+      "name": "-Context",
+      "description": "Lines before and after",
+      "args": {
+        "name": "lines"
+      }
+    },
+    {
+      "name": "-List",
+      "description": "Only the first match per file"
+    },
+    {
+      "name": "-Quiet",
+      "description": "Only whether it matched"
+    },
+    {
+      "name": "-Raw",
+      "description": "Only the matching text"
+    },
+    {
+      "name": "-Encoding",
+      "description": "Text encoding",
+      "args": {
+        "name": "encoding",
+        "suggestions": [
+          "utf8",
+          "utf8NoBOM",
+          "utf8BOM",
+          "ascii",
+          "unicode",
+          "utf32",
+          "bigendianunicode",
+          "oem",
+          "default"
+        ]
+      }
+    },
+    {
+      "name": "-Filter",
+      "description": "Filter in the provider's format (e.g. *.txt)",
+      "args": {
+        "name": "filter"
+      }
+    },
+    {
+      "name": "-Include",
+      "description": "Only these items (wildcards)",
+      "args": {
+        "name": "pattern"
+      }
+    },
+    {
+      "name": "-Exclude",
+      "description": "Skip these items (wildcards)",
+      "args": {
+        "name": "pattern"
+      }
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "pattern"
+  }
+}

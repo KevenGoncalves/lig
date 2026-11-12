@@ -1,0 +1,100 @@
+{
+  "name": "import-csv",
+  "description": "Read a CSV file into objects",
+  "options": [
+    {
+      "name": "-Path",
+      "description": "Path of the item",
+      "args": {
+        "name": "path",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-Delimiter",
+      "description": "Field separator",
+      "args": {
+        "name": "char"
+      }
+    },
+    {
+      "name": "-Header",
+      "description": "Column names",
+      "args": {
+        "name": "names"
+      }
+    },
+    {
+      "name": "-Encoding",
+      "description": "Text encoding",
+      "args": {
+        "name": "encoding",
+        "suggestions": [
+          "utf8",
+          "utf8NoBOM",
+          "utf8BOM",
+          "ascii",
+          "unicode",
+          "utf32",
+          "bigendianunicode",
+          "oem",
+          "default"
+        ]
+      }
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "path",
+    "template": "filepaths"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "del",
+  "description": "Delete files",
+  "options": [
+    {
+      "name": "/p",
+      "description": "Ask for each file"
+    },
+    {
+      "name": "/f",
+      "description": "Read-only files too"
+    },
+    {
+      "name": "/s",
+      "description": "In subfolders too"
+    },
+    {
+      "name": "/q",
+      "description": "Don't ask for wildcards"
+    },
+    {
+      "name": "/a",
+      "description": "Only these attributes",
+      "args": {
+        "name": "attributes",
+        "isOptional": true,
+        "suggestions": [
+          "D",
+          "H",
+          "S",
+          "R",
+          "A",
+          "-D",
+          "-H",
+          "-S",
+          "-R"
+        ]
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "files",
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

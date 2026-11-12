@@ -1,28 +1,37 @@
 //! Built-in JSON specs: hand-written in `specs/lig/` (generators by id, see `gens.rs`) and
 //! ~1500 converted from withfig/autocomplete in `specs/fig/`. When both exist they are merged,
-//! the lig spec winning; user specs in `~/.config/lig/specs/` override both.
+//! the lig spec winning; user specs in `~/.config/lig/specs/` override both. On Windows,
+//! `specs/windows/` replaces both: its `dir`, `find` or `ping` aren't the Unix ones.
 
 pub mod archive;
 pub mod gens;
 
 use crate::spec::Subcommand;
 
-pub use archive::{FIG, LIG};
+pub use archive::{FIG, LIG, WINDOWS};
 
-/// Commands with a hand-written spec.
+/// Commands with a hand-written spec (Windows' own ones too, on Windows).
 pub fn lig_names() -> impl Iterator<Item = &'static str> {
-    LIG.names()
+    LIG.names().chain(WINDOWS.names().filter(|_| cfg!(windows)))
 }
 
 /// The spec for `name`: hand-written merged with the converted one (unless
-/// the hand-written one says `skipFigSpec`).
+/// the hand-written one says `skipFigSpec`). Spec files are lowercase, so `Get-ChildItem`
+/// (PowerShell) and `PING` (Windows) find theirs.
 pub fn builtin(name: &str) -> Option<Subcommand> {
     // `.` is `source`.
     let name = if name == "." { "source" } else { name };
-    match (LIG.load(name), FIG.load(name)) {
+    if cfg!(windows)
+        && let Some(s) = WINDOWS.load(name)
+    {
+        return Some(s);
+    }
+    let found = match (LIG.load(name), FIG.load(name)) {
         (Some(b), Some(f)) if !b.skip_fig_spec => Some(merge(&b, &f)),
         (b, f) => b.or(f),
-    }
+    };
+    let lower = name.to_lowercase();
+    found.or_else(|| (lower != name).then(|| builtin(&lower)).flatten())
 }
 
 /// Merge `extra` into `base`: `base` wins, `extra` adds what's missing.
@@ -102,10 +111,12 @@ mod tests {
     /// Specs round-trip through JSON unchanged (no unknown keys) and use only existing generators.
     #[test]
     fn lig_specs_are_valid() {
-        let names: Vec<&str> = super::lig_names().collect();
-        assert!(names.len() >= 50, "{}", names.len());
-        for n in names {
-            let v = super::LIG.json(n).unwrap();
+        let names: Vec<(&str, &super::archive::Archive)> = (super::LIG.names().map(|n| (n, &super::LIG)))
+            .chain(super::WINDOWS.names().map(|n| (n, &super::WINDOWS)))
+            .collect();
+        assert!(names.len() >= 100, "{}", names.len());
+        for (n, archive) in names {
+            let v = archive.json(n).unwrap();
             let spec = crate::spec::from_value(&v);
             assert_eq!(spec.meta.names[0], n, "{n}: name doesn't match the file name");
             assert_eq!(crate::spec::to_value(&spec), v, "{n}: keys lig doesn't understand");

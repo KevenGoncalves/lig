@@ -1,0 +1,82 @@
+{
+  "name": "restart-service",
+  "description": "Restart a Windows service",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "Service names",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-Force",
+      "description": "Include hidden and read-only items, or overwrite"
+    },
+    {
+      "name": "-PassThru",
+      "description": "Output the item it works on"
+    },
+    {
+      "name": "-WhatIf",
+      "description": "Show what would happen without doing it"
+    },
+    {
+      "name": "-Confirm",
+      "description": "Ask before doing it"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name"
+  }
+}

@@ -1,0 +1,240 @@
+{
+  "name": "robocopy",
+  "description": "Robust file copy: robocopy <source> <destination> [files] [options]",
+  "options": [
+    {
+      "name": "/s",
+      "description": "Include subfolders (not empty ones)"
+    },
+    {
+      "name": "/e",
+      "description": "Include subfolders, empty ones too"
+    },
+    {
+      "name": "/lev",
+      "description": "Only this many levels",
+      "args": {
+        "name": "n"
+      }
+    },
+    {
+      "name": "/mir",
+      "description": "Mirror: copy and delete what the source lacks"
+    },
+    {
+      "name": "/purge",
+      "description": "Delete destination files the source lacks"
+    },
+    {
+      "name": "/mov",
+      "description": "Move files"
+    },
+    {
+      "name": "/move",
+      "description": "Move files and folders"
+    },
+    {
+      "name": "/z",
+      "description": "Restartable mode"
+    },
+    {
+      "name": "/b",
+      "description": "Backup mode"
+    },
+    {
+      "name": "/zb",
+      "description": "Restartable, backup mode if denied"
+    },
+    {
+      "name": "/copy",
+      "description": "What to copy (D data, A attributes, T times, S security, O owner, U auditing)",
+      "args": {
+        "name": "flags",
+        "suggestions": [
+          "DAT",
+          "DATSOU",
+          "DT"
+        ]
+      }
+    },
+    {
+      "name": "/dcopy",
+      "description": "What to copy of folders",
+      "args": {
+        "name": "flags",
+        "suggestions": [
+          "DA",
+          "DAT",
+          "T"
+        ]
+      }
+    },
+    {
+      "name": "/sec",
+      "description": "Copy security (/copy:DATS)"
+    },
+    {
+      "name": "/copyall",
+      "description": "Copy everything (/copy:DATSOU)"
+    },
+    {
+      "name": "/mt",
+      "description": "Threads",
+      "args": {
+        "name": "n",
+        "suggestions": [
+          "8",
+          "16",
+          "32",
+          "64"
+        ]
+      }
+    },
+    {
+      "name": "/r",
+      "description": "Retries",
+      "args": {
+        "name": "n"
+      }
+    },
+    {
+      "name": "/w",
+      "description": "Seconds between retries",
+      "args": {
+        "name": "seconds"
+      }
+    },
+    {
+      "name": "/xf",
+      "description": "Skip these files",
+      "args": {
+        "name": "files",
+        "isVariadic": true
+      }
+    },
+    {
+      "name": "/xd",
+      "description": "Skip these folders",
+      "args": {
+        "name": "folders",
+        "isVariadic": true,
+        "template": "folders"
+      }
+    },
+    {
+      "name": "/xo",
+      "description": "Skip older files"
+    },
+    {
+      "name": "/xn",
+      "description": "Skip newer files"
+    },
+    {
+      "name": "/xc",
+      "description": "Skip changed files"
+    },
+    {
+      "name": "/xx",
+      "description": "Skip extra files"
+    },
+    {
+      "name": "/min",
+      "description": "Skip files smaller than",
+      "args": {
+        "name": "bytes"
+      }
+    },
+    {
+      "name": "/max",
+      "description": "Skip files larger than",
+      "args": {
+        "name": "bytes"
+      }
+    },
+    {
+      "name": "/l",
+      "description": "Only list what would happen"
+    },
+    {
+      "name": "/v",
+      "description": "Verbose"
+    },
+    {
+      "name": "/np",
+      "description": "No progress"
+    },
+    {
+      "name": "/nfl",
+      "description": "No file list"
+    },
+    {
+      "name": "/ndl",
+      "description": "No folder list"
+    },
+    {
+      "name": "/njh",
+      "description": "No job header"
+    },
+    {
+      "name": "/njs",
+      "description": "No job summary"
+    },
+    {
+      "name": "/tee",
+      "description": "Log and show"
+    },
+    {
+      "name": "/log",
+      "description": "Log to this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/log+",
+      "description": "Append the log to this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/a+",
+      "description": "Set these attributes on copies",
+      "args": {
+        "name": "attributes"
+      }
+    },
+    {
+      "name": "/a-",
+      "description": "Clear these attributes on copies",
+      "args": {
+        "name": "attributes"
+      }
+    },
+    {
+      "name": "/create",
+      "description": "Only the structure, empty files"
+    },
+    {
+      "name": "/fft",
+      "description": "FAT file times (2 s precision)"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "source",
+    "isVariadic": true,
+    "template": "folders"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

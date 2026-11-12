@@ -1,0 +1,52 @@
+{
+  "name": "whoami",
+  "description": "Show the current user",
+  "options": [
+    {
+      "name": "/user",
+      "description": "With the SID"
+    },
+    {
+      "name": "/groups",
+      "description": "Groups"
+    },
+    {
+      "name": "/priv",
+      "description": "Privileges"
+    },
+    {
+      "name": "/upn",
+      "description": "User principal name"
+    },
+    {
+      "name": "/fqdn",
+      "description": "Fully qualified name"
+    },
+    {
+      "name": "/all",
+      "description": "Everything"
+    },
+    {
+      "name": "/fo",
+      "description": "Format",
+      "args": {
+        "name": "format",
+        "suggestions": [
+          "table",
+          "list",
+          "csv"
+        ]
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

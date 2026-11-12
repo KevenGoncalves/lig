@@ -1,0 +1,37 @@
+{
+  "name": "erase",
+  "description": "Delete files",
+  "options": [
+    {
+      "name": "/p",
+      "description": "Ask for each file"
+    },
+    {
+      "name": "/f",
+      "description": "Read-only files too"
+    },
+    {
+      "name": "/s",
+      "description": "In subfolders too"
+    },
+    {
+      "name": "/q",
+      "description": "Don't ask for wildcards"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "files",
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

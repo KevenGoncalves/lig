@@ -1,0 +1,66 @@
+{
+  "name": "attrib",
+  "description": "Show or change file attributes",
+  "options": [
+    {
+      "name": "+r",
+      "description": "Read-only"
+    },
+    {
+      "name": "-r",
+      "description": "Not read-only"
+    },
+    {
+      "name": "+h",
+      "description": "Hidden"
+    },
+    {
+      "name": "-h",
+      "description": "Not hidden"
+    },
+    {
+      "name": "+s",
+      "description": "System file"
+    },
+    {
+      "name": "-s",
+      "description": "Not a system file"
+    },
+    {
+      "name": "+a",
+      "description": "Archive"
+    },
+    {
+      "name": "-a",
+      "description": "Not archive"
+    },
+    {
+      "name": "/s",
+      "description": "In subfolders too"
+    },
+    {
+      "name": "/d",
+      "description": "Folders too"
+    },
+    {
+      "name": "/l",
+      "description": "The link, not its target"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "files",
+    "isOptional": true,
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

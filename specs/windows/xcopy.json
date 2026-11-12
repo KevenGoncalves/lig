@@ -1,0 +1,93 @@
+{
+  "name": "xcopy",
+  "description": "Copy files and folders",
+  "options": [
+    {
+      "name": "/s",
+      "description": "Include subfolders (not empty ones)"
+    },
+    {
+      "name": "/e",
+      "description": "Include subfolders, empty ones too"
+    },
+    {
+      "name": "/i",
+      "description": "The destination is a folder"
+    },
+    {
+      "name": "/h",
+      "description": "Hidden and system files too"
+    },
+    {
+      "name": "/y",
+      "description": "Overwrite without asking"
+    },
+    {
+      "name": "/d",
+      "description": "Only newer files",
+      "args": {
+        "name": "date",
+        "isOptional": true
+      }
+    },
+    {
+      "name": "/exclude",
+      "description": "Skip files listed in these files",
+      "args": {
+        "name": "files",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/c",
+      "description": "Continue after errors"
+    },
+    {
+      "name": "/q",
+      "description": "Don't list the files"
+    },
+    {
+      "name": "/f",
+      "description": "Show full source and destination names"
+    },
+    {
+      "name": "/l",
+      "description": "Only list what would be copied"
+    },
+    {
+      "name": "/r",
+      "description": "Overwrite read-only files"
+    },
+    {
+      "name": "/k",
+      "description": "Keep attributes"
+    },
+    {
+      "name": "/t",
+      "description": "Only the folder structure"
+    },
+    {
+      "name": "/z",
+      "description": "Restartable (network)"
+    },
+    {
+      "name": "/j",
+      "description": "Unbuffered (large files)"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "source",
+    "isVariadic": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

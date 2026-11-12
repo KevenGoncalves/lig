@@ -187,6 +187,16 @@ impl HelpLoader {
             if parse(&text, argv).is_some_and(|s| !s.options.is_empty() || !s.subcommands.is_empty()) {
                 return clean(&text);
             }
+            // Windows' own tools answer `/?` instead.
+            if cfg!(windows) {
+                let mut a = argv.to_vec();
+                a.push("/?".into());
+                let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout, None);
+                let text = if out.stdout.trim().is_empty() { out.stderr } else { out.stdout };
+                if parse(&text, argv).is_some_and(|s| !s.options.is_empty()) {
+                    return clean(&text);
+                }
+            }
         }
         if argv.len() == 1 && cfg!(unix) {
             let a = vec!["man".to_string(), "-P".into(), "cat".into(), argv[0].clone()];
@@ -414,6 +424,9 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
         let desc = if desc.is_empty() { next_desc(i, ind) } else { desc.to_string() };
         subs.push((names, desc.split_whitespace().collect::<Vec<_>>().join(" ")));
     }
+    if cfg!(windows) && options.is_empty() {
+        options = switches(&lines);
+    }
     if options.is_empty() && subs.is_empty() && args.is_empty() {
         return None;
     }
@@ -437,6 +450,41 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
         spec = spec.arg(a);
     }
     Some(spec)
+}
+
+/// Windows-style switches from `/?` output: `/all   Display …`, `/S :: copy Subdirectories`,
+/// `/A[[:]attributes]  Displays files with …`, `/LEV:n :: only copy n levels`.
+fn switches(lines: &[&str]) -> Vec<Opt> {
+    let mut out: Vec<Opt> = vec![];
+    for line in lines {
+        let t = line.trim_start();
+        let Some(body) = t.strip_prefix('/') else { continue };
+        let len =
+            body.find(|c: char| !(c.is_ascii_alphanumeric() || c == '?' || c == '+' || c == '-')).unwrap_or(body.len());
+        if len == 0 || len > 20 {
+            continue;
+        }
+        let name = format!("/{}", &body[..len]);
+        let rest = &body[len..];
+        // A value after `:` or in brackets: `/LEV:n`, `/A[[:]attributes]`, `/D:m-d-y`.
+        let (value, desc) = match rest.split_once(char::is_whitespace) {
+            Some((v, d)) => (v, d.trim()),
+            None => (rest, ""),
+        };
+        let desc = desc.trim_start_matches("::").trim_start_matches(['-', ' ']).trim();
+        if desc.is_empty() || out.iter().any(|o| o.meta.names[0].eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        let mut o = opt(&name, &desc.split_whitespace().collect::<Vec<_>>().join(" "));
+        if value.starts_with([':', '[']) {
+            o = o.arg(placeholder_arg(
+                value.trim_start_matches(['[', ':']).trim_end_matches(']'),
+                value.starts_with('['),
+            ));
+        }
+        out.push(o);
+    }
+    if out.len() >= 2 { out } else { vec![] }
 }
 
 /// A positional from an `Arguments:` item: `[SHELL]`, `<FILE>...`, `{start,stop}`, `name`.
@@ -464,6 +512,19 @@ fn parse_positional(left: &str, desc: &str) -> Option<crate::spec::Arg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_switches_from_help() {
+        let ipconfig = "USAGE:\n    ipconfig [/allcompartments] [/? | /all |\n\nwhere\n    adapter         Connection name\n\n   Options:\n       /?               Display this help message\n       /all             Display full configuration information.\n       /release         Release the IPv4 address for the specified adapter.\n";
+        let names: Vec<String> =
+            switches(&ipconfig.lines().collect::<Vec<_>>()).iter().map(|o| o.meta.names[0].clone()).collect();
+        assert_eq!(names, ["/?", "/all", "/release"]);
+        let robocopy = "                 /S :: copy Subdirectories, but not empty ones.\n              /LEV:n :: only copy the top n LEVels of the source directory tree.\n";
+        let o = switches(&robocopy.lines().collect::<Vec<_>>());
+        assert_eq!(o[0].meta.description.as_deref(), Some("copy Subdirectories, but not empty ones."));
+        assert_eq!(o[1].meta.names[0], "/LEV");
+        assert!(o[1].takes_arg());
+    }
 
     #[test]
     fn only_console_programs_count_as_console() {

@@ -1,0 +1,53 @@
+{
+  "name": "start",
+  "description": "Open a program, file or address in a new window",
+  "options": [
+    {
+      "name": "/d",
+      "description": "Start in this folder",
+      "args": {
+        "name": "dir",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "/b",
+      "description": "In this console, no new window"
+    },
+    {
+      "name": "/wait",
+      "description": "Wait until it exits"
+    },
+    {
+      "name": "/min",
+      "description": "Minimized"
+    },
+    {
+      "name": "/max",
+      "description": "Maximized"
+    },
+    {
+      "name": "/low",
+      "description": "Low priority"
+    },
+    {
+      "name": "/high",
+      "description": "High priority"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "target",
+    "isOptional": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

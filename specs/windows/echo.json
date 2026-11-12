@@ -1,0 +1,12 @@
+{
+  "name": "echo",
+  "description": "Show a message, or turn command echo on or off",
+  "args": {
+    "name": "message",
+    "isOptional": true,
+    "suggestions": [
+      "on",
+      "off"
+    ]
+  }
+}

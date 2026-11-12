@@ -1,0 +1,78 @@
+{
+  "name": "import-module",
+  "description": "Load a module (ipmo)",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "Module names or paths",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-Force",
+      "description": "Include hidden and read-only items, or overwrite"
+    },
+    {
+      "name": "-Global",
+      "description": "Into the global scope"
+    },
+    {
+      "name": "-PassThru",
+      "description": "Output the item it works on"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name"
+  }
+}

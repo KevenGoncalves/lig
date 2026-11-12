@@ -41,9 +41,10 @@ pub fn command_name(path: &std::path::Path) -> Option<String> {
         let _ = m;
         let ext = path.extension()?.to_string_lossy().to_lowercase();
         let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into()).to_lowercase();
+        // Lowercase, as Windows commands are typed (System32 has `PING.EXE`).
         exts.split(';')
             .any(|e| e.trim_start_matches('.') == ext)
-            .then(|| name[..name.len() - ext.len() - 1].to_string())
+            .then(|| name[..name.len() - ext.len() - 1].to_lowercase())
     }
 }
 
@@ -363,8 +364,8 @@ impl Engine {
                 return;
             }
         }
-        if !no_more_opts && cur.value.starts_with('-') {
-            // `--opt=value`
+        if !no_more_opts && (cur.value.starts_with('-') || is_switch(&cur.value)) {
+            // `--opt=value`, `/opt:value`
             let seps: Vec<String> = if directives.option_arg_separators.is_empty() {
                 vec!["=".into()]
             } else {
@@ -958,7 +959,9 @@ fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv, with_spec: &HashSet<Stri
         }
         let expanded = parser::parse(&format!("{value} ")).tokens;
         let Some(target) = expanded.first() else { break };
-        if with_spec.contains(&first.value) && !with_spec.contains(basename(&target.value)) {
+        // Spec names are lowercase; PowerShell's aliases point at `Set-Location`.
+        let known = |n: &str| with_spec.contains(n) || with_spec.contains(&n.to_lowercase());
+        if known(&first.value) && !known(basename(&target.value)) {
             break;
         }
         cl.tokens.splice(0..1, expanded);
@@ -1013,7 +1016,9 @@ fn var_prefix(cur: &Token) -> Option<(&str, bool)> {
     }
     let rest = &cur.raw[at + 1..];
     let (name, braced) = rest.strip_prefix('{').map_or((rest, false), |n| (n, true));
-    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_').then_some((name, braced))
+    // PowerShell's `$env:PATH`: its variables come named `env:…` (see shell/lig.ps1).
+    let bare = name.get(..4).filter(|p| p.eq_ignore_ascii_case("env:")).map_or(name, |_| &name[4..]);
+    bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_').then_some((name, braced))
 }
 
 /// Exported variables, with their value as the description (hidden for secret-looking names).
@@ -1059,7 +1064,12 @@ fn local_dir(cwd: &std::path::Path, dir_part: &str) -> Listing {
 }
 
 fn is_flag(t: &str) -> bool {
-    t.starts_with('-') && t.len() > 1
+    t.len() > 1 && (t.starts_with('-') || is_switch(t))
+}
+
+/// A Windows switch: `/s`, `/?`, or just `/` being typed (`/Users/x` is a path).
+fn is_switch(t: &str) -> bool {
+    cfg!(windows) && t.starts_with('/') && !t[1..].contains(is_sep)
 }
 
 /// The command a word runs: `/usr/bin/git` → `git`; on Windows `C:\\Git\\git.EXE` → `git`.
@@ -1079,7 +1089,9 @@ fn current_arg(node: &Subcommand, idx: usize) -> Option<Arc<Arg>> {
 }
 
 fn find_option(node: &Subcommand, persistent: &[Arc<Opt>], name: &str) -> Option<Arc<Opt>> {
-    node.options.iter().chain(persistent).find(|o| o.meta.names.iter().any(|n| n == name)).cloned()
+    // Windows switches ignore case: `/S` is `/s`.
+    let same = |n: &String| n == name || is_switch(name) && n.eq_ignore_ascii_case(name);
+    node.options.iter().chain(persistent).find(|o| o.meta.names.iter().any(same)).cloned()
 }
 
 /// Returns the option a flag token refers to and whether its argument is
@@ -1100,7 +1112,7 @@ fn match_option(node: &Subcommand, persistent: &[Arc<Opt>], t: &str, d: &spec::D
             return Some((o, true));
         }
     }
-    if !t.starts_with("--") && !d.flags_are_posix_noncompliant {
+    if t.starts_with('-') && !t.starts_with("--") && !d.flags_are_posix_noncompliant {
         let chars: Vec<char> = t[1..].chars().collect();
         let mut last = None;
         for (j, ch) in chars.iter().enumerate() {
@@ -1120,7 +1132,7 @@ pub fn match_tier(name: &str, query: &str, fuzzy: bool) -> Option<u8> {
     if query.is_empty() {
         return Some(1);
     }
-    let sensitive = query.chars().any(char::is_uppercase);
+    let sensitive = !is_switch(query) && query.chars().any(char::is_uppercase);
     let (n, q) =
         if sensitive { (name.to_string(), query.to_string()) } else { (name.to_lowercase(), query.to_lowercase()) };
     if n == q {
@@ -1201,6 +1213,32 @@ mod tests {
 
     fn labels(e: &mut Engine, env: &ShellEnv, line: &str) -> Vec<(String, String, usize)> {
         e.complete(line, env, true, false).items.into_iter().map(|s| (s.label, s.insert, s.delete)).collect()
+    }
+
+    #[test]
+    fn powershell_cmdlets_and_env_variables() {
+        let (mut e, mut env) = engine();
+        // Any case finds the cmdlet's spec, and an alias leads to it.
+        assert!(labels(&mut e, &env, "Get-ChildItem -Rec").iter().any(|r| r.0 == "-Recurse"));
+        assert!(labels(&mut e, &env, "get-childitem -rec").iter().any(|r| r.0 == "-Recurse"));
+        env.aliases = Arc::new([("gci".to_string(), "Get-ChildItem".to_string())].into_iter().collect());
+        assert!(labels(&mut e, &env, "gci -Fi").iter().any(|r| r.0 == "-File"));
+        env.vars = Arc::new(vec![("env:PATH".into(), "C:\\bin".into()), ("PSHOME".into(), "C:\\ps".into())]);
+        let r = labels(&mut e, &env, "echo $env:PA");
+        assert_eq!(r, [("env:PATH".to_string(), "env:PATH".to_string(), 6)]);
+        assert_eq!(labels(&mut e, &env, "echo $PSH")[0].0, "PSHOME");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_switches() {
+        let (mut e, env) = engine();
+        let r = labels(&mut e, &env, "dir /");
+        assert!(r.iter().any(|r| r.0 == "/s"), "{r:?}");
+        assert!(labels(&mut e, &env, "DIR /S").iter().any(|r| r.0 == "/s"));
+        // A used switch isn't offered again; the value of `/t:` is.
+        assert!(!labels(&mut e, &env, "dir /s /").iter().any(|r| r.0 == "/s"));
+        assert!(labels(&mut e, &env, "shutdown /t:").iter().any(|r| r.0 == "60"));
     }
 
     #[test]

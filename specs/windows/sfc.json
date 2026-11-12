@@ -1,0 +1,52 @@
+{
+  "name": "sfc",
+  "description": "Check system files",
+  "options": [
+    {
+      "name": "/scannow",
+      "description": "Scan and repair"
+    },
+    {
+      "name": "/verifyonly",
+      "description": "Only scan"
+    },
+    {
+      "name": "/scanfile",
+      "description": "Scan and repair one file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/verifyfile",
+      "description": "Only scan one file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/offbootdir",
+      "description": "Offline boot folder",
+      "args": {
+        "name": "dir",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "/offwindir",
+      "description": "Offline Windows folder",
+      "args": {
+        "name": "dir",
+        "template": "folders"
+      }
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

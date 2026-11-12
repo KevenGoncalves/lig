@@ -7,6 +7,7 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
     $global:__lig_loaded = $true
     $global:__lig_editing = $false
     $global:__lig_aliases = $null
+    $global:__lig_vars = $null
     $global:__lig_once = $false
 
     function global:__lig_send([string] $msg) {
@@ -23,6 +24,16 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
         if ($aliases -ne $global:__lig_aliases) {
             $global:__lig_aliases = $aliases
             __lig_send ('A;' + $aliases)
+        }
+        # `$env:` names for the environment, plain ones for PowerShell's own simple values.
+        $vars = @(Get-ChildItem env: | ForEach-Object { 'env:' + $_.Name + '=' + $_.Value })
+        $vars += Get-Variable -Scope Global | Where-Object {
+            $_.Name -match '^\w+$' -and ($_.Value -is [string] -or $_.Value -is [ValueType])
+        } | ForEach-Object { $_.Name + '=' + $_.Value }
+        $vars = ($vars -join $sep) -replace '[\r\n]', ' '
+        if ($vars -ne $global:__lig_vars) {
+            $global:__lig_vars = $vars
+            __lig_send ('V;' + $vars)
         }
         if (-not $global:__lig_once) {
             $global:__lig_once = $true

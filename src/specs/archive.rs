@@ -15,6 +15,8 @@ pub struct Archive {
 pub static LIG: Archive = Archive::new(include_bytes!(concat!(env!("OUT_DIR"), "/lig_specs.bin")));
 /// `specs/fig/`: converted from withfig/autocomplete.
 pub static FIG: Archive = Archive::new(include_bytes!(concat!(env!("OUT_DIR"), "/fig_specs.bin")));
+/// `specs/windows/`: Windows' own commands (cmd's `dir`, `/` switches), used on Windows only.
+pub static WINDOWS: Archive = Archive::new(include_bytes!(concat!(env!("OUT_DIR"), "/windows_specs.bin")));
 
 impl Archive {
     const fn new(data: &'static [u8]) -> Archive {

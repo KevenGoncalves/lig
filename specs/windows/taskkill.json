@@ -1,0 +1,52 @@
+{
+  "name": "taskkill",
+  "description": "Stop processes",
+  "options": [
+    {
+      "name": "/pid",
+      "description": "Process id",
+      "args": {
+        "name": "pid"
+      }
+    },
+    {
+      "name": "/im",
+      "description": "Program name (wildcards)",
+      "args": {
+        "name": "image"
+      }
+    },
+    {
+      "name": "/f",
+      "description": "Force"
+    },
+    {
+      "name": "/t",
+      "description": "Its child processes too"
+    },
+    {
+      "name": "/fi",
+      "description": "Filter (e.g. \"STATUS eq NOT RESPONDING\")",
+      "args": {
+        "name": "filter"
+      }
+    },
+    {
+      "name": "/s",
+      "description": "Remote computer",
+      "args": {
+        "name": "computer"
+      }
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

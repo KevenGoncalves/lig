@@ -1,0 +1,29 @@
+{
+  "name": "tree",
+  "description": "Show the folder structure",
+  "options": [
+    {
+      "name": "/f",
+      "description": "Files too"
+    },
+    {
+      "name": "/a",
+      "description": "ASCII lines"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "dir",
+    "isOptional": true,
+    "template": "folders"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

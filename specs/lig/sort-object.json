@@ -1,0 +1,86 @@
+{
+  "name": "sort-object",
+  "description": "Sort objects (sort)",
+  "options": [
+    {
+      "name": "-Property",
+      "description": "Sort by these properties",
+      "args": {
+        "name": "names"
+      }
+    },
+    {
+      "name": "-Descending",
+      "description": "Largest first"
+    },
+    {
+      "name": "-Unique",
+      "description": "Drop duplicates"
+    },
+    {
+      "name": "-Top",
+      "description": "Only the first items",
+      "args": {
+        "name": "count"
+      }
+    },
+    {
+      "name": "-CaseSensitive",
+      "description": "Match case"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "property",
+    "isOptional": true
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "name": "invoke-restmethod",
+  "description": "Send an HTTP request and parse JSON or XML (irm)",
+  "options": [
+    {
+      "name": "-Uri",
+      "description": "The address",
+      "args": {
+        "name": "uri"
+      }
+    },
+    {
+      "name": "-Method",
+      "description": "HTTP method",
+      "args": {
+        "name": "method",
+        "suggestions": [
+          "Get",
+          "Post",
+          "Put",
+          "Delete",
+          "Patch",
+          "Head",
+          "Options"
+        ]
+      }
+    },
+    {
+      "name": "-Headers",
+      "description": "Headers, as a hashtable",
+      "args": {
+        "name": "headers"
+      }
+    },
+    {
+      "name": "-Body",
+      "description": "The request body",
+      "args": {
+        "name": "body"
+      }
+    },
+    {
+      "name": "-ContentType",
+      "description": "The body's content type",
+      "args": {
+        "name": "type",
+        "suggestions": [
+          "application/json",
+          "application/x-www-form-urlencoded",
+          "text/plain"
+        ]
+      }
+    },
+    {
+      "name": "-OutFile",
+      "description": "Save the response to this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "-UseBasicParsing",
+      "description": "Don't parse HTML (needed without Internet Explorer)"
+    },
+    {
+      "name": "-TimeoutSec",
+      "description": "Give up after this many seconds",
+      "args": {
+        "name": "seconds"
+      }
+    },
+    {
+      "name": "-UserAgent",
+      "description": "User agent to send",
+      "args": {
+        "name": "agent"
+      }
+    },
+    {
+      "name": "-Proxy",
+      "description": "Proxy to use",
+      "args": {
+        "name": "uri"
+      }
+    },
+    {
+      "name": "-SkipCertificateCheck",
+      "description": "Don't check the TLS certificate"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "uri"
+  }
+}

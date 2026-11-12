@@ -1,0 +1,139 @@
+{
+  "name": "wsl",
+  "description": "Windows Subsystem for Linux",
+  "options": [
+    {
+      "name": "--install",
+      "description": "Install WSL or a distribution"
+    },
+    {
+      "name": "--list",
+      "description": "List distributions"
+    },
+    {
+      "name": "-l",
+      "description": "List distributions"
+    },
+    {
+      "name": "--verbose",
+      "description": "With state and version (with --list)"
+    },
+    {
+      "name": "--online",
+      "description": "Distributions available to install (with --list)"
+    },
+    {
+      "name": "--distribution",
+      "description": "Run this distribution",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-d",
+      "description": "Run this distribution",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--user",
+      "description": "As this user",
+      "args": {
+        "name": "user"
+      }
+    },
+    {
+      "name": "-u",
+      "description": "As this user",
+      "args": {
+        "name": "user"
+      }
+    },
+    {
+      "name": "--cd",
+      "description": "Start in this folder",
+      "args": {
+        "name": "dir",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "--exec",
+      "description": "Run a command without a shell",
+      "args": {
+        "name": "command"
+      }
+    },
+    {
+      "name": "-e",
+      "description": "Run a command without a shell",
+      "args": {
+        "name": "command"
+      }
+    },
+    {
+      "name": "--shutdown",
+      "description": "Stop every distribution"
+    },
+    {
+      "name": "--terminate",
+      "description": "Stop a distribution",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--set-default",
+      "description": "Default distribution",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--set-version",
+      "description": "WSL version of a distribution",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--unregister",
+      "description": "Remove a distribution and its files",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--update",
+      "description": "Update WSL"
+    },
+    {
+      "name": "--status",
+      "description": "Show WSL's status"
+    },
+    {
+      "name": "--export",
+      "description": "Export a distribution to a tar file",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--import",
+      "description": "Import a distribution from a tar file",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "--help",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "command",
+    "isOptional": true,
+    "isVariadic": true
+  }
+}

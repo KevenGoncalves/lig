@@ -328,11 +328,15 @@ Looked up in this order:
    apt, dnf, asdf, kubectl, cd, …), merged with the converted one for the same command when
    there is one.
 3. **Converted Fig specs** in [`specs/fig/`](specs/fig).
-4. **The command's `--help` or man page**, parsed and cached per executable version:
-   options, subcommands, and argument values like `[possible values: a, b]`. `--help` only
-   runs for real binaries and Python/Node/Ruby scripts, with no input, no display and a
-   2 s timeout; other files only get their man page read. Turn it off with
-   `help_parsing = false`.
+
+   On Windows, [`specs/windows/`](specs/windows) comes first and replaces both: cmd's `dir`,
+   `find` or `ping` aren't the Unix ones. Spec names are lowercase and found in any case
+   (`Get-ChildItem`, `PING`); PowerShell's common cmdlets are in `specs/lig/`.
+4. **The command's `--help` or man page** (on Windows, `/?`), parsed and cached per
+   executable version: options, subcommands, and argument values like
+   `[possible values: a, b]`. `--help` only runs for real binaries (on Windows, console
+   programs) and Python/Node/Ruby scripts, with no input, no display and a 2 s timeout;
+   other files only get their man page read. Turn it off with `help_parsing = false`.
 
 `lig specs list` shows which source each command uses.
 
@@ -522,6 +526,7 @@ src/                  the lig binary (session.rs: PTY + popup, engine.rs: comple
 shell/                zsh, bash and fish hooks; remote.* bootstrap them for `lig ssh`
 specs/lig/            hand-written specs (JSON)
 specs/fig/            converted withfig/autocomplete specs (generated)
+specs/windows/        Windows' own commands (cmd's dir, robocopy, `/` switches), used on Windows only
 build.rs              embeds both spec folders, compressed, into the binary
 tests/                PTY tests (Python)
 tools/figconv/        the Fig → JSON converter (development only)

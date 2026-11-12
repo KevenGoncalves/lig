@@ -1,4 +1,5 @@
-//! Packs `specs/lig/` and `specs/fig/` into `lig_specs.bin` / `fig_specs.bin`, embedded in the binary.
+//! Packs `specs/lig/`, `specs/fig/` and `specs/windows/` into `lig_specs.bin`, `fig_specs.bin` and
+//! `windows_specs.bin`, embedded in the binary.
 //! Format (little-endian):
 //! `"LIGSPEC1" | u32 count | count × (u16 name_len, name, u32 offset, u32 len) | deflate blobs`.
 //! Each spec is deflated separately so lig only inflates the ones it uses.
@@ -53,4 +54,5 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     pack(Path::new("specs/lig"), &out.join("lig_specs.bin"));
     pack(Path::new("specs/fig"), &out.join("fig_specs.bin"));
+    pack(Path::new("specs/windows"), &out.join("windows_specs.bin"));
 }

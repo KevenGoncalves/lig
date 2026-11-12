@@ -1,0 +1,39 @@
+{
+  "name": "where",
+  "description": "Find programs on PATH",
+  "options": [
+    {
+      "name": "/r",
+      "description": "Search this folder and its subfolders",
+      "args": {
+        "name": "dir",
+        "template": "folders"
+      }
+    },
+    {
+      "name": "/q",
+      "description": "Only the exit code"
+    },
+    {
+      "name": "/f",
+      "description": "Quoted names"
+    },
+    {
+      "name": "/t",
+      "description": "Size and date too"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "pattern"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

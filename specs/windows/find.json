@@ -1,0 +1,39 @@
+{
+  "name": "find",
+  "description": "Search for text in files (Windows)",
+  "options": [
+    {
+      "name": "/v",
+      "description": "Lines without the text"
+    },
+    {
+      "name": "/c",
+      "description": "Only count matching lines"
+    },
+    {
+      "name": "/n",
+      "description": "Line numbers"
+    },
+    {
+      "name": "/i",
+      "description": "Ignore case"
+    },
+    {
+      "name": "/off",
+      "description": "Don't skip offline files"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "text"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

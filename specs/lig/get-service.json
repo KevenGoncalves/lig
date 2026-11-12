@@ -1,0 +1,82 @@
+{
+  "name": "get-service",
+  "description": "List Windows services (gsv)",
+  "options": [
+    {
+      "name": "-Name",
+      "description": "Service names",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-DisplayName",
+      "description": "Display names",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-DependentServices",
+      "description": "Services that depend on it"
+    },
+    {
+      "name": "-RequiredServices",
+      "description": "Services it depends on"
+    },
+    {
+      "name": "-ErrorAction",
+      "description": "What to do on a non-terminating error",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-WarningAction",
+      "description": "What to do on a warning",
+      "args": {
+        "name": "action",
+        "suggestions": [
+          "Continue",
+          "Stop",
+          "SilentlyContinue",
+          "Ignore",
+          "Inquire"
+        ]
+      }
+    },
+    {
+      "name": "-Verbose",
+      "description": "Show detailed progress"
+    },
+    {
+      "name": "-Debug",
+      "description": "Show debugging messages"
+    },
+    {
+      "name": "-ErrorVariable",
+      "description": "Store errors in this variable",
+      "args": {
+        "name": "name"
+      }
+    },
+    {
+      "name": "-OutVariable",
+      "description": "Store the output in this variable",
+      "args": {
+        "name": "name"
+      }
+    }
+  ],
+  "args": {
+    "name": "name",
+    "isOptional": true
+  }
+}

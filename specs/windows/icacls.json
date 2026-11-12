@@ -1,0 +1,96 @@
+{
+  "name": "icacls",
+  "description": "Show or change file permissions",
+  "options": [
+    {
+      "name": "/grant",
+      "description": "Give rights (user:(F|M|RX|R|W))",
+      "args": {
+        "name": "user:perm"
+      }
+    },
+    {
+      "name": "/deny",
+      "description": "Deny rights",
+      "args": {
+        "name": "user:perm"
+      }
+    },
+    {
+      "name": "/remove",
+      "description": "Remove a user's entries",
+      "args": {
+        "name": "user"
+      }
+    },
+    {
+      "name": "/reset",
+      "description": "Back to inherited permissions"
+    },
+    {
+      "name": "/inheritance",
+      "description": "Inheritance (e enable, d disable, r remove)",
+      "args": {
+        "name": "mode",
+        "suggestions": [
+          "e",
+          "d",
+          "r"
+        ]
+      }
+    },
+    {
+      "name": "/setowner",
+      "description": "Change the owner",
+      "args": {
+        "name": "user"
+      }
+    },
+    {
+      "name": "/save",
+      "description": "Save the permissions to a file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/restore",
+      "description": "Restore permissions from a file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/t",
+      "description": "In subfolders too"
+    },
+    {
+      "name": "/c",
+      "description": "Continue after errors"
+    },
+    {
+      "name": "/l",
+      "description": "The link, not its target"
+    },
+    {
+      "name": "/q",
+      "description": "No success messages"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "files",
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "rd",
+  "description": "Remove a folder",
+  "options": [
+    {
+      "name": "/s",
+      "description": "With everything in it"
+    },
+    {
+      "name": "/q",
+      "description": "Don't ask (with /s)"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "dir",
+    "isVariadic": true,
+    "template": "folders"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

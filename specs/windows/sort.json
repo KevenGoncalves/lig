@@ -1,0 +1,48 @@
+{
+  "name": "sort",
+  "description": "Sort lines (Windows)",
+  "options": [
+    {
+      "name": "/r",
+      "description": "Reverse"
+    },
+    {
+      "name": "/+",
+      "description": "Start at this column",
+      "args": {
+        "name": "n"
+      }
+    },
+    {
+      "name": "/o",
+      "description": "Write to this file",
+      "args": {
+        "name": "file",
+        "template": "filepaths"
+      }
+    },
+    {
+      "name": "/unique",
+      "description": "Drop repeated lines"
+    },
+    {
+      "name": "/c",
+      "description": "Case-sensitive"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "file",
+    "isOptional": true,
+    "template": "filepaths"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

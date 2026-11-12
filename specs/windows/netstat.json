@@ -1,0 +1,61 @@
+{
+  "name": "netstat",
+  "description": "Show network connections",
+  "options": [
+    {
+      "name": "-a",
+      "description": "All connections and listening ports"
+    },
+    {
+      "name": "-b",
+      "description": "The program behind each (admin)"
+    },
+    {
+      "name": "-n",
+      "description": "Numeric addresses"
+    },
+    {
+      "name": "-o",
+      "description": "Owning process id"
+    },
+    {
+      "name": "-p",
+      "description": "Only this protocol",
+      "args": {
+        "name": "protocol",
+        "suggestions": [
+          "TCP",
+          "UDP",
+          "TCPv6",
+          "UDPv6"
+        ]
+      }
+    },
+    {
+      "name": "-r",
+      "description": "Routing table"
+    },
+    {
+      "name": "-s",
+      "description": "Statistics per protocol"
+    },
+    {
+      "name": "-e",
+      "description": "Ethernet statistics"
+    },
+    {
+      "name": "-q",
+      "description": "Bound ports too"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

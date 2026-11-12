@@ -1,0 +1,23 @@
+{
+  "name": "setx",
+  "description": "Set an environment variable for good",
+  "options": [
+    {
+      "name": "/m",
+      "description": "For every user (admin)"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "variable"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}

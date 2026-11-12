@@ -1,0 +1,25 @@
+{
+  "name": "chdir",
+  "description": "Change the current folder (cmd)",
+  "options": [
+    {
+      "name": "/d",
+      "description": "Change the drive too"
+    },
+    {
+      "name": "/?",
+      "description": "Show help"
+    }
+  ],
+  "args": {
+    "name": "dir",
+    "isOptional": true,
+    "template": "folders"
+  },
+  "parserDirectives": {
+    "flagsArePosixNoncompliant": true,
+    "optionArgSeparators": [
+      ":"
+    ]
+  }
+}
