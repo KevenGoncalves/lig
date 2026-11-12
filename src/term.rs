@@ -201,13 +201,12 @@ mod imp {
         if unsafe { PeekConsoleInputW(stdin(), records.as_mut_ptr(), records.len() as u32, &mut n) } == 0 {
             return false;
         }
-        let records = &records[..n as usize];
         let key = |r: &INPUT_RECORD| r.EventType == KEY_EVENT as u16 && unsafe { r.Event.KeyEvent.bKeyDown } != 0;
-        if records.iter().any(key) {
+        if records[..n as usize].iter().any(key) {
             return true;
         }
         let mut read = 0u32;
-        unsafe { ReadConsoleInputW(stdin(), records.as_ptr().cast_mut(), n, &mut read) };
+        unsafe { ReadConsoleInputW(stdin(), records.as_mut_ptr(), n, &mut read) };
         false
     }
 

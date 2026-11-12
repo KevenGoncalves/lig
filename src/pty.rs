@@ -185,7 +185,8 @@ mod imp {
                 }
                 let reader = std::fs::File::from_raw_handle(out_read);
                 let writer = std::fs::File::from_raw_handle(in_write);
-                let pty = Pty { hpc, process: null_mut(), pid: 0 };
+                // Owns the pseudo console from here, so an error below closes it.
+                let mut pty = Pty { hpc, process: null_mut(), pid: 0 };
 
                 let mut size = 0usize;
                 InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut size);
@@ -242,7 +243,8 @@ mod imp {
                     return Err(last_error(&format!("starting {}", cmd.program.display())));
                 }
                 CloseHandle(pi.hThread);
-                let pty = Pty { process: pi.hProcess, pid: pi.dwProcessId, ..pty };
+                pty.process = pi.hProcess;
+                pty.pid = pi.dwProcessId;
                 Ok((pty, Box::new(reader), Box::new(writer)))
             }
         }
