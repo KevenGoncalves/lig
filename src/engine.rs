@@ -205,6 +205,8 @@ pub struct Engine {
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
     spec_cmds: Option<Arc<HashSet<String>>>,
+    /// The descriptions of the user's specs, by command: shown next to those commands' names.
+    user_descriptions: Option<Arc<HashMap<String, String>>>,
     /// Folder listings on a `lig ssh` host, by host, cwd and folder.
     remote_dirs: HashMap<String, (Instant, Listing)>,
 }
@@ -226,6 +228,7 @@ impl Engine {
             path_cmds: None,
             remote_dirs: HashMap::new(),
             spec_cmds: None,
+            user_descriptions: None,
         }
     }
 
@@ -676,10 +679,31 @@ impl Engine {
             .clone()
     }
 
+    /// The `description` of each user spec (few, so all read once; built-in specs would mean
+    /// inflating hundreds for a list of names).
+    fn user_descriptions(&mut self) -> Arc<HashMap<String, String>> {
+        let store = &self.store;
+        self.user_descriptions
+            .get_or_insert_with(|| {
+                Arc::new(
+                    store
+                        .commands()
+                        .into_iter()
+                        .filter_map(|name| {
+                            let description = store.load(&name)?.ok()?.meta.description?;
+                            Some((name, description))
+                        })
+                        .collect(),
+                )
+            })
+            .clone()
+    }
+
     /// Executables on the shell's PATH; those with a built-in or user spec first.
     fn commands(&mut self, cx: &mut Cx<'_>) {
         let path = self.path_commands(cx.env);
         let with_spec = self.spec_names();
+        let described = self.user_descriptions();
         let (q, d) = cx.default_query();
         for (name, value) in cx.env.aliases.iter() {
             let meta = spec::Meta {
@@ -710,6 +734,7 @@ impl Engine {
         for name in path.iter() {
             let meta = spec::Meta {
                 names: vec![name.clone()],
+                description: described.get(name).cloned(),
                 priority: Some(if with_spec.contains(name) { 55.0 } else { 50.0 }),
                 ..Default::default()
             };
@@ -1213,6 +1238,30 @@ mod tests {
 
     fn labels(e: &mut Engine, env: &ShellEnv, line: &str) -> Vec<(String, String, usize)> {
         e.complete(line, env, true, false).items.into_iter().map(|s| (s.label, s.insert, s.delete)).collect()
+    }
+
+    #[test]
+    fn path_commands_show_their_user_spec_description() {
+        let (mut e, mut env) = engine();
+        let bin = env.cwd.parent().unwrap().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["mytool", "plain"] {
+            let file = bin.join(if cfg!(windows) { format!("{name}.bat") } else { name.to_string() });
+            std::fs::write(&file, "").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let specs = env.cwd.parent().unwrap().join("specs");
+        std::fs::write(specs.join("mytool.toml"), "name = \"mytool\"\ndescription = \"Deploy the app\"\n").unwrap();
+        env.path = Some(bin.display().to_string());
+        let described = |e: &mut Engine, line: &str| -> Vec<(String, String)> {
+            e.complete(line, &env, true, true).items.into_iter().map(|s| (s.label, s.description)).collect()
+        };
+        assert_eq!(described(&mut e, "mytoo"), [("mytool".to_string(), "Deploy the app".to_string())]);
+        assert_eq!(described(&mut e, "plai"), [("plain".to_string(), String::new())]);
     }
 
     #[test]
