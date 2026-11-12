@@ -1125,9 +1125,9 @@ impl Session {
         }
         let _ = self.req_tx.send(Request { line: self.line.clone(), env, manual: self.manual });
         // Loading until answered (the worker may be busy with an older request);
-        // the first word only pops up on demand, so it gets no message.
+        // the first word only pops up on demand (or with `complete_commands`), so it gets no message.
         let first_word = !self.line.trim_start().contains(char::is_whitespace);
-        if !first_word || self.manual {
+        if !first_word || self.manual || self.cfg.behavior.complete_commands {
             if !self.loading.as_ref().is_some_and(|(l, _, _)| *l == self.line) {
                 self.loading = Some((self.line.clone(), "Loading suggestions".into(), Instant::now()));
             }

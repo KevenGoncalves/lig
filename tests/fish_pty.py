@@ -15,6 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.environ.get('LIG_TEST_BIN', ROOT / 'target/release/lig')).resolve()
 FISH = shutil.which('fish')
+# The key the test configs bind to write the command line to $HOME/buffer.
+BUFFER_KEY = b'\x1b[24~'
+POPUP = '╭'.encode()
 
 def fish_quote(value):
     return "'" + str(value).replace('\\', '\\\\').replace("'", "\\'") + "'"
@@ -44,13 +47,13 @@ class Fish:
             self.config = self.home / ('.bashrc' if kind == 'bash' else '.zshrc')
             self.env['ZDOTDIR'] = str(self.home)
         self.config.parent.mkdir(parents=True, exist_ok=True)
-        self.config.write_text("set -g fish_greeting\nfunction fish_prompt; printf 'test> '; end\nbind ctrl-o 'commandline --current-buffer > \"$HOME/buffer\"'\n" +
+        self.config.write_text("set -g fish_greeting\nfunction fish_prompt; printf 'test> '; end\nfor mode in default insert visual; bind -M $mode f12 'commandline --current-buffer > \"$HOME/buffer\"'; end\n" +
                                ('fish_vi_key_bindings\n' if vi else ''))
         if kind == 'bash':
-            self.config.write_text("PS1='test> '\nbind -x '\"\\C-o\": printf \"%s\\n\" \"$READLINE_LINE\" > \"$HOME/buffer\"'\n")
+            self.config.write_text("PS1='test> '\nbind -x '\"\\e[24~\": printf \"%s\\n\" \"$READLINE_LINE\" > \"$HOME/buffer\"'\n")
         elif kind == 'zsh':
             (self.home / '.zshenv').write_text('skip_global_compinit=1\n')
-            self.config.write_text(extra_config + "\nPROMPT='test> '\n__test_buffer() { print -r -- \"$BUFFER\" > \"$HOME/buffer\"; }\nzle -N __test_buffer\nbindkey '^O' __test_buffer\n")
+            self.config.write_text(extra_config + "\nPROMPT='test> '\n__test_buffer() { print -r -- \"$BUFFER\" > \"$HOME/buffer\"; }\nzle -N __test_buffer\nbindkey '^[[24~' __test_buffer\n")
 
         if complete_commands:
             config = self.home / 'config/lig/config.toml'
@@ -119,6 +122,13 @@ class Fish:
         logs = [p for p in self.home.rglob('lig.log')]
         return 'lig.log:\n' + '\n'.join(l for p in logs for l in p.read_text(errors='replace').splitlines()[-40:])
 
+    def wait_popup(self, text, start=0):
+        """`text` in lig's popup (fish's grey autosuggestion can show the same text)."""
+        self.wait_for(lambda: POPUP in self.output[start:] and text.encode() in self.plain(start))
+
+    def plain(self, start=0):
+        return re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', self.output[start:])
+
     def wait_text(self, text, start=0):
         if isinstance(text, str):
             text = text.encode()
@@ -146,7 +156,8 @@ class Fish:
     def buffer(self):
         path = self.home / 'buffer'
         path.unlink(missing_ok=True)
-        os.write(self.fd, b'\x0f')
+        # F12, not a control key: macOS's tty swallows ^O (and ^C, …) while fish runs a command.
+        os.write(self.fd, BUFFER_KEY)
         self.wait_for(lambda: path.exists() and path.stat().st_size > 0)
         return path.read_text().strip()
 
@@ -269,7 +280,11 @@ class FishTests(unittest.TestCase):
         self.fish.snapshot()
         self.fish.send(b'\x1b[C')
         self.assertIn(b'B;24;echo autosuggestion_test', self.fish.snapshot())
-        self.fish.send(b'\x03fish_vi_key_bindings\r')
+        self.fish.clear()
+        start = len(self.fish.output)
+        self.fish.send('fish_vi_key_bindings\r')
+        # The next prompt: its key bindings (lig's insert key too) are in place.
+        self.fish.wait_for(lambda: re.search(rb'\x1b\]6973;R;[0-9]+\x07', self.fish.output[start:]))
         self.fish.send('echo switch')
         self.fish.insert('0;0;X')
         self.assertIn(b'B;12;echo switchX', self.fish.snapshot())
@@ -310,8 +325,10 @@ end
         fish = Fish(wrapped=True, after_config=hook)
         try:
             fish.send('git ch')
-            fish.wait_for(lambda: b'checkout' in re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', fish.output))
-            self.assertGreater(int((fish.home / 'request-id').read_text()), 1)
+            fish.wait_popup('checkout')
+            request = fish.home / 'request-id'
+            fish.wait_for(lambda: request.exists() and request.read_text() != '')
+            self.assertGreater(int(request.read_text()), 1)
         finally:
             fish.close()
 
@@ -324,14 +341,14 @@ end
             config = term.home / 'config/fish/config.fish'
             config.parent.mkdir(parents=True, exist_ok=True)
             config.write_text("set -g fish_greeting\nfunction fish_prompt; printf 'nested> '; end\n"
-                              "bind ctrl-o 'commandline --current-buffer > \"$HOME/buffer\"'\n")
+                              "bind f12 'commandline --current-buffer > \"$HOME/buffer\"'\n")
             subprocess.run([BIN, 'install', 'fish'], env=term.env, check=True, capture_output=True)
             start = len(term.output)
             term.send('fish\r')
             term.wait_for(lambda: b'nested> ' in term.output[start:])
             start = len(term.output)
             term.send('git ch')
-            term.wait_text('checkout', start)
+            term.wait_popup('checkout', start)
             term.send(b'\t')
             term.send(b'\r')
             self.assertEqual(term.buffer(), 'git cherry-pick')
@@ -350,7 +367,7 @@ end
                 fish.clear()
                 start = len(fish.output)
                 fish.send('git ch')
-                fish.wait_text('checkout', start)
+                fish.wait_popup('checkout', start)
                 # Enter arrives in a separate read before the snapshot reply.
                 os.write(fish.fd, b'e')
                 time.sleep(.002)
@@ -368,7 +385,7 @@ end
                 fish.clear()
                 start = len(fish.output)
                 fish.send(prefix)
-                fish.wait_text(expected.split()[-1], start)
+                fish.wait_popup(expected.split()[-1], start)
                 fish.send(b'\r')
                 fish.assert_buffer(expected)
         finally:
@@ -399,7 +416,7 @@ end
         try:
             start = len(fish.output)
             fish.send('cargo build --rel')
-            fish.wait_text('--release', start)
+            fish.wait_popup('--release', start)
             fish.send(b'\r')
             self.assertEqual(fish.buffer(), 'cargo build --release')
             fish.clear()
@@ -408,7 +425,7 @@ end
             start = len(fish.output)
             fish.send(f'cat {fish.home}/spa tail')
             fish.send(b'\x1b[D' * 5)
-            fish.wait_text('space file', start)
+            fish.wait_popup('space file', start)
             fish.send(b'\r')
             buffer = fish.buffer()
             self.assertTrue(buffer.endswith(' tail'), buffer)
@@ -424,13 +441,11 @@ end
         try:
             start = len(fish.output)
             fish.send('git ch')
-            out = fish.wait_text('checkout', start)
-            plain = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', out)
-            self.assertIn(b'checkout', plain)
+            fish.wait_popup('checkout', start)
             fish.send(b'\x1b')  # dismiss
             start = len(fish.output)
             fish.send(b'\x00')  # manual toggle
-            fish.wait_text('checkout', start)
+            fish.wait_popup('checkout', start)
             # Tab selects; Enter accepts without running the command.
             fish.send(b'\t')
             fish.send(b'\r')
@@ -452,7 +467,7 @@ end
         try:
             start = len(fish.output)
             fish.send('git ch')
-            fish.wait_text('checkout', start)
+            fish.wait_popup('checkout', start)
             start = len(fish.output)
             fish.send('e')
             fish.read(.3)
