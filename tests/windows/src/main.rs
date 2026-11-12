@@ -184,6 +184,9 @@ fn run_shell(r: &mut Report, lig: &Path, shell: &str) -> anyhow::Result<()> {
     let started = t.wait(90_000, Term::at_prompt);
     t.settle(1500);
     let mut ok = r.check(format!("{shell}: prompt"), started, t.cursor_line());
+    // PowerShell prints errors from the integration (an older PSReadLine, …) with these.
+    let error = t.rows().into_iter().find(|r| r.contains("FullyQualifiedErrorId") || r.contains("CategoryInfo"));
+    ok &= r.check(format!("{shell}: no errors at startup"), error.is_none(), error.unwrap_or_default().trim());
 
     t.type_text("git chec");
     let shown = t.wait(15_000, |t| t.popup_has("checkout"));

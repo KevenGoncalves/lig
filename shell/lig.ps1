@@ -41,11 +41,12 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
 
     # Enter: tell lig the line runs, then do what Enter did before.
     $global:__lig_enter = 'AcceptLine'
-    $old = Get-PSReadLineKeyHandler -Chord Enter -ErrorAction SilentlyContinue | Select-Object -First 1
+    # PSReadLine 2.0 (Windows PowerShell 5.1) has no -Chord here: look Enter up in the list.
+    $old = Get-PSReadLineKeyHandler | Where-Object { $_.Key -eq 'Enter' } | Select-Object -First 1
     if ($old -and ([Microsoft.PowerShell.PSConsoleReadLine] | Get-Member -Static -Name $old.Function)) {
         $global:__lig_enter = $old.Function
     }
-    Remove-Variable old
+    Remove-Variable old -ErrorAction SilentlyContinue
     Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock {
         param($key, $arg)
         if ($global:__lig_editing) {
