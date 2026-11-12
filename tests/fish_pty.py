@@ -83,13 +83,23 @@ class Fish:
                 if not part:
                     break
                 result += part
-                if b'\x1b[0c' in part:
-                    os.write(self.fd, b'\x1b[?1;2c')
-                if b'\x1b[6n' in part:
-                    os.write(self.fd, b'\x1b[1;1R')
+                self.answer(part)
         result = result.replace(b'\r\n', b'\n')
         self.output = getattr(self, 'output', b'') + result
         return result
+
+    # Terminal queries and the answers fish (and lig) wait for before reading input.
+    QUERIES = {b'\x1b[0c': b'\x1b[?1;2c', b'\x1b[6n': b'\x1b[1;1R'}
+
+    def answer(self, part):
+        """Answer each query once, also when it arrives split between two reads."""
+        self.raw = getattr(self, 'raw', b'') + part
+        self.answered = getattr(self, 'answered', {})
+        for query, reply in self.QUERIES.items():
+            count = self.raw.count(query)
+            for _ in range(count - self.answered.get(query, 0)):
+                os.write(self.fd, reply)
+            self.answered[query] = count
 
     def send(self, data):
         os.write(self.fd, data.encode() if isinstance(data, str) else data)
@@ -221,9 +231,10 @@ class FishTests(unittest.TestCase):
         self.fish.send('echo test')
         self.assertIn(b'B;9;echo test', self.fish.snapshot())
         self.fish.send(b'\x1b')
-        self.assertIn(b'H', self.fish.snapshot())
+        # Fish waits a moment to tell Esc from Alt+key.
+        self.assertIn(b'H', self.fish.snapshot_until(lambda m: b'H' in m))
         self.fish.send('i')
-        self.assertTrue(any(m.startswith(b'B;') for m in self.fish.snapshot()))
+        self.assertTrue(any(m.startswith(b'B;') for m in self.fish.snapshot_until(lambda m: b'H' not in m)))
         self.fish.insert('0;0;X')
         self.assertTrue(any(b'X' in m for m in self.fish.snapshot()))
 
