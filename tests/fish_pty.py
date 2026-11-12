@@ -32,10 +32,11 @@ class Fish:
                         XDG_RUNTIME_DIR=str(self.home / 'runtime'),
                         PATH=str(BIN.parent) + os.pathsep + os.environ.get('PATH', ''),
                         SHELL=shell, TERM='xterm-256color', LIG_INSERT_FILE=str(self.home / 'insert'),
-                        LIG_QUERY_FILE=str(self.home / 'query'))
+                        LIG_QUERY_FILE=str(self.home / 'query'), LIG_LOG='1', TMPDIR=str(self.home / 'tmp'))
         for key in ['LIG_DISABLE', 'LIG_TTY', 'LIG_PID', 'INSIDE_EMACS']:
             self.env.pop(key, None)
         (self.home / 'runtime').mkdir(mode=0o700)
+        (self.home / 'tmp').mkdir()
         if disabled:
             self.env['LIG_DISABLE'] = '1'
         self.config = self.home / 'config/fish/config.fish'
@@ -110,8 +111,13 @@ class Fish:
         deadline = time.monotonic() + timeout
         while not predicate():
             if time.monotonic() >= deadline:
-                raise AssertionError(f'timed out waiting for shell state; output: {self.output[-500:]!r}')
+                raise AssertionError(f'timed out waiting for shell state; output: {self.output[-1500:]!r}\n{self.log()}')
             self.read(.02)
+
+    def log(self):
+        """The end of lig's log (macOS keeps it in $TMPDIR, Linux in the state folder)."""
+        logs = [p for p in self.home.rglob('lig.log')]
+        return 'lig.log:\n' + '\n'.join(l for p in logs for l in p.read_text(errors='replace').splitlines()[-40:])
 
     def wait_text(self, text, start=0):
         if isinstance(text, str):
@@ -316,7 +322,10 @@ end
             term.send(b'\r')
             self.assertEqual(term.buffer(), 'git cherry-pick')
             term.send(b'\x03')
+            # Back at zsh's prompt once the nested fish (and its lig) are gone.
+            start = len(term.output)
             term.send('exit\r')
+            term.wait_text('test> ', start)
         finally:
             term.close()
 
