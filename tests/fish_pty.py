@@ -425,10 +425,15 @@ end
             fish.send(b'\t')
             fish.send(b'\r')
             self.assertEqual(fish.buffer(), 'git cherry-pick')
-            out = fish.send(b'\x03echo WRAPPER_ALIVE\r')
-            self.assertIn(b'WRAPPER_ALIVE', out)
-            fish.send('lig doctor > "$HOME/doctor"\r')
-            self.assertIn('[ok  ] this terminal is running inside lig', (fish.home / 'doctor').read_text())
+            fish.clear()
+            start = len(fish.output)
+            fish.send('echo WRAPPER_ALIVE\r')
+            fish.wait_text('WRAPPER_ALIVE', start)
+            # Written whole, then moved into place: the file is there once doctor is done.
+            doctor = fish.home / 'doctor'
+            fish.send('lig doctor > "$HOME/doctor.part"; mv "$HOME/doctor.part" "$HOME/doctor"\r')
+            fish.wait_for(doctor.exists)
+            self.assertIn('[ok  ] this terminal is running inside lig', doctor.read_text())
         finally:
             fish.close()
 
