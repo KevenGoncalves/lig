@@ -1,0 +1,12 @@
+
+  lig demo: start typing and the popup opens. Try:
+
+    git checkout     branches of this repo
+    git commit -     flags, with descriptions
+    make             the Makefile's targets
+    cd               folders;  cat src/  files
+    kill             running processes
+
+  Tab or Enter accepts, arrows move, Esc closes.  bash and fish
+  are here too: run them, or start the container with one.
+

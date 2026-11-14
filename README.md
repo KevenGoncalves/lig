@@ -39,6 +39,13 @@ itself.
 
 ## Install
 
+To try it first, without installing anything, run it in Docker (zsh; add `bash` or `fish` at
+the end for those):
+
+```bash
+docker build -t lig-demo https://github.com/KevenGoncalves/lig.git && docker run --rm -it lig-demo
+```
+
 | System | Command |
 | --- | --- |
 | Linux, macOS | `curl -fsSL https://github.com/KevenGoncalves/lig/releases/latest/download/install.sh \| sh` |
