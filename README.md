@@ -76,7 +76,8 @@ not Apple's bash 3.2); Windows 10 1809+ with PowerShell or cmd. Optional: `curl`
 package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 `lig install` adds a few lines to your shell's config file (`~/.zshrc`, `~/.bashrc`,
-`config.fish` or the PowerShell profile), backing it up first.
+`config.fish` or the PowerShell profile), backing it up first; to add them yourself, see
+[Set up a shell by hand](#set-up-a-shell-by-hand).
 Prebuilt archives, `.deb` and `.rpm` files are on the
 [releases page](https://github.com/KevenGoncalves/lig/releases/latest).
 
@@ -98,6 +99,52 @@ The install script puts `lig.exe` in `%LOCALAPPDATA%\Programs\lig` and on your `
 - **cmd** has no config file: `lig install cmd` adds a "Command Prompt (lig)" profile to
   Windows Terminal.
 - In any other terminal, run `lig shell --shell pwsh` (or `powershell`, `cmd`) as its command.
+
+### Set up a shell by hand
+
+If you keep your dotfiles yourself, add the lines `lig install` would. Each shell gets two
+blocks: the `pre` one goes at the **top** of the file, as it restarts the shell inside Lig
+(anything above it runs twice); the `post` one goes at the **end**, after your plugins and
+prompt, and connects the shell to the popup. Keep the marker comments: `lig doctor` and
+`lig uninstall` look for them. `lig` must be on your `PATH` (or write its full path).
+
+```zsh
+# ~/.zshrc (bash: ~/.bashrc, with bash in place of zsh)
+# >>> lig pre >>>
+eval "$(lig init zsh pre)"
+# <<< lig pre <<<
+
+# ... the rest of your config ...
+
+# >>> lig post >>>
+eval "$(lig init zsh post)"
+# <<< lig post <<<
+```
+
+```fish
+# ~/.config/fish/config.fish
+# >>> lig pre >>>
+eval (lig init fish pre | string collect)
+# <<< lig pre <<<
+
+# ... the rest of your config ...
+
+# >>> lig post >>>
+eval (lig init fish post | string collect)
+# <<< lig post <<<
+```
+
+```powershell
+# Top of $PROFILE (Lig loads the rest itself); powershell in place of pwsh for 5.1
+# >>> lig pre >>>
+Invoke-Expression (& lig init pwsh pre | Out-String)
+# <<< lig pre <<<
+```
+
+- **bash on macOS**: terminals start a login shell, which reads `~/.bash_profile` and not
+  `~/.bashrc`; make it read both with `[ -r ~/.bashrc ] && . ~/.bashrc` in `~/.bash_profile`.
+- **cmd** reads no config file: run `lig shell --shell cmd.exe` as the terminal's command.
+- To see exactly what runs, print it: `lig init zsh pre` (or `post`).
 
 ### Nix
 
