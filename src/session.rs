@@ -557,6 +557,31 @@ fn prompt_marks(out: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+/// Output that only sets terminal modes, or none: the screen and the line stay as they were.
+/// Fish 4.0 toggles bracketed paste, the keypad and the keyboard protocols around each signal
+/// handler it runs, so around each snapshot reply too.
+fn only_modes(mut bytes: &[u8]) -> bool {
+    while !bytes.is_empty() {
+        bytes = match bytes {
+            [0x1b, b'=' | b'>', rest @ ..] => rest,
+            [0x1b, b'[', b'?' | b'<' | b'=' | b'>', rest @ ..] => {
+                let Some(end) = rest.iter().position(|b| !b.is_ascii_digit() && *b != b';') else { return false };
+                if !matches!(rest[end], b'h' | b'l' | b'm' | b'u') {
+                    return false;
+                }
+                // Except switching to or from the alternate screen.
+                let screen_switch = |p: &[u8]| matches!(p, b"47" | b"1047" | b"1049");
+                if bytes[2] == b'?' && rest[..end].split(|&b| b == b';').any(screen_switch) {
+                    return false;
+                }
+                &rest[end + 1..]
+            }
+            _ => return false,
+        };
+    }
+    true
+}
+
 /// Answers the newest request: quick results (no commands run) first, then full ones.
 fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Behavior) {
     let mut engine = Engine::new(Store::default(), behavior);
@@ -991,7 +1016,7 @@ impl Session {
         // ConPTY wraps PowerShell's replies in cursor and mode sequences: only a changed
         // screen means a changed line there (else each reply would ask again).
         let before = self.report_key.then(|| self.screen_state());
-        if !fwd.is_empty() {
+        if !only_modes(&fwd) {
             if let Some(refresh) = self.fish_refresh.as_mut().filter(|_| before.is_none()) {
                 refresh.changed();
             }
@@ -2035,6 +2060,21 @@ mod tests {
         let mut parser = vt100::Parser::new(30, 100, 0);
         parser.process(b"\x1b[12;24Htest> git ch");
         assert_eq!(parser.screen().cursor_position(), (11, 35));
+    }
+
+    #[test]
+    fn terminal_modes_alone_are_not_a_changed_line() {
+        // What fish 4.0 prints around each signal handler.
+        let fish = b"\x1b[?2004l\x1b[>4;0m\x1b[=0u\x1b>\x1b[?2004h\x1b[>4;1m\x1b[=5u\x1b=";
+        assert!(only_modes(fish));
+        assert!(only_modes(b""));
+        assert!(only_modes(b"\x1b[?u\x1b[<u"));
+        assert!(!only_modes(b"\x1b[?2004hx"));
+        assert!(!only_modes(b"\x1b[2K"));
+        assert!(!only_modes(b"\x1b[1m"));
+        assert!(!only_modes(b"\x1b[?25"));
+        assert!(!only_modes(b"\x1b[?1049h"));
+        assert!(!only_modes(b"\x1b[?2004;47l"));
     }
 
     #[test]
