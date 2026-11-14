@@ -1118,6 +1118,13 @@ fn main() -> Result<()> {
         log(&format!("mirror: re-exec with argv padding failed: {err}; continuing unpadded"));
     }
     let cli = Cli::parse();
+    // Rust ignores SIGPIPE, so `lig doctor | head` panics on the closed pipe. Printing commands
+    // die of it quietly like other tools; `lig shell` keeps it ignored and handles EPIPE itself.
+    #[cfg(unix)]
+    if !matches!(cli.cmd, Cmd::Shell { .. }) {
+        // SAFETY: no other threads exist yet, and SIG_DFL is a valid disposition.
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    }
     match cli.cmd {
         Cmd::ShellPath { pid } => {
             let path = process::executable(pid).context("cannot resolve shell executable")?;
