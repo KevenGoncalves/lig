@@ -76,6 +76,9 @@ pub struct Completion {
     pub incomplete: bool,
     /// What is still being fetched, for a "loading" message.
     pub loading: Option<String>,
+    /// The command the suggestions are for, aliases expanded (`gco ` → `git`); empty while
+    /// completing a command name.
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -276,8 +279,8 @@ impl Engine {
                 self.walk(root, &mut cx);
             }
         }
-        let (incomplete, loading) = (cx.incomplete, cx.loading.take());
-        Completion { items: self.finish(cx), incomplete, loading }
+        let (incomplete, loading, command) = (cx.incomplete, cx.loading.take(), cx.command.clone());
+        Completion { items: self.finish(cx), incomplete, loading, command }
     }
 
     // ------------------------------------------------------------ walking
@@ -1304,6 +1307,18 @@ mod tests {
         assert_eq!(r[1].0, "bench");
         assert!(!labels(&mut e, &env, "tool ").iter().any(|r| r.0 == "hidden-cmd"));
         assert_eq!(labels(&mut e, &env, "tool hidden-c").len(), 0);
+    }
+
+    #[test]
+    fn completion_names_its_command() {
+        let (mut e, mut env) = engine();
+        env.aliases = Arc::new([("t".to_string(), "tool b".to_string())].into_iter().collect());
+        assert_eq!(e.complete("tool b", &env, false, false).command, "tool");
+        assert_eq!(e.complete("/usr/bin/tool ", &env, false, false).command, "tool");
+        // An alias is reported as the command it expands to.
+        assert_eq!(e.complete("t ", &env, false, false).command, "tool");
+        // A command name being typed belongs to no command yet.
+        assert_eq!(e.complete("to", &env, false, true).command, "");
     }
 
     #[test]

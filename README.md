@@ -147,6 +147,7 @@ toggle = ["ctrl-space"]
 
 [behavior]
 enter_accepts = "auto"     # "always", "after-space", "never"
+enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"] (zsh, bash)
 complete_commands = false  # pop up for command names too
 online = true              # search package registries as you type
 disabled_commands = []     # never show the popup for these
