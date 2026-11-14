@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""What tmux and `ps -t` see of the program running in a lig pane (issue #32): an editor plugin
-finds a coding agent by its pane's processes and folder, which would otherwise be `lig shell`."""
+"""What tmux and `ps` see of the program running in a lig pane (issue #32): an editor plugin
+finds a coding agent by its pane's processes and folder, which would otherwise be `lig shell`.
+Run after cargo build --release: python3 tests/pane_mirror.py."""
 import os
 import shutil
 import subprocess
@@ -9,7 +10,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from fish_pty import BIN
+from unittest.mock import patch
+from fish_pty import BIN, Fish
 
 ZSH = os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh')
 
@@ -55,8 +57,8 @@ class TmuxMirror(unittest.TestCase):
             try:
                 tmux('new-session', '-d', '-x', '100', '-y', '30', '-s', 'test', '-c', str(home), *launch)
                 wait('no prompt', lambda: 'lig-test' in tmux('capture-pane', '-p', '-t', 'test:0.0'))
-                tmux('send-keys', '-t', 'test:0.0', '-l', f'cd {project} && sleep 30')
-                tmux('send-keys', '-t', 'test:0.0', 'Enter')
+                # One write: with Enter sent apart, the popup could open first and take it.
+                tmux('send-keys', '-t', 'test:0.0', '-l', f'cd {project} && sleep 30\r')
                 wait(f'`ps -t` shows no sleep: {tty_args()}', lambda: ['sleep', '30'] in tty_args())
                 wait(f'pane_current_path is {pane("pane_current_path")}', lambda: pane('pane_current_path') == str(project))
                 # tmux names a macOS pane by its process name, which lig can't change.
@@ -66,6 +68,61 @@ class TmuxMirror(unittest.TestCase):
                 wait(f'`ps -t` still shows sleep: {tty_args()}', lambda: ['sleep', '30'] not in tty_args())
             finally:
                 subprocess.run(base + ['kill-server'], capture_output=True, timeout=5)
+
+
+def ps_args(pid):
+    return subprocess.run(['ps', '-o', 'args=', '-p', str(pid)], capture_output=True, text=True).stdout.split()
+
+
+def cwd(pid):
+    if sys.platform.startswith('linux'):
+        return os.readlink(f'/proc/{pid}/cwd')
+    out = subprocess.run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'], capture_output=True, text=True).stdout
+    return next((line[1:] for line in out.splitlines() if line.startswith('n')), None)
+
+
+@unittest.skipUnless(ZSH, 'zsh is required')
+class PsMirror(unittest.TestCase):
+    def setUp(self):
+        self.env = patch.dict(os.environ)
+        self.env.start()
+        for key in ['ZELLIJ', 'LIG_NO_MIRROR', 'LIG_MIRROR_PANE']:
+            os.environ.pop(key, None)
+        self.folder = tempfile.TemporaryDirectory(prefix='lig-mirror-')
+        self.term = None
+
+    def tearDown(self):
+        try:
+            if self.term:
+                self.term.close()
+        finally:
+            self.env.stop()
+            self.folder.cleanup()
+
+    def wait(self, what, check):
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            if check():
+                return
+            self.term.read(.1)
+        self.fail(f'{what}: ps shows {ps_args(self.term.pid)}, cwd {cwd(self.term.pid)}')
+
+    def test_ps_shows_the_program_and_its_folder_through_a_nested_lig(self):
+        folder = str(Path(self.folder.name).resolve())
+        # zsh's pre-hook execs lig, so this pid is lig.
+        self.term = Fish(wrapped=True, shell=ZSH)
+        pid = self.term.pid
+        self.term.send(f'cd {folder} && sleep 30\r')
+        self.wait('sleep 30 in its folder', lambda: ps_args(pid) == ['sleep', '30'] and cwd(pid) == folder)
+        self.term.send(b'\x03')
+        self.wait('back to the shell', lambda: ps_args(pid) and ps_args(pid)[0].endswith('zsh'))
+        # A lig started in this one shows what runs in it, and this one passes that on.
+        self.term.send(f'{BIN} shell --shell {ZSH}\r')
+        self.term.read(1.5)
+        self.term.send('sleep 31\r')
+        self.wait('sleep 31 from the nested lig', lambda: ps_args(pid) == ['sleep', '31'])
+        self.term.send(b'\x03')
+        self.term.send('exit\r')
 
 
 if __name__ == '__main__':

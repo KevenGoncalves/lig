@@ -98,6 +98,9 @@ fn basename(argv: &[OsString]) -> &[u8] {
 }
 
 pub fn rules(argv: &[OsString]) -> (Option<Vec<OsString>>, Rule) {
+    // A mirrored lig (one nested in this one) ends in empty strings: the zero fill on Linux,
+    // the unused argument slots on macOS.
+    let argv = &argv[..argv.iter().rposition(|a| !a.is_empty()).map_or(0, |i| i + 1)];
     // A login shell's argv[0] is `-zsh`, `-bash`: drop that one dash.
     let base = basename(argv);
     let base = base.strip_prefix(b"-").unwrap_or(base);
@@ -162,6 +165,13 @@ mod tests {
         }
         assert_eq!(rules(&os(&["-sudo", "a"])), (None, Rule::Deny));
         assert_eq!(rules(&os(&["--zsh"])).1, Rule::App);
+    }
+
+    #[test]
+    fn rules_drop_a_mirrored_ligs_empty_tail() {
+        assert_eq!(rules(&os(&["agent", "--resume", "", "", ""])), (Some(os(&["agent", "--resume"])), Rule::App));
+        assert_eq!(rules(&os(&["agent", "", "x"])).0, Some(os(&["agent", "", "x"])));
+        assert_eq!(rules(&os(&["", "", ""])), (None, Rule::Shell));
     }
 
     #[test]

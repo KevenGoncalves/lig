@@ -22,13 +22,14 @@ class MirrorContract(unittest.TestCase):
         self.slow = self.root / 'slow'
         zellij = self.root / 'zellij'
         zellij.write_text(f'''#!{sys.executable}
-import json,sys,time
+import json,os,sys,time
 from pathlib import Path
 root=Path({str(self.root)!r})
 if '--help' in sys.argv:
     sys.exit(1 if (root/'unsupported').exists() else 0)
 if (root/'slow').exists():time.sleep(10)
 with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
+with (root/'callers').open('a') as f:f.write(f'{{os.getppid()}}\\n')
 ''')
         zellij.chmod(0o755)
         self.env = patch.dict(os.environ, ZELLIJ='0', ZELLIJ_SESSION_NAME='test session', ZELLIJ_PANE_ID='7',
@@ -73,7 +74,8 @@ with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
         self.wait_call(lambda c:c[-1]=='/bin/zsh' and Path(c[c.index('--cwd')+1]).resolve()==cwd.resolve())
 
     def test_nested_lig_leaves_the_pane_to_the_outer_one(self):
-        # Two mirrors on one pane would overwrite each other's resurrect command every second.
+        # Two mirrors on one pane would overwrite each other's resurrect command every second:
+        # only the outer lig calls zellij, with what runs in the nested one (its argv mirror).
         term=self.start()
         self.wait_call(lambda c:c[-1]=='/bin/zsh')
         term.send('lig doctor > "$HOME/doctor"\r')
@@ -81,11 +83,11 @@ with (root/'calls').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
         script=term.home/'app.py'
         script.write_text('import time\ntime.sleep(30)\n')
         term.send(f"lig shell --shell /bin/zsh\r")
-        self.wait_call(lambda c:'shell' in c and '--shell' in c)
+        term.read(1.5)
         term.send(f"'{sys.executable}' '{script}' 'nested marker'\r")
-        time.sleep(3)
-        calls=self.calls.read_text()
-        self.assertNotIn('nested marker',calls)
+        call=self.wait_call(lambda c:'nested marker' in c)
+        self.assertEqual(call[-2:],[str(script),'nested marker'])  # and no empty arguments after it
+        self.assertEqual(set((self.root/'callers').read_text().split()),{str(term.pid)})
         term.send(b'\x03')
         term.send('exit\r')  # leave the nested lig so tearDown can close the outer shell
         self.wait_call(lambda c:c[-1]=='/bin/zsh' and c.count('--')==1 and len(c)==10)
