@@ -211,6 +211,7 @@ toggle = ["ctrl-space"]
 enter_accepts = "auto"     # "always", "after-space", "never"
 enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"] (zsh, bash)
 complete_commands = false  # pop up for command names too
+options_after_dash = ["ls", "cp", "mv", "rm", …]  # options only once you type -; "*" for all
 online = true              # search package registries as you type
 disabled_commands = []     # never show the popup for these
 ```
@@ -247,6 +248,9 @@ args = { name = "env", suggestions = ["staging", "production"] }
 name = "logs"
 args = { name = "service", generators = { script = ["deploy", "list-services"] } }
 ```
+
+An alias completes as the command it runs (`gco` as `git checkout`), unless it has a spec of
+its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza` from eza's.
 
 `lig specs check` reports mistakes, `lig complete "deploy -e "` shows the suggestions, and
 `lig specs generators` lists the built-in live values (`generators = [{ builtin = "git:branches" }]`).

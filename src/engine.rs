@@ -208,6 +208,8 @@ pub struct Engine {
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
     spec_cmds: Option<Arc<HashSet<String>>>,
+    /// Commands with a user spec: an alias with one keeps it (`alias ls=eza` and `ls.toml`).
+    user_cmds: Option<Arc<HashSet<String>>>,
     /// The descriptions of the user's specs, by command: shown next to those commands' names.
     user_descriptions: Option<Arc<HashMap<String, String>>>,
     /// Folder listings on a `lig ssh` host, by host, cwd and folder.
@@ -231,6 +233,7 @@ impl Engine {
             path_cmds: None,
             remote_dirs: HashMap::new(),
             spec_cmds: None,
+            user_cmds: None,
             user_descriptions: None,
         }
     }
@@ -241,7 +244,8 @@ impl Engine {
     pub fn complete(&mut self, line: &str, env: &ShellEnv, run_generators: bool, manual: bool) -> Completion {
         let mut cl = parser::parse(line);
         let with_spec = self.spec_names();
-        expand_aliases(&mut cl, env, &with_spec);
+        let user = self.user_names();
+        expand_aliases(&mut cl, env, &with_spec, &user);
         let mut cx = Cx {
             tokens: cl.values(),
             cl: &cl,
@@ -416,7 +420,12 @@ impl Engine {
                 self.arg_suggestions(a, cx, &q, d);
             }
         }
-        // Options are offered when nothing else is, and next to plain file arguments (`java ` → `-jar`).
+        // Options are offered when nothing else is, and next to plain file arguments (`java ` → `-jar`);
+        // for `options_after_dash` commands, only once a `-` is typed.
+        let after_dash = &self.cfg.options_after_dash;
+        if !cur.value.starts_with('-') && after_dash.iter().any(|c| c == "*" || *c == cx.command) {
+            return;
+        }
         let files_only = arg.as_ref().is_some_and(|a| {
             a.suggestions.is_empty()
                 && a.generators.is_empty()
@@ -688,6 +697,11 @@ impl Engine {
                 Arc::new(s)
             })
             .clone()
+    }
+
+    fn user_names(&mut self) -> Arc<HashSet<String>> {
+        let store = &self.store;
+        self.user_cmds.get_or_insert_with(|| Arc::new(store.commands().into_iter().collect())).clone()
     }
 
     /// The `description` of each user spec (few, so all read once; built-in specs would mean
@@ -990,13 +1004,14 @@ fn loading_label(id: &str) -> String {
     .to_string()
 }
 
-/// Replace a leading alias (`gco` → `git checkout`), as zsh would; but not by a command lig
-/// knows nothing about when the alias's own name has a spec (PowerShell's `cd` → `Set-Location`).
-fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv, with_spec: &HashSet<String>) {
+/// Replace a leading alias (`gco` → `git checkout`), as zsh would; but not when the alias has a
+/// spec of the user's (`ls.toml` for `alias ls=eza`), nor by a command lig knows nothing about
+/// when the alias's own name has a spec (PowerShell's `cd` → `Set-Location`).
+fn expand_aliases(cl: &mut CommandLine, env: &ShellEnv, with_spec: &HashSet<String>, user: &HashSet<String>) {
     let mut seen = HashSet::new();
     while let Some(first) = cl.tokens.first() {
         let Some(value) = env.aliases.get(&first.value) else { break };
-        if !seen.insert(first.value.clone()) {
+        if user.contains(&first.value) || !seen.insert(first.value.clone()) {
             break;
         }
         let expanded = parser::parse(&format!("{value} ")).tokens;
@@ -1321,6 +1336,33 @@ mod tests {
         // A used switch isn't offered again; the value of `/t:` is.
         assert!(!labels(&mut e, &env, "dir /s /").iter().any(|r| r.0 == "/s"));
         assert!(labels(&mut e, &env, "shutdown /t:").iter().any(|r| r.0 == "60"));
+    }
+
+    #[test]
+    fn options_wait_for_a_dash_where_configured() {
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("ls", "").opt(opt("-l", "Long")).arg(arg("path").files()));
+        let names = |e: &mut Engine, line| labels(e, &env, line).into_iter().map(|r| r.0).collect::<Vec<_>>();
+        let r = names(&mut e, "ls ");
+        assert!(r.contains(&"file.txt".into()) && !r.contains(&"-l".into()), "{r:?}");
+        assert_eq!(names(&mut e, "ls -"), ["-l"]);
+        // Other commands keep their options next to their files; "*" is every command.
+        assert!(names(&mut e, "tool edit ").contains(&"--force".into()));
+        e.cfg.options_after_dash = vec!["*".into()];
+        assert!(!names(&mut e, "tool edit ").contains(&"--force".into()));
+        assert_eq!(names(&mut e, "tool edit --f"), ["--force"]);
+    }
+
+    #[test]
+    fn an_alias_with_a_user_spec_keeps_it() {
+        let (mut e, mut env) = engine();
+        e.insert_spec(cmd("eza", "").opt(opt("--icons", "")));
+        env.aliases = Arc::new(HashMap::from([("mytool".into(), "eza".into()), ("e".into(), "eza".into())]));
+        // mytool.toml is the user's: `mytool` completes from it, not as the eza it runs.
+        assert!(labels(&mut e, &env, "mytool h")[0].0.starts_with("hello"));
+        assert!(labels(&mut e, &env, "mytool --i").is_empty());
+        // Without a spec of its own, an alias completes as what it runs.
+        assert_eq!(labels(&mut e, &env, "e --i")[0].0, "--icons");
     }
 
     #[test]

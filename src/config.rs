@@ -213,6 +213,9 @@ pub struct Behavior {
     /// Commands that open files (editors, viewers, players…): their files and
     /// folders come before their options, as if `files_first` were on.
     pub files_first_commands: Vec<String>,
+    /// Commands whose options show only once you type `-`, so their files and other
+    /// suggestions get the room. `"*"` for every command.
+    pub options_after_dash: Vec<String>,
     /// Show suggestions right after a space (empty current token).
     pub show_on_empty_token: bool,
     /// Pop up automatically for the first word (command names). Off by default so short
@@ -269,6 +272,9 @@ impl Default for Keys {
     }
 }
 
+/// File commands, where the files are what you're after.
+const OPTIONS_AFTER_DASH: &[&str] = &["ls", "eza", "exa", "lsd", "cp", "mv", "rm", "ln", "mkdir", "rmdir", "touch"];
+
 #[rustfmt::skip]
 const FILES_FIRST_COMMANDS: &[&str] = &[
     // Editors
@@ -293,6 +299,7 @@ impl Default for Behavior {
             insert_space: false,
             files_first: false,
             files_first_commands: FILES_FIRST_COMMANDS.iter().map(|c| c.to_string()).collect(),
+            options_after_dash: OPTIONS_AFTER_DASH.iter().map(|c| c.to_string()).collect(),
             show_on_empty_token: true,
             complete_commands: false,
             online: true,
