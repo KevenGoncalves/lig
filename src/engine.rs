@@ -605,16 +605,24 @@ impl Engine {
         }
         let cl = cx.cl;
         let cur = &cl.current;
-        if cx.offer_dot && cx.only_paths && (cur.value.is_empty() || cur.value == ".") {
+        // The folder itself, first: on an empty word where `offer_dot` asks for it (Enter after
+        // `--path ` picks it), and wherever `.` or `..` is typed out, so `code .` + Enter runs it
+        // (hidden files come after).
+        let dot = match cur.value.as_str() {
+            "" if cx.offer_dot => Some((".", "The current folder")),
+            "." => Some((".", "The current folder")),
+            ".." => Some(("..", "The parent folder")),
+            _ => None,
+        };
+        if let Some((name, description)) = dot.filter(|_| cx.only_paths) {
             let meta = spec::Meta {
-                names: vec![".".into()],
-                description: Some("The current folder".into()),
-                insert_value: Some(".".into()),
+                names: vec![name.into()],
+                description: Some(description.into()),
+                insert_value: Some(name.into()),
                 priority: Some(1000.0),
                 icon: Some(Icon::Folder),
                 ..Default::default()
             };
-            // Listed with the values, first: Enter after `--path ` picks it.
             cx.push(&meta, Kind::Arg, "", &cur.value, cur.raw.chars().count());
             cx.offer_dot = false;
         }
@@ -1247,6 +1255,22 @@ mod tests {
 
     fn labels(e: &mut Engine, env: &ShellEnv, line: &str) -> Vec<(String, String, usize)> {
         e.complete(line, env, true, false).items.into_iter().map(|s| (s.label, s.insert, s.delete)).collect()
+    }
+
+    #[test]
+    fn a_typed_dot_offers_the_folder_itself_first() {
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("edit", "").arg(arg("path").files()));
+        // Without hidden entries `.` is all there is, exactly what's typed: no popup, Enter runs it.
+        assert!(labels(&mut e, &env, "edit .").is_empty());
+        std::fs::create_dir_all(env.cwd.join(".hidden")).unwrap();
+        // With them, `.` comes first (Enter on the complete word runs `edit .`), hidden ones next.
+        let r = labels(&mut e, &env, "edit .");
+        assert_eq!(r[0], (".".to_string(), ".".to_string(), 1));
+        assert!(r[1].0.starts_with(".hidden"), "{r:?}");
+        assert!(labels(&mut e, &env, "edit ..").is_empty());
+        // Before anything is typed, Enter picks a real entry: no `.` there.
+        assert!(!labels(&mut e, &env, "edit ").iter().any(|s| s.0 == "."));
     }
 
     #[test]
