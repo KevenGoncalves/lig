@@ -128,7 +128,7 @@ impl Size {
 
 /// Colors: a 0-255 palette index, `"#rrggbb"`, or `"default"` (the
 /// terminal's own). Unset ones come from the theme.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Colors {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -307,23 +307,38 @@ impl Default for Behavior {
 }
 
 impl Config {
+    pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
+        let mut c = toml::from_str::<Config>(text)?;
+        // `[colors]`, over the older `[ui.colors]`; drawing reads them from `ui`.
+        c.ui.colors = c.colors.clone().or(std::mem::take(&mut c.ui.colors));
+        Ok(c)
+    }
+
     /// Load the config file; problems are reported and defaults are used.
     pub fn load() -> Config {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str::<Config>(&text) {
-                Ok(mut c) => {
-                    // `[colors]`, over the older `[ui.colors]`; drawing reads them from `ui`.
-                    c.ui.colors = c.colors.clone().or(std::mem::take(&mut c.ui.colors));
-                    c
-                }
-                Err(e) => {
-                    eprintln!("lig: ignoring {}: {e}", path.display());
-                    Config::default()
-                }
-            },
+            Ok(text) => Config::parse(&text).unwrap_or_else(|e| {
+                eprintln!("lig: ignoring {}: {e}", path.display());
+                Config::default()
+            }),
             Err(_) => Config::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::Config;
+
+    #[test]
+    fn colors_win_over_legacy_ui_colors_and_bad_files_fail() {
+        let c = Config::parse("[ui]\ntheme = 'light'\n[ui.colors]\nfg = '7'\nbg = '0'\n[colors]\nfg = '15'\n").unwrap();
+        assert_eq!(c.ui.theme, "light");
+        // Field by field: `[colors]` wins, `[ui.colors]` fills in.
+        assert_eq!(c.ui.colors.fg.as_deref(), Some("15"));
+        assert_eq!(c.ui.colors.bg.as_deref(), Some("0"));
+        assert!(Config::parse("[colors\n").is_err());
     }
 }
 

@@ -8,6 +8,46 @@ from pathlib import Path
 from fish_pty import Fish
 
 class ShellSmoke(unittest.TestCase):
+    def test_theme_reloads_with_the_popup_open(self):
+        """A new theme in config.toml shows in a running session; a broken file keeps the last one."""
+        shell = shutil.which('bash')
+        if not shell:
+            self.skipTest('bash is unavailable')
+
+        def palette(color):
+            return f'[colors]\nselected_bg = "{color}"\n'
+
+        term = Fish(wrapped=True, shell=shell, lig_config=palette('#010203'))
+        config = term.home / 'config/lig/config.toml'
+
+        def write(text):
+            # Replaced whole, as theme switchers do.
+            new = config.with_suffix('.new')
+            new.write_text(text)
+            new.replace(config)
+
+        try:
+            start = len(term.output)
+            term.send('git ch')
+            term.wait_popup('checkout', start)
+            term.wait_for(lambda: b'48;2;1;2;3' in term.output[start:])
+            # With the popup open, no key needed.
+            start = len(term.output)
+            write(palette('#040506'))
+            term.wait_for(lambda: b'48;2;4;5;6' in term.output[start:])
+            # A broken file keeps the theme in use.
+            write('[colors\n')
+            term.wait_for(lambda: 'keeping the theme' in term.log())
+            start = len(term.output)
+            term.send('e')
+            term.wait_popup('checkout', start)
+            self.assertIn(b'48;2;4;5;6', term.output[start:])
+            start = len(term.output)
+            write(palette('#010203'))
+            term.wait_for(lambda: b'48;2;1;2;3' in term.output[start:])
+        finally:
+            self.assertEqual(term.close(17), 17)
+
     def smoke(self, shell, extra=''):
         term = Fish(wrapped=True, shell=shell, extra_config=extra)
         try:

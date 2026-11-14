@@ -41,6 +41,9 @@ const REPORT_KEY: &str = "\x1b[23;8~";
 /// cmd's prompt marker arrives ahead of the prompt it marks (ConPTY passes it through
 /// before drawing), so the input starts where the cursor rests once output pauses this long.
 const PROMPT_SETTLE: Duration = Duration::from_millis(30);
+/// How often a running session looks for a new theme in `config.toml` (when it draws, and
+/// while the popup is open).
+const CONFIG_POLL: Duration = Duration::from_millis(250);
 /// Resizes come in bursts (a dragged window edge): wait for them to stop this long before
 /// asking the terminal where its cursor went.
 const RESIZE_SETTLE: Duration = Duration::from_millis(40);
@@ -93,6 +96,12 @@ fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
         return Some((row, col));
     }
     None
+}
+
+/// `config.toml`'s modification time and size: the file is read again only when they change.
+fn config_stamp() -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(crate::config::config_path()).ok()?;
+    Some((m.modified().ok()?, m.len()))
 }
 
 /// How many cursor position reports `input` holds.
@@ -404,6 +413,8 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         resync: None,
         normal_unsynced: false,
         shell_cursor_queries: 0,
+        config_stamp: config_stamp(),
+        config_checked: Instant::now(),
         sync_open: false,
         dirty: false,
         dirty_since: Instant::now(),
@@ -725,6 +736,9 @@ struct Session {
     /// Cursor position questions the shell (or a program) sent the terminal, not answered yet:
     /// lig asks only when there are none, so it never takes their answer.
     shell_cursor_queries: usize,
+    /// `config.toml` as last read (see [`config_stamp`]), and when it was last looked at.
+    config_stamp: Option<(std::time::SystemTime, u64)>,
+    config_checked: Instant,
     /// A synchronized-output block is open (see `begin_sync`).
     sync_open: bool,
     /// A redraw is due, once output settles (see [`DEBOUNCE`]).
@@ -755,6 +769,12 @@ impl Session {
             if let Some(w) = self.resync_wake() {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
+            let woken_for_more = deadline;
+            if self.drawn.is_some() {
+                // An open popup takes a new theme without waiting for a key.
+                let w = self.config_checked + CONFIG_POLL;
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
             if let Some(w) = self.fish_refresh.as_ref().and_then(FishRefresh::wake) {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
@@ -780,6 +800,14 @@ impl Session {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        if self.drawn.is_some()
+                            && self.config_checked.elapsed() >= CONFIG_POLL
+                            && !self.reload_theme()
+                            && woken_for_more.is_none_or(|d| d > Instant::now())
+                        {
+                            // Only the theme check was due, and nothing changed: no redraw.
+                            continue;
+                        }
                         if self.prompt_pending && self.last_output.elapsed() >= PROMPT_SETTLE {
                             self.prompt_settled();
                         }
@@ -1808,11 +1836,43 @@ impl Session {
         }
     }
 
+    /// The theme and colors from `config.toml`, if it changed; true if they did. Other settings
+    /// still need a new session. A file being written, or with a mistake, keeps the current theme.
+    fn reload_theme(&mut self) -> bool {
+        self.config_checked = Instant::now();
+        let stamp = config_stamp();
+        // Some filesystems keep modification times in whole seconds: a second write within the
+        // same second, of the same size, would look unchanged, so a recent file is read anyway.
+        let recent = stamp.is_some_and(|(t, _)| t.elapsed().is_ok_and(|e| e < Duration::from_secs(2)));
+        if stamp == self.config_stamp && !recent {
+            return false;
+        }
+        self.config_stamp = stamp;
+        let Ok(text) = std::fs::read_to_string(crate::config::config_path()) else { return false };
+        let ui = match Config::parse(&text) {
+            Ok(c) => c.ui,
+            Err(e) => {
+                crate::log(&format!("config: keeping the theme: {e}"));
+                return false;
+            }
+        };
+        if ui.theme == self.cfg.ui.theme && ui.colors == self.cfg.ui.colors {
+            return false;
+        }
+        crate::log(&format!("config: theme {} reloaded", ui.theme));
+        self.cfg.ui.theme = ui.theme;
+        self.cfg.ui.colors = ui.colors;
+        true
+    }
+
     fn render(&mut self) {
         // The model is about to move (see `Resync`): draw once it has.
         if self.resync.is_some() {
             self.mark_dirty();
             return;
+        }
+        if self.config_checked.elapsed() >= CONFIG_POLL {
+            self.reload_theme();
         }
         self.dirty = false;
         let mut w = vec![];
