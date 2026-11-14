@@ -963,6 +963,22 @@ pub fn sys_users() -> Generator {
     })
 }
 
+/// Apps in `/Applications` and `~/Applications` (macOS), by name.
+pub fn macos_apps() -> Generator {
+    gen_fn("macos:apps", |_| {
+        let dirs = [Some(PathBuf::from("/Applications")), dirs::home_dir().map(|h| h.join("Applications"))];
+        let mut names: Vec<String> = dirs
+            .iter()
+            .flatten()
+            .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten())
+            .filter_map(|e| e.file_name().to_str()?.strip_suffix(".app").map(str::to_string))
+            .collect();
+        names.sort();
+        names.dedup();
+        names.iter().map(sug).collect()
+    })
+}
+
 /// Ids accepted by [`builtin`] (besides `files:<prefix>` and `kube:names:<type>`).
 pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("git:branches", "local and remote branches, recent first"),
@@ -1016,6 +1032,7 @@ pub const BUILTIN_IDS: &[(&str, &str)] = &[
     ("sys:pids", "processes, by PID"),
     ("sys:process-names", "process names"),
     ("sys:users", "local users"),
+    ("macos:apps", "apps in /Applications and ~/Applications"),
     ("systemd:units", "systemd units (--user aware)"),
     ("apt:installed", "installed packages"),
     ("apt:available", "packages in the apt index"),
@@ -1113,6 +1130,7 @@ pub fn builtin(id: &str) -> Option<Generator> {
         "dnf:history" => dnf_history(),
         "ssh:hosts-colon" => ssh_hosts_colon(),
         "sys:users" => sys_users(),
+        "macos:apps" => macos_apps(),
         "snap:installed" => snaps_installed(),
         "flatpak:installed" => flatpak_installed(false),
         "flatpak:apps" => flatpak_installed(true),

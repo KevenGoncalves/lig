@@ -1,0 +1,408 @@
+{
+  "name": "mole",
+  "description": "Clean, optimize and monitor your Mac",
+  "options": [
+    {
+      "name": "--debug",
+      "description": "Show detailed operation logs",
+      "isPersistent": true
+    },
+    {
+      "name": [
+        "-h",
+        "--help"
+      ],
+      "description": "Show help"
+    },
+    {
+      "name": [
+        "-V",
+        "--version"
+      ],
+      "description": "Show version"
+    }
+  ],
+  "subcommands": [
+    {
+      "name": "clean",
+      "description": "Free up disk space",
+      "options": [
+        {
+          "name": [
+            "-n",
+            "--dry-run"
+          ],
+          "description": "Preview cleanup without making changes"
+        },
+        {
+          "name": "--external",
+          "description": "Clean OS metadata from a mounted external volume",
+          "args": {
+            "name": "path",
+            "template": "folders"
+          }
+        },
+        {
+          "name": "--whitelist",
+          "description": "Manage protected paths"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "uninstall",
+      "description": "Remove apps completely",
+      "args": {
+        "name": "app",
+        "isVariadic": true,
+        "isOptional": true,
+        "generators": [
+          {
+            "builtin": "macos:apps"
+          }
+        ]
+      },
+      "options": [
+        {
+          "name": "--list",
+          "description": "List installed apps with the exact name mo uninstall accepts"
+        },
+        {
+          "name": "--dry-run",
+          "description": "Preview app uninstallation without making changes"
+        },
+        {
+          "name": "--permanent",
+          "description": "Bypass the Trash and delete immediately"
+        },
+        {
+          "name": "--with-data",
+          "description": "Start with personal data selected"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": [
+        "optimize",
+        "optimise"
+      ],
+      "description": "Refresh caches and services",
+      "options": [
+        {
+          "name": [
+            "-n",
+            "--dry-run"
+          ],
+          "description": "Preview optimization without making changes"
+        },
+        {
+          "name": "--whitelist",
+          "description": "Manage protected items"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": [
+        "analyze",
+        "analyse"
+      ],
+      "description": "Explore disk usage",
+      "args": {
+        "name": "path",
+        "isOptional": true,
+        "template": "folders"
+      },
+      "options": [
+        {
+          "name": "--json",
+          "description": "Output analysis as JSON"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "status",
+      "description": "Monitor system health",
+      "options": [
+        {
+          "name": "--json",
+          "description": "Output metrics as JSON"
+        },
+        {
+          "name": "--watch",
+          "description": "Stream metrics as newline-delimited JSON"
+        },
+        {
+          "name": "--interval",
+          "description": "With --watch, the collection interval",
+          "args": {
+            "name": "interval",
+            "suggestions": [
+              "1s",
+              "2s",
+              "5s"
+            ]
+          }
+        },
+        {
+          "name": "--proc-cpu-threshold",
+          "description": "Alert when a process stays above this CPU percent",
+          "args": {
+            "name": "percent"
+          }
+        },
+        {
+          "name": "--proc-cpu-window",
+          "description": "How long a process must exceed the CPU threshold",
+          "args": {
+            "name": "duration",
+            "suggestions": [
+              "1m",
+              "5m",
+              "10m"
+            ]
+          }
+        },
+        {
+          "name": "--proc-cpu-alerts",
+          "description": "Persistent high-CPU process alerts (default true)"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "history",
+      "description": "Review cleanup activity",
+      "options": [
+        {
+          "name": "--json",
+          "description": "Output history as JSON"
+        },
+        {
+          "name": "--limit",
+          "description": "Show the most recent N entries, 1-200",
+          "args": {
+            "name": "N"
+          }
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "purge",
+      "description": "Remove old project artifacts",
+      "options": [
+        {
+          "name": "--paths",
+          "description": "Edit custom scan directories"
+        },
+        {
+          "name": [
+            "-n",
+            "--dry-run"
+          ],
+          "description": "Preview purge actions without making changes"
+        },
+        {
+          "name": "--include-empty",
+          "description": "Show zero-size project artifact directories"
+        },
+        {
+          "name": "--yes",
+          "description": "Confirm unattended cleanup of eligible artifacts"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "installer",
+      "description": "Find and remove installer files",
+      "options": [
+        {
+          "name": "--dry-run",
+          "description": "Preview installer cleanup without making changes"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "slim",
+      "description": "Remove Intel code from universal apps",
+      "options": [
+        {
+          "name": [
+            "-n",
+            "--dry-run"
+          ],
+          "description": "List apps and reclaimable space without changes"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "touchid",
+      "description": "Configure Touch ID for sudo",
+      "subcommands": [
+        {
+          "name": "enable",
+          "description": "Enable Touch ID for sudo"
+        },
+        {
+          "name": "disable",
+          "description": "Disable Touch ID for sudo"
+        },
+        {
+          "name": "status",
+          "description": "Show current Touch ID status"
+        }
+      ],
+      "options": [
+        {
+          "name": "--dry-run",
+          "description": "Preview Touch ID changes without modifying sudo config"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "completion",
+      "description": "Setup shell tab completion",
+      "args": {
+        "name": "shell",
+        "isOptional": true,
+        "suggestions": [
+          "bash",
+          "zsh",
+          "fish"
+        ]
+      },
+      "options": [
+        {
+          "name": "--dry-run",
+          "description": "Preview config changes without writing files"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "description": "Update to latest version",
+      "options": [
+        {
+          "name": [
+            "-f",
+            "--force"
+          ],
+          "description": "Force reinstall latest stable version"
+        },
+        {
+          "name": "--nightly",
+          "description": "Install latest unreleased main branch build"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "remove",
+      "description": "Remove Mole from system",
+      "options": [
+        {
+          "name": [
+            "-n",
+            "--dry-run"
+          ],
+          "description": "Preview Mole removal"
+        },
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Show help"
+        }
+      ]
+    },
+    {
+      "name": "help",
+      "description": "Show help"
+    },
+    {
+      "name": "version",
+      "description": "Show version"
+    }
+  ]
+}
