@@ -6,20 +6,32 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   __lig_vars=
   __lig_once=
   __lig_hist=
+  __lig_histcmd=
+
+  # First in PROMPT_COMMAND, before other hooks change $?: how the line ended.
+  __lig_status() {
+    local s=$?
+    __lig_ran_status=$s __lig_ran_histcmd=$HISTCMD
+    return $s
+  }
 
   __lig_prompt() {
     local status=$?
     # The line that just ran, and how it ended (for lig's history): a new history entry.
-    local h
-    h=$(HISTTIMEFORMAT= builtin history 1)
-    # `history 1` prints the number, `*` if edited, a space, then the line as typed.
-    if [[ $h =~ ^\ *([0-9]+)[*\ ]\ (.*)$ ]]; then
-      [[ -n $__lig_hist && ${BASH_REMATCH[1]} != "$__lig_hist" ]] &&
-        printf '\e]6973;E;%s;%s\a' "$status" "${BASH_REMATCH[2]//[$'\a\e']/ }" >/dev/tty
-      __lig_hist=${BASH_REMATCH[1]}
-    else
-      # No history yet: the next line is entry 1.
-      __lig_hist=${__lig_hist:-0}
+    # HISTCMD moves on when a line ran, so an empty Enter forks nothing.
+    if [[ $__lig_ran_histcmd != "$__lig_histcmd" ]]; then
+      __lig_histcmd=$__lig_ran_histcmd
+      local h
+      h=$(HISTTIMEFORMAT= builtin history 1)
+      # `history 1` prints the number, `*` if edited, a space, then the line as typed.
+      if [[ $h =~ ^\ *([0-9]+)[*\ ]\ (.*)$ ]]; then
+        [[ -n $__lig_hist && ${BASH_REMATCH[1]} != "$__lig_hist" ]] &&
+          printf '\e]6973;E;%s;%s\a' "$__lig_ran_status" "${BASH_REMATCH[2]//[$'\a\e']/ }" >/dev/tty
+        __lig_hist=${BASH_REMATCH[1]}
+      else
+        # No history yet: the next line is entry 1.
+        __lig_hist=${__lig_hist:-0}
+      fi
     fi
     printf '\e]6973;C;%s\a\e]6973;P;%s\a' "${PWD//[$'\a\e']/}" "${PATH//[$'\a\e']/}" >/dev/tty
     local k a=
@@ -56,10 +68,11 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     fi
     return $status
   }
+  # __lig_status first, __lig_prompt last (after tools that rebuild PS1).
   if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
-    PROMPT_COMMAND+=(__lig_prompt)
+    PROMPT_COMMAND=(__lig_status "${PROMPT_COMMAND[@]}" __lig_prompt)
   else
-    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__lig_prompt"
+    PROMPT_COMMAND="__lig_status"$'\n'"${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__lig_prompt"
   fi
   # Prepended: vte.sh (GNOME Terminal) ends PS0 with `ESC \`, which would swallow our `\e`.
   [[ $PS0 == *'6973;F'* ]] || PS0='\e]6973;F\a'"${PS0:-}"

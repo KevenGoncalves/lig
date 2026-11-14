@@ -17,36 +17,56 @@ pub struct History {
     entries: Vec<(u64, String)>,
     /// The file's length when read: another session appended if it grew.
     read_len: u64,
+    /// Read yet: not before the first command or search, so a new tab starts at once.
+    loaded: bool,
+    /// Whose shell histories seed it.
+    home: Option<PathBuf>,
+}
+
+/// Private, like the shells' own history files.
+fn private_file(path: &Path, append: bool) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).write(true).append(append).truncate(!append);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)
 }
 
 impl History {
-    /// `~/.local/state/lig/history`; seeded from the shells' histories if it doesn't exist.
+    /// `~/.local/state/lig/history`, read when first needed.
     pub fn open() -> Self {
         let dir = dirs::state_dir().or_else(dirs::data_local_dir).unwrap_or_else(std::env::temp_dir).join("lig");
-        let path = dir.join("history");
-        if !path.exists() {
-            let mut seed = dirs::home_dir().map(|home| import(&home)).unwrap_or_default();
-            seed.sort_by_key(|(time, _)| *time);
-            let text: String = seed.iter().map(|(time, command)| line(*time, command)).collect();
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(&path, text);
-        }
-        let mut history = History { path, entries: vec![], read_len: 0 };
-        history.reload();
-        history
+        History { path: dir.join("history"), entries: vec![], read_len: 0, loaded: false, home: dirs::home_dir() }
     }
 
     #[cfg(test)]
     fn at(path: PathBuf) -> Self {
-        let mut history = History { path, entries: vec![], read_len: 0 };
-        history.reload();
-        history
+        History { path, entries: vec![], read_len: 0, loaded: false, home: None }
+    }
+
+    /// The first time, seed the file from the shells' histories.
+    fn seed(&self) {
+        if self.path.exists() {
+            return;
+        }
+        let mut seed = self.home.as_deref().map(import).unwrap_or_default();
+        seed.sort_by_key(|(time, _)| *time);
+        let text: String = seed.iter().map(|(time, command)| line(*time, command)).collect();
+        if let Some(dir) = self.path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        use std::io::Write;
+        let _ = private_file(&self.path, false).and_then(|mut f| f.write_all(text.as_bytes()));
     }
 
     /// Read the file again if another session added to it.
     fn reload(&mut self) {
+        if !self.loaded {
+            self.seed();
+            self.loaded = true;
+        }
         let len = std::fs::metadata(&self.path).map_or(0, |m| m.len());
-        if len == self.read_len && !self.entries.is_empty() {
+        if len == self.read_len && self.read_len > 0 {
             return;
         }
         let text = String::from_utf8_lossy(&std::fs::read(&self.path).unwrap_or_default()).into_owned();
@@ -56,7 +76,9 @@ impl History {
         if runs.len() > COMPACT * self.entries.len() + 1000 {
             let text: String = self.entries.iter().rev().map(|(time, command)| line(*time, command)).collect();
             let tmp = self.path.with_extension("tmp");
-            if std::fs::write(&tmp, &text).is_ok() && std::fs::rename(&tmp, &self.path).is_ok() {
+            use std::io::Write;
+            let written = private_file(&tmp, false).and_then(|mut f| f.write_all(text.as_bytes()));
+            if written.is_ok() && std::fs::rename(&tmp, &self.path).is_ok() {
                 self.read_len = text.len() as u64;
             }
         }
@@ -69,16 +91,22 @@ impl History {
             return;
         }
         let time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        // Seeded before the first line, which would otherwise make the file look old.
+        self.seed();
+        let before = std::fs::metadata(&self.path).map_or(0, |m| m.len());
+        let text = line(time, command);
         use std::io::Write;
-        let appended = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .and_then(|mut f| f.write_all(line(time, command).as_bytes()));
-        if let Err(e) = appended {
+        if let Err(e) = private_file(&self.path, true).and_then(|mut f| f.write_all(text.as_bytes())) {
             crate::log(&format!("history: {e}"));
+            return;
         }
-        self.reload();
+        if !self.loaded {
+            return;
+        }
+        // Only our line was added: no need to read the file again.
+        if before == self.read_len {
+            self.read_len += text.len() as u64;
+        }
         self.entries.retain(|(_, c)| c != command);
         self.entries.insert(0, (time, command.to_string()));
     }
@@ -150,7 +178,11 @@ fn import(home: &Path) -> Vec<(u64, String)> {
     if let Some(bytes) = read(home.join(".bash_history")) {
         out.extend(bash(&String::from_utf8_lossy(&bytes)));
     }
-    let data = dirs::data_dir().unwrap_or_else(|| home.join(".local/share"));
+    // fish keeps XDG's folders on macOS too.
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|d| d.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
     if let Some(bytes) = read(data.join("fish/fish_history")) {
         out.extend(fish(&String::from_utf8_lossy(&bytes)));
     }
@@ -260,12 +292,29 @@ mod tests {
     }
 
     #[test]
+    fn the_file_is_private_and_read_only_when_needed() {
+        let path = temp("private");
+        let mut h = History::at(path.clone());
+        assert!(!path.exists(), "nothing read or written until needed");
+        h.record("echo one");
+        assert_eq!(commands(h.search("", false))[0], "echo one");
+        h.record("echo two");
+        assert_eq!(commands(h.search("", false))[..2], ["echo two", "echo one"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn many_repeats_are_compacted() {
         let path = temp("compact");
         let text: String = (0..3000).map(|i| line(i, if i % 2 == 0 { "a" } else { "b" })).collect();
         std::fs::write(&path, text).unwrap();
-        let h = History::at(path.clone());
-        assert_eq!(commands(h.entries.clone()), ["b", "a"]);
+        let mut h = History::at(path.clone());
+        assert_eq!(commands(h.search("", false)), ["b", "a"]);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "2998\ta\n2999\tb\n");
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

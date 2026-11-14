@@ -18,7 +18,8 @@ SHELLS = {
 }
 PROMPTS = {
     'zsh': "PROMPT='hist-test> '\n",
-    'bash': "PS1='hist-test> '\n",
+    # A hook before lig's that leaves $? at 0: the failed command must still stay out.
+    'bash': "PS1='hist-test> '\nPROMPT_COMMAND='true'\n",
     'fish': "function fish_prompt; echo -n 'hist-test> '; end\nset -g fish_greeting\n",
     'nu': "$env.config.show_banner = false\n$env.PROMPT_COMMAND = {|| 'hist-test' }\n$env.PROMPT_COMMAND_RIGHT = ''\n",
 }

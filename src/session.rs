@@ -377,6 +377,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         report_key: is_powershell(&shell),
         cmd_shell: shell_name(&shell) == "cmd",
         nu_shell: shell_name(&shell) == "nu",
+        nu_tail: vec![],
         prompt_pending: false,
         held: vec![],
         unconfirmed: String::new(),
@@ -600,6 +601,20 @@ fn nu_marks(out: &[u8]) -> Vec<(usize, Msg)> {
         .collect()
 }
 
+/// The start of a nu mark the output ends in, which the next output finishes.
+fn unfinished_nu_mark(out: &[u8]) -> &[u8] {
+    const MARK: &[u8] = b"\x1b]133;";
+    let start = out.len().saturating_sub(MARK.len() + 1);
+    let Some(i) = out[start..].iter().rposition(|&b| b == 0x1b) else { return &[] };
+    let rest = &out[start + i..];
+    let unfinished = if rest.len() <= MARK.len() {
+        MARK.starts_with(rest)
+    } else {
+        rest.starts_with(MARK) && matches!(rest[MARK.len()], b'B' | b'C')
+    };
+    if unfinished { rest } else { &[] }
+}
+
 /// Output that only sets terminal modes, or none: the screen and the line stay as they were.
 /// Fish 4.0 toggles bracketed paste, the keypad and the keyboard protocols around each signal
 /// handler it runs, so around each snapshot reply too.
@@ -724,6 +739,8 @@ struct Session {
     /// nu: the line is read off the screen like bash's, between nu's own prompt-end mark
     /// and the cursor (see [`nu_marks`]); insertions take fish's key.
     nu_shell: bool,
+    /// A nu mark cut short at the end of the last output, finished by the next.
+    nu_tail: Vec<u8>,
     /// cmd's prompt marker arrived and output hasn't paused yet.
     prompt_pending: bool,
     /// Keys typed while `prompt_pending`, sent once the input start is known.
@@ -1051,9 +1068,20 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
+        // Another shell's own hooks speaking: nu was replaced (`exec bash`).
+        let other_shell = |m: &Msg| matches!(m, Msg::PromptEnd | Msg::Buffer { .. } | Msg::Ready { .. });
+        if self.nu_shell && msgs.iter().any(|(_, m)| other_shell(m)) {
+            crate::log("shell is no longer nu");
+            self.nu_shell = false;
+            self.nu_tail.clear();
+            self.env.shell_specs = None;
+        }
         if self.nu_shell {
-            msgs.extend(nu_marks(&fwd));
+            let tail = std::mem::take(&mut self.nu_tail);
+            let joined = [tail.as_slice(), &fwd].concat();
+            msgs.extend(nu_marks(&joined).into_iter().map(|(i, m)| (i.saturating_sub(tail.len()), m)));
             msgs.sort_by_key(|(pos, _)| *pos);
+            self.nu_tail = unfinished_nu_mark(&joined).to_vec();
         }
         let pager = self.parser.screen().alternate_screen();
         self.shell_cursor_queries += fwd.windows(4).filter(|w| *w == b"\x1b[6n").count();
@@ -1791,7 +1819,14 @@ impl Session {
                 back: 0,
                 query: self.line.trim_start().to_string(),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            // Nothing matches: back to the usual suggestions.
+            self.history_mode = false;
+            self.manual = false;
+            self.request();
+            return;
+        }
         self.loading = None;
         // As the worker's answers do: an Enter held for this line can go now.
         self.on_done(self.line.clone(), items, None, String::new());
@@ -2308,6 +2343,12 @@ mod tests {
         let marks: Vec<(usize, Msg)> = nu_marks(out);
         assert_eq!(marks, [(19, Msg::PromptEnd), (32, Msg::Finish)]);
         assert!(nu_marks(b"\x1b]133;Bx\x1b]133;").is_empty());
+        // Cut short at the end of one output, finished by the next.
+        assert_eq!(unfinished_nu_mark(b"/tmp> \x1b]13"), b"\x1b]13");
+        assert_eq!(unfinished_nu_mark(b"/tmp> \x1b]133;B"), b"\x1b]133;B");
+        assert_eq!(unfinished_nu_mark(b"/tmp> \x1b]133;B\x1b\\"), b"");
+        assert_eq!(unfinished_nu_mark(b"\x1b[0m"), b"");
+        assert_eq!(unfinished_nu_mark(b"\x1b]133;A"), b"");
     }
 
     #[test]

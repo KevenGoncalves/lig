@@ -22,22 +22,28 @@ pub fn specs(nu: &Path) -> Option<ShellSpecs> {
     let mut stamp = std::collections::hash_map::DefaultHasher::new();
     (nu, meta.len(), meta.modified().ok()).hash(&mut stamp);
     let cache = crate::help::cache_dir().join(format!("nu-{:016x}.json", stamp.finish()));
-    let text = match std::fs::read_to_string(&cache) {
-        Ok(text) => text,
-        Err(_) => {
+    // A cache that doesn't parse (cut short, say) is read from nu again.
+    let cached = std::fs::read_to_string(&cache).ok().and_then(|text| serde_json::from_str::<Vec<Value>>(&text).ok());
+    let flat = match cached {
+        Some(flat) => flat,
+        None => {
             let argv = [nu.to_string_lossy().into_owned(), "--no-config-file".into(), "-c".into(), SCRIPT.into()];
             let out =
                 crate::exec::run(crate::exec::Cmd::Argv(&argv), Path::new("/"), &[], Duration::from_secs(10), None);
-            if out.status != 0 {
+            let flat = (out.status == 0).then(|| serde_json::from_str::<Vec<Value>>(&out.stdout).ok()).flatten();
+            let Some(flat) = flat else {
                 crate::log(&format!("nu specs: exit {}: {}", out.status, out.stderr.trim()));
                 return None;
-            }
+            };
+            // Written whole, then renamed: another session never reads half of it.
+            let tmp = cache.with_extension(format!("{}.tmp", std::process::id()));
             let _ = std::fs::create_dir_all(crate::help::cache_dir());
-            let _ = std::fs::write(&cache, &out.stdout);
-            out.stdout
+            if std::fs::write(&tmp, &out.stdout).is_ok() {
+                let _ = std::fs::rename(&tmp, &cache);
+            }
+            flat
         }
     };
-    let flat: Vec<Value> = serde_json::from_str(&text).ok()?;
     let specs: HashMap<String, Arc<Subcommand>> = nest(flat)
         .iter()
         .map(|v| (v["name"].as_str().unwrap_or_default().to_string(), Arc::new(crate::spec::from_value(v))))
