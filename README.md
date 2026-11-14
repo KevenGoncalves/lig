@@ -34,6 +34,7 @@ itself.
   scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI, Snap and Flathub.
 - Knows your **aliases, functions and variables** (`gco ` completes like `git checkout `,
   `$HO` → `$HOME`).
+- **History** on `Ctrl+R`: the commands that worked, from every session, fuzzy-searched.
 - Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
@@ -48,8 +49,8 @@ docker run --rm -it lig-demo           # zsh
 docker run --rm -it lig-demo bash      # or bash, or fish
 ```
 
-Start typing (`git checkout `, `make `, `cd `): the popup opens under the cursor. `Tab` or
-`Enter` accepts, the arrows move, `Esc` closes, and `exit` ends the container. The first build
+Start typing (`git checkout `, `make `, `cd `): the popup opens under the cursor. `Enter`
+accepts, `Tab` and the arrows move, `Esc` closes, and `exit` ends the container. The first build
 compiles Lig, so it takes a few minutes; `docker build -t lig-demo .` builds it from a clone.
 
 ## Install
@@ -71,13 +72,13 @@ lig install            # your shell; or: lig install zsh / bash / fish / nu / pw
 lig doctor             # check the setup
 ```
 
-**Requirements**: Linux or macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4, fish ≥ 4.2.1 or nushell
-(tested with 0.117; on macOS, not Apple's bash 3.2); Windows 10 1809+ with PowerShell or cmd. Optional: `curl` for
-package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
+**Requirements**: Linux or macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 (on macOS, not Apple's 3.2),
+fish ≥ 4.2.1 or nushell (tested with 0.117); Windows 10 1809+ with PowerShell or cmd.
+Optional: `curl` for package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 `lig install` adds a few lines to your shell's config file (`~/.zshrc`, `~/.bashrc`,
-`config.fish`, `config.nu` or the PowerShell profile), backing it up first; to add them yourself, see
-[Set up a shell by hand](#set-up-a-shell-by-hand).
+`config.fish`, `config.nu` or the PowerShell profile), backing it up first; to add them
+yourself, see [Set up a shell by hand](#set-up-a-shell-by-hand).
 Prebuilt archives, `.deb` and `.rpm` files are on the
 [releases page](https://github.com/KevenGoncalves/lig/releases/latest).
 
@@ -190,6 +191,8 @@ Type as usual; the popup shows what fits.
   `Ctrl+Space` shows them; `complete_commands = true` always does.
 - **Folders** (`cd`, `mkdir`…) keep the popup open with the subfolders, with **↵ Enter** to
   run the line and **Back** to go up.
+- **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
+  you type `-` (`options_after_dash`).
 - **History** (`Ctrl+R`) lists the commands that ran without error, in every Lig session,
   newest first and each once; typing narrows it (fuzzy), and `Enter` puts one on the line.
   It starts with what zsh, bash, fish and nu remember. A command typed with a leading space
@@ -284,6 +287,7 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 
 - **Update**: `lig update` installs the latest release (`--check` only looks). A Lig from a
   package manager updates there, and `lig update` tells you how. Open tabs keep their version.
+  In nu, run `lig install nu` again afterwards: its integration is copied into `config.nu`.
 - **Skip it once**: `LIG_DISABLE=1 zsh`.
 - **Remove**: `lig uninstall` (or `lig uninstall <shell>`), before removing a packaged Lig.
 
@@ -296,6 +300,7 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 | A key does nothing | `lig keys` shows whether the key reaches Lig, and its name. |
 | Outdated options for a command | `lig specs clear-cache` re-reads its `--help`. |
 | No `scp host:` paths | The host needs a login without a password prompt. |
+| `Ctrl+R` no longer opens my plugin (fzf, atuin…) | Lig's history has it: move it (`keys.history = ["alt-r"]`) or turn it off (`history = false`). |
 | Something else | Start a shell with `LIG_LOG=1` and read `lig.log` in `~/.local/state/lig/` (Linux) or `$TMPDIR/lig/` (macOS). |
 
 ## How it works
@@ -303,26 +308,28 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 Lig runs your shell in a pseudo-terminal and passes everything through. It keeps a model of
 the screen, draws the popup under the cursor, and restores what was underneath when it
 closes, which is why it works in any terminal (and on Wayland, where apps can't place
-floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's, nu's and cmd's
-are read off the screen, fish and PowerShell answer when Lig asks. nu's own commands (`ls`,
-`open`, `str replace`…) complete from nu's signatures, not from the coreutils of those names. Accepting sends a private key
-that a shell function binds to edit the line. Slow sources run in the background, so typing
-never waits.
+floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's, nu's and
+cmd's are read off the screen, fish and PowerShell answer when Lig asks. At each prompt they
+also report the command that just ran and its exit status, for the history. Accepting sends
+a private key that a shell function binds to edit the line. nu's own commands (`ls`, `open`,
+`str replace`…) complete from nu's signatures, not from the coreutils of those names. Slow
+sources run in the background, so typing never waits.
 
-**Limitations**: bash's and nu's lines, read from the screen, can briefly confuse Lig in a long line
-wrapping at the bottom of a full screen. Specs read from `--help` have no live values. About
-a quarter of Fig's dynamic generators (JavaScript) couldn't be converted.
+**Limitations**: bash's and nu's lines, read from the screen, can briefly confuse Lig in a
+long line wrapping at the bottom of a full screen. Specs read from `--help` have no live
+values. About a quarter of Fig's dynamic generators (JavaScript) couldn't be converted.
 
 ## Development
 
 ```bash
 cargo test                      # unit tests, every built-in spec included
 cargo build --release
-python3 tests/fish_pty.py       # PTY tests (also shell_smoke, tmux_placement, zellij_mirror, install…)
+python3 tests/fish_pty.py       # PTY tests (also shell_smoke, history_tmux, pane_mirror, nu_tmux, install…)
 ```
 
-The PTY tests drive `target/release/lig` (or `LIG_TEST_BIN`) in real shells; CI runs them on
-Linux and macOS, and an end-to-end test in PowerShell and cmd on Windows (`tests/windows/`).
+The PTY tests drive `target/release/lig` (or `LIG_TEST_BIN`) in real shells (nu from `PATH`
+or `LIG_TEST_NU`; a missing shell is skipped). CI runs them on Linux and macOS, and an
+end-to-end test in PowerShell and cmd on Windows (`tests/windows/`).
 Built-in specs live in `specs/lig/` (hand-written), `specs/fig/` (generated by
 `tools/update-fig-specs.sh`) and `specs/windows/`; packaging is described in
 [packaging/README.md](packaging/README.md).
