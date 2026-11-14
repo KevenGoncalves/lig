@@ -153,7 +153,8 @@ disabled_commands = []     # never show the popup for these
 ```
 
 Try styles without editing anything: `lig preview --all`, `lig preview --theme nord`,
-`lig icons`. Changes apply to new terminal tabs.
+`lig icons`. Theme and color changes apply to running sessions; other settings apply
+to new terminal tabs.
 
 ## Your own specs
 

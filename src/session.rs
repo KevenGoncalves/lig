@@ -23,6 +23,8 @@ use crate::term;
 const DEBOUNCE: Duration = Duration::from_millis(4);
 /// Upper bound on the debounce wait.
 const MAX_DELAY: Duration = Duration::from_millis(40);
+/// While a popup is visible, check for theme changes without depending on OS-specific watchers.
+const CONFIG_POLL: Duration = Duration::from_millis(250);
 /// How long Enter waits for suggestions that are still loading.
 const ENTER_WAIT: Duration = Duration::from_millis(1500);
 /// Show "Searching…" only when results take longer than this.
@@ -332,6 +334,8 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         dirty: false,
         dirty_since: Instant::now(),
         last_output: Instant::now(),
+        last_config_text: None,
+        last_config_check: Instant::now(),
     };
     s.event_loop(&rx);
 
@@ -611,6 +615,9 @@ struct Session {
     dirty: bool,
     dirty_since: Instant,
     last_output: Instant,
+    /// Last successfully parsed config; invalid or incomplete writes leave the theme alone.
+    last_config_text: Option<String>,
+    last_config_check: Instant,
 }
 
 impl Session {
@@ -650,10 +657,25 @@ impl Session {
                 let w = self.last_output + PROMPT_SETTLE;
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
+            let other_deadline = deadline;
+            if self.drawn.is_some() {
+                let w = self.last_config_check + CONFIG_POLL;
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
             let ev = if let Some(due) = deadline {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        if self.drawn.is_some() && self.last_config_check.elapsed() >= CONFIG_POLL {
+                            self.last_config_check = Instant::now();
+                            if self.reload_ui_config() {
+                                self.render();
+                                continue;
+                            }
+                            if other_deadline.is_none_or(|d| d > Instant::now()) {
+                                continue;
+                            }
+                        }
                         if self.prompt_pending && self.last_output.elapsed() >= PROMPT_SETTLE {
                             self.prompt_settled();
                         }
@@ -1543,7 +1565,28 @@ impl Session {
         }
     }
 
+    fn reload_ui_config(&mut self) -> bool {
+        self.last_config_check = Instant::now();
+        let Ok(text) = std::fs::read_to_string(crate::config::config_path()) else {
+            return false;
+        };
+        if self.last_config_text.as_ref() == Some(&text) {
+            return false;
+        }
+        let Some(ui) = Config::ui_from_text(&text) else {
+            return false;
+        };
+        let changed = self.cfg.ui.theme != ui.theme || self.cfg.ui.colors != ui.colors;
+        self.cfg.ui.theme = ui.theme;
+        self.cfg.ui.colors = ui.colors;
+        self.last_config_text = Some(text);
+        changed
+    }
+
     fn render(&mut self) {
+        if self.last_config_text.is_none() || self.last_config_check.elapsed() >= CONFIG_POLL {
+            self.reload_ui_config();
+        }
         self.dirty = false;
         let mut w = vec![];
         let stuck = self.osc.take_pending();

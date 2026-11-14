@@ -23,7 +23,7 @@ def fish_quote(value):
     return "'" + str(value).replace('\\', '\\\\').replace("'", "\\'") + "'"
 
 class Fish:
-    def __init__(self, wrapped=False, vi=False, shell=None, extra_config="", disabled=False, complete_commands=False, after_config=""):
+    def __init__(self, wrapped=False, vi=False, shell=None, extra_config="", disabled=False, complete_commands=False, after_config="", initial_config=None):
         shell = shell or FISH
         if not shell:
             raise unittest.SkipTest('fish is unavailable')
@@ -59,6 +59,10 @@ class Fish:
             config = self.home / 'config/lig/config.toml'
             config.parent.mkdir(parents=True)
             config.write_text('[behavior]\ncomplete_commands = true\n')
+        if initial_config is not None:
+            config = self.home / 'config/lig/config.toml'
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(initial_config)
         if wrapped:
             subprocess.run([BIN, 'install', kind], env=self.env, check=True, capture_output=True)
         if after_config:

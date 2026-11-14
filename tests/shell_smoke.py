@@ -3,11 +3,49 @@
 import os
 import re
 import shutil
+import time
 import unittest
 from pathlib import Path
 from fish_pty import Fish
 
 class ShellSmoke(unittest.TestCase):
+    def test_reload_theme_with_popup_open(self):
+        shell = shutil.which('bash')
+        if not shell:
+            self.skipTest('bash is unavailable')
+        term = Fish(wrapped=True, shell=shell, initial_config='[colors]\nselected_bg = "#010203"\n')
+        try:
+            config = term.home / 'config/lig/config.toml'
+
+            def write(text):
+                temporary = config.with_suffix('.new')
+                temporary.write_text(text)
+                temporary.replace(config)
+
+            def palette(color):
+                return f'[colors]\nselected_bg = "{color}"\n'
+
+            start = len(term.output)
+            term.send('git ch')
+            term.wait_popup('checkout', start)
+            term.wait_for(lambda: b'48;2;1;2;3' in term.output[start:])
+
+            start = len(term.output)
+            write(palette('#040506'))
+            term.wait_for(lambda: b'48;2;4;5;6' in term.output[start:], timeout=3)
+
+            start = len(term.output)
+            write('[colors\n')
+            time.sleep(.6)
+            term.send('e')
+            term.wait_for(lambda: b'48;2;4;5;6' in term.output[start:])
+
+            start = len(term.output)
+            write(palette('#010203'))
+            term.wait_for(lambda: b'48;2;1;2;3' in term.output[start:], timeout=3)
+        finally:
+            self.assertEqual(term.close(), 0)
+
     def smoke(self, shell, extra=''):
         term = Fish(wrapped=True, shell=shell, extra_config=extra)
         try:

@@ -128,7 +128,7 @@ impl Size {
 
 /// Colors: a 0-255 palette index, `"#rrggbb"`, or `"default"` (the
 /// terminal's own). Unset ones come from the theme.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Colors {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -298,16 +298,24 @@ impl Default for Behavior {
 }
 
 impl Config {
+    fn parse(text: &str) -> Result<Config, toml::de::Error> {
+        let mut c = toml::from_str::<Config>(text)?;
+        // `[colors]`, over the older `[ui.colors]`; drawing reads them from `ui`.
+        c.ui.colors = c.colors.clone().or(std::mem::take(&mut c.ui.colors));
+        Ok(c)
+    }
+
+    /// Parse UI settings without replacing the current theme on a read or parse failure.
+    pub fn ui_from_text(text: &str) -> Option<Ui> {
+        Self::parse(text).ok().map(|c| c.ui)
+    }
+
     /// Load the config file; problems are reported and defaults are used.
     pub fn load() -> Config {
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => match toml::from_str::<Config>(&text) {
-                Ok(mut c) => {
-                    // `[colors]`, over the older `[ui.colors]`; drawing reads them from `ui`.
-                    c.ui.colors = c.colors.clone().or(std::mem::take(&mut c.ui.colors));
-                    c
-                }
+            Ok(text) => match Self::parse(&text) {
+                Ok(c) => c,
                 Err(e) => {
                     eprintln!("lig: ignoring {}: {e}", path.display());
                     Config::default()
@@ -315,6 +323,21 @@ impl Config {
             },
             Err(_) => Config::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod theme_reload_tests {
+    use super::Config;
+
+    #[test]
+    fn merges_current_and_legacy_colors_and_rejects_invalid_config() {
+        let ui = Config::ui_from_text("[ui]\ntheme = 'light'\n[ui.colors]\nfg = '7'\nbg = '0'\n[colors]\nfg = '15'\n")
+            .unwrap();
+        assert_eq!(ui.theme, "light");
+        assert_eq!(ui.colors.fg.as_deref(), Some("15"));
+        assert_eq!(ui.colors.bg.as_deref(), Some("0"));
+        assert!(Config::ui_from_text("[colors\n").is_none());
     }
 }
 
