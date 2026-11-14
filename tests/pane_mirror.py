@@ -28,6 +28,8 @@ class TmuxMirror(unittest.TestCase):
             env = {'HOME': str(home), 'ZDOTDIR': str(home), 'SHELL': ZSH, 'XDG_CONFIG_HOME': str(home / 'config'),
                    'XDG_RUNTIME_DIR': str(runtime), 'XDG_STATE_HOME': str(directory / 'state'), 'LIG_LOG': '1'}
             (home / '.zshrc').write_text("PROMPT='lig-test> '\n")
+            # Ubuntu's /etc/zsh/zshrc runs compinit, which can stop to ask about folders' permissions.
+            (home / '.zshenv').write_text('skip_global_compinit=1\n')
             subprocess.run([BIN, 'install', 'zsh'], env=dict(os.environ, **env), check=True, capture_output=True)
             base = ['tmux', '-S', str(directory / 'socket'), '-f', '/dev/null']
 

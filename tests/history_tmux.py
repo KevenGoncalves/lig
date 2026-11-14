@@ -37,6 +37,8 @@ class HistoryTmux(unittest.TestCase):
         home.mkdir()
         runtime.mkdir(mode=0o700)
         (home / '.zsh_history').write_text(': 1700000000:0;echo imported-from-zsh\n')
+        # Ubuntu's /etc/zsh/zshrc runs compinit, which can stop to ask about folders' permissions.
+        (home / '.zshenv').write_text('skip_global_compinit=1\n')
         self.state = directory / 'state'
         env = {'HOME': str(home), 'ZDOTDIR': str(home), 'XDG_CONFIG_HOME': str(home / '.config'),
                'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
