@@ -321,6 +321,11 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     let _mirror = shell_pid.and_then(|pid| {
         crate::mirror::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
     });
+    // macOS: the zellij mirror above takes zellij's API; this one is what `ps`, tmux and WezTerm see.
+    #[cfg(target_os = "macos")]
+    let _mirror_argv = shell_pid.and_then(|pid| {
+        crate::mirror_argv::spawn(pid, std::env::var_os("SHELL").unwrap_or_else(|| shell.clone().into_os_string()))
+    });
 
     let raw = term::RawMode::enable()?;
     let (origin, typeahead) = terminal_origin();

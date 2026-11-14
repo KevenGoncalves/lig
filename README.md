@@ -253,12 +253,14 @@ args = { name = "service", generators = { script = ["deploy", "list-services"] }
 
 ## tmux, zellij and ssh
 
+- Lig shows the program running in a pane, and its folder, as its own: tmux, WezTerm and
+  `ps -t` see `nvim` or `claude` where you work, not `lig shell` (editor plugins that find
+  a coding agent by its pane need this). `LIG_NO_MIRROR=1` turns it off.
 - **tmux**: works as is.
-- **zellij**: on Linux, Lig shows each pane's app to zellij, so session resurrection brings
-  the pane back as that app in the right folder, not as `lig shell`. On macOS this needs a
-  zellij with `action set-resurrect-command` (newer than 0.45.1). `LIG_NO_MIRROR=1` turns it
-  off. Don't resurrect with `zellij attach --force-run-commands`: the prompt zellij shows
-  for each pane is the safety net.
+- **zellij**: session resurrection brings each pane back as its app in the right folder, not
+  as `lig shell`. On macOS this needs a zellij with `action set-resurrect-command` (newer
+  than 0.45.1). Don't resurrect with `zellij attach --force-run-commands`: the prompt zellij
+  shows for each pane is the safety net.
 - **ssh**: `scp` and `rsync` complete paths on the host (`scp notes.txt pi:Doc` →
   `pi:Documents/`) when the login needs no password (a key, ssh-agent or a `ControlMaster`
   connection). `lig ssh admin@pi` logs in like `ssh` and brings the popup to the host's zsh

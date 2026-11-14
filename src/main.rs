@@ -12,6 +12,9 @@ mod mirror;
 #[cfg(target_os = "macos")]
 #[path = "mirror_macos.rs"]
 mod mirror;
+#[cfg(target_os = "macos")]
+#[path = "mirror_argv_macos.rs"]
+mod mirror_argv;
 #[cfg(unix)]
 mod mirror_policy;
 mod osc;
@@ -63,7 +66,7 @@ enum Cmd {
         /// Start it as a login shell
         #[arg(long)]
         login: bool,
-        /// Spaces added by the zellij re-exec: room for the mirrored argv
+        /// Spaces added by the re-exec: room for the mirrored argv
         #[arg(hide = true, value_parser = parse_pad)]
         pad: Option<String>,
     },
@@ -731,25 +734,22 @@ fn tempfile_dir(parent: &Path) -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// `read` returns the lig shell's `/proc/<pid>/cmdline`, already polled.
-#[cfg(all(unix, any(target_os = "linux", test)))]
-fn mirror_status(lig_pid: Option<u32>, zellij: bool, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
-    if !zellij {
-        return "[off ] zellij mirror: not in zellij".into();
-    }
+/// `read` returns the lig shell's argv, NUL-joined and already polled.
+#[cfg(unix)]
+fn mirror_status(lig_pid: Option<u32>, no_mirror: bool, read: impl Fn() -> Option<Vec<u8>>) -> String {
     if no_mirror {
-        return "[off ] zellij mirror: LIG_NO_MIRROR set".into();
+        return "[off ] mirror: LIG_NO_MIRROR set".into();
     }
     if lig_pid.is_none() {
-        return "[off ] zellij mirror: not in a lig pane".into();
+        return "[off ] mirror: not in a lig pane".into();
     }
     match lig_pid.and_then(|_| read()) {
-        Some(c) if shows_doctor(&c) => format!("[ok  ] zellij mirror: on, argv area {} bytes", c.len()),
-        _ => "[off ] zellij mirror: not mirroring (see LIG_LOG)".into(),
+        Some(c) if shows_doctor(&c) => format!("[ok  ] mirror: on, argv area {} bytes", c.len()),
+        _ => "[off ] mirror: not mirroring (see LIG_LOG)".into(),
     }
 }
 
-#[cfg(all(unix, any(target_os = "linux", test)))]
+#[cfg(unix)]
 fn shows_doctor(cmdline: &[u8]) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let mut args = cmdline.split(|&b| b == 0);
@@ -759,11 +759,19 @@ fn shows_doctor(cmdline: &[u8]) -> bool {
 }
 
 /// Polls for up to 1.5 s, until the mirror shows `lig doctor`.
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn read_lig_cmdline(pid: u32) -> Option<Vec<u8>> {
     let mut last = None;
     for _ in 0..15 {
-        last = std::fs::read(format!("/proc/{pid}/cmdline")).ok();
+        #[cfg(target_os = "linux")]
+        {
+            last = std::fs::read(format!("/proc/{pid}/cmdline")).ok();
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            last = process::argv(pid).map(|a| a.iter().flat_map(|a| a.as_bytes().iter().copied().chain([0])).collect());
+        }
         if last.as_deref().is_some_and(shows_doctor) {
             break;
         }
@@ -831,25 +839,16 @@ fn doctor() -> Result<()> {
     }
     #[cfg(unix)]
     let lig_pid = std::env::var("LIG_PID").ok().and_then(|v| v.parse::<u32>().ok());
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     println!(
         "{}",
-        mirror_status(
-            lig_pid,
-            std::env::var_os("ZELLIJ").is_some(),
-            std::env::var_os("LIG_NO_MIRROR").is_some(),
-            || lig_pid.and_then(read_lig_cmdline),
-        )
+        mirror_status(lig_pid, std::env::var_os("LIG_NO_MIRROR").is_some(), || lig_pid.and_then(read_lig_cmdline))
     );
+    // zellij's resurrection takes its own API on macOS.
     #[cfg(target_os = "macos")]
-    println!(
-        "{}",
-        mirror::doctor_status(
-            lig_pid,
-            std::env::var_os("ZELLIJ").is_some(),
-            std::env::var_os("LIG_NO_MIRROR").is_some()
-        )
-    );
+    if std::env::var_os("ZELLIJ").is_some() {
+        println!("{}", mirror::doctor_status(lig_pid, true, std::env::var_os("LIG_NO_MIRROR").is_some()));
+    }
     Ok(())
 }
 
@@ -1089,32 +1088,32 @@ fn default_shell() -> PathBuf {
     std::env::var_os("SHELL").map(PathBuf::from).filter(|p| Path::new(p).exists()).unwrap_or_else(|| "/bin/zsh".into())
 }
 
-/// Bytes of padding the zellij re-exec appends to `lig shell`'s argv.
+/// Bytes of padding the re-exec appends to `lig shell`'s argv.
 #[cfg(unix)]
 const ARGV_PAD: usize = 4096;
 
-/// Re-exec `lig shell` with a pad positional so the zellij mirror has room for long
-/// command lines. Detected by the positional, not an env var, so a nested lig doesn't inherit it.
+/// Re-exec `lig shell` with a pad positional so the mirror has room for long command lines.
+/// Detected by the positional, not an env var, so a nested lig doesn't inherit it.
 #[cfg(unix)]
-fn needs_reexec(args: &[std::ffi::OsString], zellij: bool, no_mirror: bool) -> bool {
+fn needs_reexec(args: &[std::ffi::OsString], no_mirror: bool) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let padded = args.iter().skip(2).any(|a| !a.is_empty() && a.as_bytes().iter().all(|&b| b == b' '));
-    zellij && !no_mirror && args.get(1).is_some_and(|a| a == "shell") && !padded
+    !no_mirror && args.get(1).is_some_and(|a| a == "shell") && !padded
 }
 
 fn main() -> Result<()> {
     #[cfg(unix)]
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     #[cfg(unix)]
-    let zellij = std::env::var_os("ZELLIJ").is_some();
-    #[cfg(unix)]
-    if cfg!(target_os = "linux") && needs_reexec(&args, zellij, std::env::var_os("LIG_NO_MIRROR").is_some()) {
+    if needs_reexec(&args, std::env::var_os("LIG_NO_MIRROR").is_some()) {
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new("/proc/self/exe")
-            .arg0(&args[0])
-            .args(&args[1..])
-            .arg(" ".repeat(ARGV_PAD))
-            .exec();
+        // On Linux, the running binary even if `lig update` replaced the file.
+        let exe = if cfg!(target_os = "linux") {
+            PathBuf::from("/proc/self/exe")
+        } else {
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&args[0]))
+        };
+        let err = std::process::Command::new(exe).arg0(&args[0]).args(&args[1..]).arg(" ".repeat(ARGV_PAD)).exec();
         log(&format!("mirror: re-exec with argv padding failed: {err}; continuing unpadded"));
     }
     let cli = Cli::parse();
@@ -1211,60 +1210,48 @@ mod shell_tests {
     }
 
     #[test]
-    fn needs_reexec_only_for_shell_in_zellij() {
+    fn needs_reexec_only_for_shell() {
         let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh"]);
-        assert!(needs_reexec(&a, true, false));
-        assert!(!needs_reexec(&a, false, false));
-        assert!(!needs_reexec(&a, true, true));
-        assert!(!needs_reexec(&os(&["lig", "doctor"]), true, false));
-    }
-
-    #[test]
-    fn mirror_status_off_outside_zellij() {
-        assert_eq!(mirror_status(Some(1), false, false, || None), "[off ] zellij mirror: not in zellij");
+        assert!(needs_reexec(&a, false));
+        assert!(!needs_reexec(&a, true));
+        assert!(!needs_reexec(&os(&["lig", "doctor"]), false));
     }
 
     #[test]
     fn mirror_status_off_when_disabled() {
-        assert_eq!(mirror_status(Some(1), true, true, || None), "[off ] zellij mirror: LIG_NO_MIRROR set");
+        assert_eq!(mirror_status(Some(1), true, || None), "[off ] mirror: LIG_NO_MIRROR set");
     }
 
     #[test]
     fn mirror_status_on_when_cmdline_shows_doctor() {
         let mut area = b"lig\0doctor\0".to_vec();
         area.resize(4105, 0);
-        assert_eq!(
-            mirror_status(Some(1), true, false, || Some(area.clone())),
-            "[ok  ] zellij mirror: on, argv area 4105 bytes"
-        );
+        assert_eq!(mirror_status(Some(1), false, || Some(area.clone())), "[ok  ] mirror: on, argv area 4105 bytes");
     }
 
     #[test]
     fn mirror_status_on_with_full_lig_path() {
         let mut area = b"/usr/bin/lig\0doctor\0".to_vec();
         area.resize(4105, 0);
-        assert_eq!(
-            mirror_status(Some(1), true, false, || Some(area.clone())),
-            "[ok  ] zellij mirror: on, argv area 4105 bytes"
-        );
+        assert_eq!(mirror_status(Some(1), false, || Some(area.clone())), "[ok  ] mirror: on, argv area 4105 bytes");
         let other = b"/usr/bin/liggy\0doctor\0".to_vec();
-        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+        assert!(mirror_status(Some(1), false, || Some(other.clone())).contains("not mirroring"));
         let other = b"lig\0doctors\0".to_vec();
-        assert!(mirror_status(Some(1), true, false, || Some(other.clone())).contains("not mirroring"));
+        assert!(mirror_status(Some(1), false, || Some(other.clone())).contains("not mirroring"));
     }
 
     #[test]
     fn mirror_status_not_mirroring() {
         let orig = b"lig\0shell\0--shell\0/usr/bin/zsh\0".to_vec();
-        let want = "[off ] zellij mirror: not mirroring (see LIG_LOG)";
-        assert_eq!(mirror_status(Some(1), true, false, || Some(orig.clone())), want);
-        assert_eq!(mirror_status(Some(1), true, false, || None), want);
+        let want = "[off ] mirror: not mirroring (see LIG_LOG)";
+        assert_eq!(mirror_status(Some(1), false, || Some(orig.clone())), want);
+        assert_eq!(mirror_status(Some(1), false, || None), want);
     }
 
     #[test]
     fn mirror_status_without_lig_pid_is_not_a_lig_pane() {
-        let want = "[off ] zellij mirror: not in a lig pane";
-        assert_eq!(mirror_status(None, true, false, || panic!("read without LIG_PID")), want);
+        let want = "[off ] mirror: not in a lig pane";
+        assert_eq!(mirror_status(None, false, || panic!("read without LIG_PID")), want);
     }
 
     #[test]
@@ -1281,7 +1268,7 @@ mod shell_tests {
     fn needs_reexec_false_when_padded() {
         let pad = " ".repeat(4096);
         let a = os(&["lig", "shell", "--shell", "/usr/bin/zsh", &pad]);
-        assert!(!needs_reexec(&a, true, false));
+        assert!(!needs_reexec(&a, false));
     }
 
     #[test]

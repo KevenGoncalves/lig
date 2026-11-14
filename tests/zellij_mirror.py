@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lig mirrors the foreground app's argv/cwd for zellij. Run after cargo build --release: python3 tests/zellij_mirror.py."""
+"""lig mirrors the foreground app's argv/cwd (zellij, tmux, ps). Run after cargo build --release: python3 tests/zellij_mirror.py."""
 import os
 import shutil
 import time
@@ -82,15 +82,15 @@ class ZellijMirror(unittest.TestCase):
         with open(f'/proc/{pid}/comm') as f:
             self.assertEqual(f.read().strip(), 'lig')
 
-    def test_no_zellij_untouched(self):
+    def test_mirrors_outside_zellij_too(self):
+        # For tmux, WezTerm and `ps -t` (issue #32: an editor plugin looking for a coding agent).
         os.environ.pop('ZELLIJ', None)
         pid = self.start()
-        # Longer than a mirror tick (1 s), so a running mirror would have rewritten it.
-        self.term.read(1.5)
-        a = args(pid)
-        self.assertEqual(a[0], str(BIN))
-        self.assertIn('shell', a)
-        self.assertLess(len(cmdline(pid)), PAD)
+        wait_cmdline(pid, lambda a: a == [ZSH])
+        self.term.send('cd /tmp && sleep 30\r')
+        wait_cmdline(pid, lambda a: a == ['sleep', '30'])
+        self.assertEqual(os.readlink(f'/proc/{pid}/cwd'), '/tmp')
+        self.term.send(b'\x03')
 
     def test_no_mirror_untouched(self):
         os.environ['LIG_NO_MIRROR'] = '1'

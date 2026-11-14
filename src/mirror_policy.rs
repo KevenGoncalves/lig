@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
@@ -26,7 +26,6 @@ pub fn fits(args: &[OsString], len: usize) -> bool {
 }
 
 /// NUL-join `args` and zero-fill to `len` (the last byte is always NUL); `None` if it does not fit.
-#[cfg(any(target_os = "linux", test))]
 pub fn layout(args: &[OsString], len: usize) -> Option<Vec<u8>> {
     if !fits(args, len) {
         return None;
@@ -38,6 +37,60 @@ pub fn layout(args: &[OsString], len: usize) -> Option<Vec<u8>> {
     }
     out.resize(len, 0);
     Some(out)
+}
+
+/// What the mirror last wrote. The default matches nothing real, so the first tick always writes.
+#[derive(Default, PartialEq)]
+pub struct State {
+    pub argv: Vec<u8>,
+    pub cwd: PathBuf,
+}
+
+/// Write `bytes` over `area` and zero the old tail; the last byte is never touched.
+pub fn write_area(area: &mut [u8], bytes: &[u8]) {
+    let Some(last) = area.len().checked_sub(1) else {
+        return;
+    };
+    let bytes = &bytes[..bytes.len().min(last)];
+    let content = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    area[..content].copy_from_slice(&bytes[..content]);
+    area[content..last].fill(0);
+}
+
+/// `chdir` before `write_argv`, so a reader never sees the new argv with the old cwd.
+/// A failed `chdir` leaves `prev.cwd` alone, so it is retried. `true` if anything changed.
+pub fn commit(
+    prev: &mut State,
+    next: State,
+    write_argv: impl FnOnce(&[u8]),
+    chdir: impl FnOnce(&Path) -> bool,
+) -> bool {
+    let mut changed = false;
+    if next.cwd != prev.cwd && chdir(&next.cwd) {
+        prev.cwd = next.cwd;
+        changed = true;
+    }
+    if next.argv != prev.argv {
+        write_argv(&next.argv);
+        prev.argv = next.argv;
+        changed = true;
+    }
+    changed
+}
+
+/// Send the mirror threads' panics (`lig-mirror…`) to `crate::log`: stderr is the raw-mode pane.
+pub fn log_panics() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().name().is_some_and(|n| n.starts_with("lig-mirror")) {
+                crate::log(&format!("mirror: panic: {info}"));
+            } else {
+                prev(info);
+            }
+        }));
+    });
 }
 
 fn basename(argv: &[OsString]) -> &[u8] {
@@ -130,6 +183,51 @@ mod tests {
         let (out, rule) = rules(&argv);
         assert_eq!(rule, Rule::App);
         assert_eq!(out.unwrap()[1].as_bytes(), b"caf\xe9.txt");
+    }
+
+    #[test]
+    fn write_area_keeps_last_nul() {
+        let mut area = [0u8; 32];
+        write_area(&mut area, &layout(&os(&["nvim", "--clean", "README.md"]), 32).unwrap());
+        assert_eq!(&area[..23], b"nvim\0--clean\0README.md\0");
+        assert_eq!(area[31], 0);
+        write_area(&mut area, &layout(&os(&["/bin/zsh"]), 32).unwrap());
+        assert_eq!(&area[..9], b"/bin/zsh\0");
+        assert!(area[9..].iter().all(|&b| b == 0));
+        let mut area = [0u8; 8];
+        write_area(&mut area, b"abcdefgh");
+        assert_eq!(&area, b"abcdefg\0");
+    }
+
+    #[test]
+    fn commit_chdirs_before_argv() {
+        let order = std::cell::RefCell::new(Vec::new());
+        let mut prev = State::default();
+        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/tmp") };
+        let changed = commit(
+            &mut prev,
+            next,
+            |_| order.borrow_mut().push("argv"),
+            |_| {
+                order.borrow_mut().push("chdir");
+                true
+            },
+        );
+        assert!(changed);
+        assert_eq!(*order.borrow(), ["chdir", "argv"]);
+        assert_eq!(prev.cwd, PathBuf::from("/tmp"));
+        assert_eq!(prev.argv, b"nvim\0");
+    }
+
+    #[test]
+    fn commit_keeps_old_cwd_when_chdir_fails() {
+        let mut prev = State { argv: b"zsh\0".to_vec(), cwd: PathBuf::from("/old") };
+        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/gone") };
+        assert!(commit(&mut prev, next, |_| (), |_| false));
+        assert_eq!(prev.cwd, PathBuf::from("/old"), "a failed chdir is retried next tick");
+        assert_eq!(prev.argv, b"nvim\0");
+        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/gone") };
+        assert!(!commit(&mut prev, next, |_| panic!("argv unchanged"), |_| false));
     }
 
     #[test]

@@ -1,6 +1,8 @@
-//! The zellij "mirror": lig rewrites its own argv and cwd to look like the
-//! foreground app on its inner PTY. zellij's session resurrection reads the pane
-//! process's `/proc/<pid>/cmdline` and `cwd`, which would otherwise always be `lig shell`.
+//! The "mirror": lig rewrites its own argv and cwd to look like the foreground app on
+//! its inner PTY. Whatever reads the terminal's process otherwise sees `lig shell` in the
+//! directory lig started in: zellij's session resurrection (`/proc/<pid>/cmdline` and `cwd`),
+//! tmux's window names and `#{pane_current_path}`, WezTerm, and tools that find a program by
+//! its terminal (`ps -t`), like Neovim plugins looking for a coding agent.
 //!
 //! Once a second the argv area (fields 48/49 of `/proc/self/stat`) is rewritten;
 //! `main()` re-execs `lig shell` with a 4096-space pad to make room. The area's last
@@ -12,21 +14,13 @@
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStringExt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 const THREAD: &str = "lig-mirror";
 
-use crate::mirror_policy::{Rule, layout, rules};
-
-/// What the mirror last wrote. The default matches nothing real, so the first tick always writes.
-#[derive(Default, PartialEq)]
-struct State {
-    argv: Vec<u8>,
-    cwd: PathBuf,
-}
+use crate::mirror_policy::{Rule, State, commit, layout, log_panics, rules, write_area};
 
 fn rule_name(rule: Rule) -> &'static str {
     match rule {
@@ -47,17 +41,6 @@ fn argv_area_from(stat_text: &str) -> Option<(usize, usize)> {
 
 fn argv_area() -> Option<(usize, usize)> {
     argv_area_from(&crate::procfs::stat(std::process::id())?)
-}
-
-/// Write `bytes` over `area` and zero the old tail; the last byte is never touched.
-fn write_area(area: &mut [u8], bytes: &[u8]) {
-    let Some(last) = area.len().checked_sub(1) else {
-        return;
-    };
-    let bytes = &bytes[..bytes.len().min(last)];
-    let content = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-    area[..content].copy_from_slice(&bytes[..content]);
-    area[content..last].fill(0);
 }
 
 /// # Safety
@@ -104,21 +87,6 @@ fn guarded(f: impl FnOnce()) -> bool {
     catch_unwind(AssertUnwindSafe(f)).is_ok()
 }
 
-/// Send mirror-thread panics to `crate::log`: stderr is the raw-mode pane.
-fn install_panic_hook() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        let prev = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            if std::thread::current().name() == Some(THREAD) {
-                crate::log(&format!("mirror: panic: {info}"));
-            } else {
-                prev(info);
-            }
-        }));
-    });
-}
-
 fn display_argv(argv: &[u8]) -> String {
     let end = argv.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
     let shown: Vec<u8> = argv[..end.min(80)].iter().map(|&b| if b == 0 { b' ' } else { b }).collect();
@@ -160,22 +128,6 @@ fn step(shell_pid: u32, shell: &OsStr, area: (usize, usize), prev: &mut State) -
     true
 }
 
-/// `chdir` before `write_argv`, so zellij never sees the new argv with the old cwd.
-/// A failed `chdir` leaves `prev.cwd` alone, so it is retried. `true` if anything changed.
-fn commit(prev: &mut State, next: State, write_argv: impl FnOnce(&[u8]), chdir: impl FnOnce(&Path) -> bool) -> bool {
-    let mut changed = false;
-    if next.cwd != prev.cwd && chdir(&next.cwd) {
-        prev.cwd = next.cwd;
-        changed = true;
-    }
-    if next.argv != prev.argv {
-        write_argv(&next.argv);
-        prev.argv = next.argv;
-        changed = true;
-    }
-    changed
-}
-
 /// On a panic or invariant break, writes `[$SHELL]` once, logs and returns.
 fn run(shell_pid: u32, shell: &OsStr, area: (usize, usize)) {
     let mut prev = State::default();
@@ -194,17 +146,17 @@ fn run(shell_pid: u32, shell: &OsStr, area: (usize, usize)) {
     }
 }
 
-/// `shell` is what a restored idle pane runs. `None` outside zellij, with
-/// `$LIG_NO_MIRROR` set, or when the argv area is unreadable.
+/// `shell` is what an idle pane shows (and zellij restores). `None` with `$LIG_NO_MIRROR`
+/// set, or when the argv area is unreadable.
 pub fn spawn(shell_pid: u32, shell: OsString) -> Option<JoinHandle<()>> {
-    if std::env::var_os("ZELLIJ").is_none() || std::env::var_os("LIG_NO_MIRROR").is_some() {
+    if std::env::var_os("LIG_NO_MIRROR").is_some() {
         return None;
     }
     let Some(area) = argv_area() else {
         crate::log("mirror: argv area unreadable; not mirroring");
         return None;
     };
-    install_panic_hook();
+    log_panics();
     std::thread::Builder::new()
         .name(THREAD.into())
         .spawn(move || run(shell_pid, &shell, area))
@@ -232,20 +184,6 @@ mod tests {
     #[test]
     fn argv_area_from_malformed_is_none() {
         assert_eq!(argv_area_from("1 (x) S"), None);
-    }
-
-    #[test]
-    fn write_area_keeps_last_nul() {
-        let mut area = [0u8; 32];
-        write_area(&mut area, &layout(&os(&["nvim", "--clean", "README.md"]), 32).unwrap());
-        assert_eq!(&area[..23], b"nvim\0--clean\0README.md\0");
-        assert_eq!(area[31], 0);
-        write_area(&mut area, &layout(&os(&["/bin/zsh"]), 32).unwrap());
-        assert_eq!(&area[..9], b"/bin/zsh\0");
-        assert!(area[9..].iter().all(|&b| b == 0));
-        let mut area = [0u8; 8];
-        write_area(&mut area, b"abcdefgh");
-        assert_eq!(&area, b"abcdefg\0");
     }
 
     fn cmd(v: &[&str]) -> std::io::Result<Vec<u8>> {
@@ -305,37 +243,6 @@ mod tests {
         assert_eq!(pick(Some(PathBuf::new()), sh()), PathBuf::from("/sh"));
         assert_eq!(pick(None, sh()), PathBuf::from("/sh"));
         assert_eq!(pick(None, None), PathBuf::from("/prev"));
-    }
-
-    #[test]
-    fn commit_chdirs_before_argv() {
-        let order = std::cell::RefCell::new(Vec::new());
-        let mut prev = State::default();
-        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/tmp") };
-        let changed = commit(
-            &mut prev,
-            next,
-            |_| order.borrow_mut().push("argv"),
-            |_| {
-                order.borrow_mut().push("chdir");
-                true
-            },
-        );
-        assert!(changed);
-        assert_eq!(*order.borrow(), ["chdir", "argv"]);
-        assert_eq!(prev.cwd, PathBuf::from("/tmp"));
-        assert_eq!(prev.argv, b"nvim\0");
-    }
-
-    #[test]
-    fn commit_keeps_old_cwd_when_chdir_fails() {
-        let mut prev = State { argv: b"zsh\0".to_vec(), cwd: PathBuf::from("/old") };
-        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/gone") };
-        assert!(commit(&mut prev, next, |_| (), |_| false));
-        assert_eq!(prev.cwd, PathBuf::from("/old"), "a failed chdir is retried next tick");
-        assert_eq!(prev.argv, b"nvim\0");
-        let next = State { argv: b"nvim\0".to_vec(), cwd: PathBuf::from("/gone") };
-        assert!(!commit(&mut prev, next, |_| panic!("argv unchanged"), |_| false));
     }
 
     #[test]
