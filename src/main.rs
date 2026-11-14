@@ -1110,6 +1110,31 @@ fn default_shell() -> PathBuf {
     std::env::var_os("SHELL").map(PathBuf::from).filter(|p| Path::new(p).exists()).unwrap_or_else(|| "/bin/zsh".into())
 }
 
+/// What `lig config` adds after the defaults.
+const CONFIG_EXAMPLES: &str = r##"
+# [colors] changes any of the theme's: "#rrggbb", a 256-color number, or "default".
+# [colors]
+# bg = "#1e1e2e"
+# fg = "#cdd6f4"
+# selected_bg = "#45475a"
+# selected_fg = "#ffffff"
+# description_fg = "244"
+# selected_description_fg = "250"
+# match_fg = "214"
+# border_fg = "240"
+# border_bg = "default"
+# scrollbar_fg = "238"
+# scrollbar_thumb = "244"
+# info_fg = "244"
+
+# [icons] by name (`lig icons` lists them), by extension ("*.rs") or file name: a glyph,
+# a color, or both.
+# [icons]
+# folder = "📁"
+# git-branch = { color = "208" }
+# "*.rs" = { glyph = "🦀", color = "#dea584" }
+"##;
+
 /// Bytes of padding the re-exec appends to `lig shell`'s argv.
 #[cfg(unix)]
 const ARGV_PAD: usize = 4096;
@@ -1202,6 +1227,8 @@ fn main() -> Result<()> {
         Cmd::Config { what: ConfigCmd::Path } => println!("{}", config::config_path().display()),
         Cmd::Config { what: ConfigCmd::Default } => {
             print!("{}", toml::to_string_pretty(&config::Config::default())?);
+            // These have no defaults (the theme's colors, the built-in icons), so they're shown as examples.
+            print!("{CONFIG_EXAMPLES}");
         }
     }
     Ok(())
@@ -1229,6 +1256,20 @@ mod shell_tests {
 
     fn os(v: &[&str]) -> Vec<std::ffi::OsString> {
         v.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn config_examples_are_valid_settings() {
+        // Uncommented, the examples `lig config` prints are a config file lig reads.
+        let toml: String = CONFIG_EXAMPLES
+            .lines()
+            .filter_map(|l| l.strip_prefix("# "))
+            .filter(|l| l.contains(" = ") || matches!(*l, "[colors]" | "[icons]"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let cfg: config::Config = toml::from_str(&toml).unwrap();
+        assert_eq!(cfg.colors.match_fg.as_deref(), Some("214"));
+        assert_eq!(cfg.icons.len(), 3);
     }
 
     #[test]

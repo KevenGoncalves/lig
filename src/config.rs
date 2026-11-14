@@ -34,6 +34,7 @@ pub fn config_path() -> PathBuf {
 pub struct Config {
     pub ui: Ui,
     /// Override any color of the theme.
+    #[serde(skip_serializing_if = "Colors::is_empty")]
     pub colors: Colors,
     pub keys: Keys,
     pub behavior: Behavior,
@@ -158,6 +159,10 @@ pub struct Colors {
 }
 
 impl Colors {
+    fn is_empty(&self) -> bool {
+        *self == Colors::default()
+    }
+
     fn or(self, older: Colors) -> Colors {
         Colors {
             bg: self.bg.or(older.bg),
