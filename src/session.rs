@@ -1102,6 +1102,9 @@ impl Session {
                 self.unconfirmed.clear();
                 self.editing = false;
                 self.just_accepted = false;
+                // A pick that ran its line right away (`enter_runs_commands`) never saw its line:
+                // the next line, at the next prompt, isn't the one to close the popup for.
+                self.close_after_insert = false;
                 self.manual = false;
                 self.loading = None;
                 if self.pending_enter.take().is_some() {
