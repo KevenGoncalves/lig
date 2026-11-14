@@ -41,6 +41,11 @@ const REPORT_KEY: &str = "\x1b[23;8~";
 /// cmd's prompt marker arrives ahead of the prompt it marks (ConPTY passes it through
 /// before drawing), so the input starts where the cursor rests once output pauses this long.
 const PROMPT_SETTLE: Duration = Duration::from_millis(30);
+/// Resizes come in bursts (a dragged window edge): wait for them to stop this long before
+/// asking the terminal where its cursor went.
+const RESIZE_SETTLE: Duration = Duration::from_millis(40);
+/// How long the terminal has to answer where its cursor is.
+const CURSOR_REPORT_WAIT: Duration = Duration::from_millis(200);
 /// cmd's internal commands, for command names (cmd can't report them).
 const CMD_BUILTINS: &[&str] = &[
     "assoc", "break", "call", "cd", "chdir", "cls", "color", "copy", "date", "del", "dir", "echo", "endlocal", "erase",
@@ -88,6 +93,71 @@ fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
         return Some((row, col));
     }
     None
+}
+
+/// How many cursor position reports `input` holds.
+fn cursor_reports(input: &[u8]) -> usize {
+    let mut rest = input.to_vec();
+    std::iter::from_fn(|| take_cursor_report(&mut rest)).count()
+}
+
+/// `rect` moved up `by` rows (down if negative), clipped to a screen `rows` high.
+fn shifted(rect: Rect, by: i32, rows: u16) -> Option<Rect> {
+    let top = (i32::from(rect.row) - by).max(0);
+    let bottom = (i32::from(rect.row) + i32::from(rect.height) - by).min(i32::from(rows));
+    (top < bottom).then(|| Rect { row: top as u16, height: (bottom - top) as u16, ..rect })
+}
+
+/// Resize the screen model to `rows`×`cols` and scroll it so its cursor lands on `cursor`,
+/// where the terminal's is. Returns the rows it scrolled up (down if negative).
+fn follow_terminal(parser: &mut vt100::Parser, rows: u16, cols: u16, (row, col): (u16, u16)) -> i32 {
+    let shift = i32::from(parser.screen().cursor_position().0) - i32::from(row);
+    if shift > 0 {
+        // Up before shrinking, out of the rows that shrinking cuts off the bottom.
+        parser.process(format!("\x1b[{shift}S").as_bytes());
+    }
+    parser.screen_mut().set_size(rows, cols);
+    if shift < 0 {
+        // Down after growing, into the rows growing adds at the bottom.
+        parser.process(format!("\x1b[{}T", -shift).as_bytes());
+    }
+    parser.process(format!("\x1b[{};{}H", row + 1, col + 1).as_bytes());
+    shift
+}
+
+/// A resize, or a pager's exit, after which the screen model must catch up with the terminal:
+/// terminals keep their content anchored to the cursor (scrolling it into or out of their
+/// scrollback) where vt100 only cuts or adds rows at the bottom. lig asks the terminal where its
+/// cursor is and scrolls the model by as much; shell output waits meanwhile, so both cursors are
+/// compared at the same point of the stream.
+struct Resync {
+    /// The size the model is to get (`None`: it has it already).
+    size: Option<(u16, u16)>,
+    /// When to ask.
+    ask_at: Instant,
+    /// When it was asked; the answer is awaited for [`CURSOR_REPORT_WAIT`].
+    asked: Option<Instant>,
+    /// Resized again after asking: the answer is for an older size.
+    stale: bool,
+    /// Shell output that waits.
+    held: Vec<u8>,
+    /// The start of the answer, when it came split between two reads.
+    partial: Vec<u8>,
+}
+
+/// The tail of `input` that may be the start of a cursor report (`ESC [ 12 ; 3`).
+fn report_start(input: &[u8]) -> usize {
+    match input.iter().rposition(|&b| b == 0x1b) {
+        Some(i)
+            if input[i + 1..]
+                .iter()
+                .enumerate()
+                .all(|(j, &b)| if j == 0 { b == b'[' } else { b.is_ascii_digit() || b == b';' }) =>
+        {
+            input.len() - i
+        }
+        _ => 0,
+    }
 }
 
 /// The outer terminal can already contain output when lig starts. Establish its
@@ -331,6 +401,9 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         dismissed: None,
         dismissed_by: None,
         drawn: None,
+        resync: None,
+        normal_unsynced: false,
+        shell_cursor_queries: 0,
         sync_open: false,
         dirty: false,
         dirty_since: Instant::now(),
@@ -644,6 +717,14 @@ struct Session {
     dismissed: Option<String>,
     dismissed_by: Option<(Key, Instant)>,
     drawn: Option<Rect>,
+    /// The model catching up with a resized terminal (see [`Resync`]).
+    resync: Option<Resync>,
+    /// The terminal was resized while a pager had the alternate screen: the normal screen is
+    /// checked once it's back.
+    normal_unsynced: bool,
+    /// Cursor position questions the shell (or a program) sent the terminal, not answered yet:
+    /// lig asks only when there are none, so it never takes their answer.
+    shell_cursor_queries: usize,
     /// A synchronized-output block is open (see `begin_sync`).
     sync_open: bool,
     /// A redraw is due, once output settles (see [`DEBOUNCE`]).
@@ -655,6 +736,7 @@ struct Session {
 impl Session {
     fn event_loop(&mut self, rx: &Receiver<Event>) {
         loop {
+            self.resync_tick();
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
@@ -667,7 +749,12 @@ impl Session {
                     }
                 }
             }
-            let mut deadline = self.dirty.then(|| (self.last_output + DEBOUNCE).min(self.dirty_since + MAX_DELAY));
+            // No drawing while the model catches up with the terminal (see `Resync`).
+            let mut deadline = (self.dirty && self.resync.is_none())
+                .then(|| (self.last_output + DEBOUNCE).min(self.dirty_since + MAX_DELAY));
+            if let Some(w) = self.resync_wake() {
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
             if let Some(w) = self.fish_refresh.as_ref().and_then(FishRefresh::wake) {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
@@ -726,8 +813,27 @@ impl Session {
                 }
             };
             match ev {
-                Event::Output(data) => self.on_output(&data),
-                Event::Input(data) => self.on_input(&data),
+                Event::Output(data) => match &mut self.resync {
+                    Some(r) => r.held.extend_from_slice(&data),
+                    None => self.on_output(&data),
+                },
+                Event::Input(mut data) => {
+                    if let Some(r) = self.resync.as_mut().filter(|r| r.asked.is_some()) {
+                        data.splice(0..0, std::mem::take(&mut r.partial));
+                        if let Some(report) = take_cursor_report(&mut data) {
+                            self.resynced(Some(report));
+                        } else {
+                            let tail = report_start(&data);
+                            r.partial = data.split_off(data.len() - tail);
+                        }
+                    } else {
+                        // Answers to the shell's questions, on their way to it.
+                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
+                    }
+                    if !data.is_empty() {
+                        self.on_input(&data);
+                    }
+                }
                 Event::Done { line, items, loading, command } => self.on_done(line, items, loading, command),
                 Event::Resize => self.on_resize(),
                 Event::Exit => return,
@@ -838,6 +944,8 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
+        let pager = self.parser.screen().alternate_screen();
+        self.shell_cursor_queries += fwd.windows(4).filter(|w| *w == b"\x1b[6n").count();
         // ConPTY asks its terminal for win32-input-mode; passed on, the terminal would send lig
         // keys it can't read. lig types plain VT, which ConPTY reads too.
         if cfg!(windows) {
@@ -895,6 +1003,17 @@ impl Session {
         }
         if self.editing && self.prompt_end.is_some() {
             self.read_line_from_screen();
+        }
+        // Back from a pager that saw a resize: check the normal screen now.
+        if pager && !self.parser.screen().alternate_screen() && std::mem::take(&mut self.normal_unsynced) {
+            self.resync = Some(Resync {
+                size: None,
+                ask_at: Instant::now(),
+                asked: None,
+                stale: false,
+                held: vec![],
+                partial: vec![],
+            });
         }
         self.update_foreign();
         self.last_output = Instant::now();
@@ -1555,12 +1674,102 @@ impl Session {
         self.items_line.clear();
     }
 
+    /// The shell learns the new size right away; the model follows once the terminal says where
+    /// its content went (see [`Resync`]).
     fn on_resize(&mut self) {
         let Some((rows, cols)) = term::size() else { return };
-        self.clear_popup();
         self.shell_pty.resize(rows, cols);
-        self.parser.screen_mut().set_size(rows, cols);
+        let ask_at = Instant::now() + RESIZE_SETTLE;
+        match &mut self.resync {
+            Some(r) => {
+                r.size = Some((rows, cols));
+                r.ask_at = ask_at;
+                r.stale |= r.asked.is_some();
+            }
+            None => {
+                self.resync = Some(Resync {
+                    size: Some((rows, cols)),
+                    ask_at,
+                    asked: None,
+                    stale: false,
+                    held: vec![],
+                    partial: vec![],
+                });
+            }
+        }
+    }
+
+    fn resync_wake(&self) -> Option<Instant> {
+        let r = self.resync.as_ref()?;
+        Some(match r.asked {
+            Some(at) => at + CURSOR_REPORT_WAIT,
+            // Waiting for the shell's own answers: look again shortly.
+            None if self.shell_cursor_queries > 0 && Instant::now() >= r.ask_at => Instant::now() + DEBOUNCE,
+            None => r.ask_at,
+        })
+    }
+
+    fn resync_tick(&mut self) {
+        let now = Instant::now();
+        let pager = self.parser.screen().alternate_screen();
+        let Some(r) = &mut self.resync else { return };
+        match r.asked {
+            None if now >= r.ask_at => {
+                if pager {
+                    // A pager redraws itself at the new size; the normal screen is checked when it exits.
+                    let r = self.resync.take().unwrap();
+                    if let Some((rows, cols)) = r.size {
+                        self.parser.screen_mut().set_size(rows, cols);
+                    }
+                    self.normal_unsynced = true;
+                    self.mark_dirty();
+                    self.on_output(&r.held);
+                    return;
+                }
+                // The shell's question goes first: its answer must reach it, not lig.
+                if self.shell_cursor_queries > 0 && now < r.ask_at + CURSOR_REPORT_WAIT {
+                    return;
+                }
+                self.shell_cursor_queries = 0;
+                r.asked = Some(now);
+                self.write_out(b"\x1b[6n");
+            }
+            Some(at) if now >= at + CURSOR_REPORT_WAIT => self.resynced(None),
+            _ => {}
+        }
+    }
+
+    /// The terminal said where its cursor is (1-based), or didn't in time: move the model, the
+    /// popup on it and bash's prompt marker to match, then let the held output through.
+    fn resynced(&mut self, report: Option<(u16, u16)>) {
+        let Some(r) = self.resync.as_mut() else { return };
+        if std::mem::take(&mut r.stale) {
+            // For a size since replaced: ask again.
+            r.asked = None;
+            return;
+        }
+        let r = self.resync.take().unwrap();
+        let (rows, cols) = r.size.unwrap_or_else(|| self.parser.screen().size());
+        let old_cols = self.parser.screen().size().1;
+        let (row, col) = self.parser.screen().cursor_position();
+        // Without an answer, assume what most terminals do: scroll just enough to keep the cursor on screen.
+        let (row, col) = report.map_or((row, col), |(r, c)| (r - 1, c - 1));
+        let shift = follow_terminal(&mut self.parser, rows, cols, (row.min(rows - 1), col.min(cols - 1)));
+        crate::log(&format!("resized to {rows}x{cols}: content moved {shift} rows (reported: {})", report.is_some()));
+        if let Some(prompt) = &mut self.prompt_end {
+            prompt.row = (i32::from(prompt.row) - shift).clamp(0, i32::from(rows) - 1) as u16;
+        }
+        self.drawn = self.drawn.and_then(|rect| shifted(rect, shift, rows));
+        self.shown = self.shown.and_then(|rect| shifted(rect, shift, rows));
+        if shift < 0 || cols != old_cols {
+            // Rows above came back from the terminal's scrollback or were rewrapped: unknown now
+            // (`known_from` keeps this to the rows above the cursor).
+            self.unknown_rows = u16::MAX;
+        }
         self.mark_dirty();
+        if !r.held.is_empty() {
+            self.on_output(&r.held);
+        }
     }
 
     // ------------------------------------------------------------ drawing
@@ -1600,6 +1809,11 @@ impl Session {
     }
 
     fn render(&mut self) {
+        // The model is about to move (see `Resync`): draw once it has.
+        if self.resync.is_some() {
+            self.mark_dirty();
+            return;
+        }
         self.dirty = false;
         let mut w = vec![];
         let stuck = self.osc.take_pending();
@@ -1761,6 +1975,45 @@ mod tests {
         let mut parser = vt100::Parser::new(30, 100, 0);
         parser.process(b"\x1b[12;24Htest> git ch");
         assert_eq!(parser.screen().cursor_position(), (11, 35));
+    }
+
+    #[test]
+    fn shifted_popup_is_clipped_to_the_screen() {
+        let rect = Rect { row: 10, col: 4, height: 5, width: 20 };
+        assert_eq!(shifted(rect, 3, 30), Some(Rect { row: 7, ..rect }));
+        assert_eq!(shifted(rect, 12, 30), Some(Rect { row: 0, height: 3, ..rect }));
+        assert_eq!(shifted(rect, -18, 30), Some(Rect { row: 28, height: 2, ..rect }));
+        assert_eq!(shifted(rect, 0, 12), Some(Rect { height: 2, ..rect }));
+        assert_eq!(shifted(rect, 15, 30), None);
+    }
+
+    #[test]
+    fn the_model_follows_the_terminals_cursor() {
+        let mut parser = vt100::Parser::new(10, 20, 0);
+        for n in 0..9 {
+            parser.process(format!("line{n}\r\n").as_bytes());
+        }
+        parser.process(b"$ ");
+        // Shrunk to 6 rows, the terminal kept the cursor (row 9) on its last row: 4 rows went up.
+        assert_eq!(follow_terminal(&mut parser, 6, 20, (5, 2)), 4);
+        assert_eq!(parser.screen().size(), (6, 20));
+        assert_eq!(parser.screen().contents_between(0, 0, 0, 20), "line4");
+        assert_eq!(parser.screen().contents_between(5, 0, 5, 20).trim_end(), "$");
+        assert_eq!(parser.screen().cursor_position(), (5, 2));
+        // Grown back, the terminal brought 3 rows back from its scrollback: they're blank here.
+        assert_eq!(follow_terminal(&mut parser, 9, 20, (8, 2)), -3);
+        assert_eq!(parser.screen().contents_between(3, 0, 3, 20), "line4");
+        assert_eq!(parser.screen().cursor_position(), (8, 2));
+    }
+
+    #[test]
+    fn cursor_reports_split_between_reads() {
+        assert_eq!(cursor_reports(b"a\x1b[3;4Rb\x1b[1;1R"), 2);
+        assert_eq!(cursor_reports(b"\x1b[A"), 0);
+        assert_eq!(report_start(b"git\x1b[12;"), 5);
+        assert_eq!(report_start(b"git\x1b"), 1);
+        assert_eq!(report_start(b"git\x1b[A"), 0);
+        assert_eq!(report_start(b"git"), 0);
     }
 
     #[test]

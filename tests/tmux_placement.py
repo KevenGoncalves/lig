@@ -35,7 +35,18 @@ class TmuxPlacement(unittest.TestCase):
             self.skipTest('zsh is unavailable')
         self.check_pane(35, shell=shell)
 
-    def check_pane(self, lines, terminal='screen', width=100, height=30, shell=None):
+    # A split opening and closing resizes the pane: tmux scrolls its content to keep the cursor
+    # in view, and lig's screen model must follow (issue #25).
+    def test_split_and_close_preserve_output(self):
+        self.check_pane(35, split=True)
+
+    def test_bash_split_and_close_preserve_output(self):
+        shell = shutil.which('bash')
+        if not shell:
+            self.skipTest('bash is unavailable')
+        self.check_pane(35, shell=shell, split=True)
+
+    def check_pane(self, lines, terminal='screen', width=100, height=30, shell=None, split=False):
         with tempfile.TemporaryDirectory(prefix='lig-tmux-') as directory:
             directory = Path(directory)
             config = directory / 'tmux.conf'
@@ -95,10 +106,17 @@ class TmuxPlacement(unittest.TestCase):
                 prompt_row = next(i for i, line in enumerate(popup) if line.startswith('lig-test'))
                 menu_row = next(i for i, line in enumerate(popup) if 'checkout' in line)
                 self.assertEqual(menu_row, prompt_row + 2, '\n'.join(popup))
+                if split:
+                    tmux('split-window', '-v', '-t', 'test:0.0', 'sleep 30')
+                    time.sleep(.5)
+                    tmux('kill-pane', '-t', 'test:0.1')
+                    wait_for('checkout')
+                    time.sleep(.5)
                 tmux('send-keys', '-t', 'test:0.0', 'Escape')
                 deadline = time.monotonic() + 3
                 while 'checkout' in capture() and time.monotonic() < deadline:
                     time.sleep(.02)
+                self.assertNotIn('checkout', capture(), 'the popup stayed on screen')
                 after = capture(history=True)
                 def prior_output(text):
                     return [line for line in text.splitlines() if line and not line.startswith('lig-test')]
