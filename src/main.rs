@@ -916,7 +916,13 @@ fn new_spec(command: &str, from_help: bool, force: bool) -> Result<()> {
         None => {
             let cfg = config::Config::load().behavior;
             let mut loader = help::HelpLoader::new(std::time::Duration::from_millis(cfg.help_timeout_ms), vec![]);
-            match loader.lookup(&[command.to_string()], &std::env::current_dir()?, &[], true) {
+            loader.any_program = true;
+            let cwd = std::env::current_dir()?;
+            match loader.lookup(&[command.to_string()], &cwd, &[], true) {
+                // The popup won't run a script's `--help`, so the subcommands' is read now.
+                help::Lookup::Found(Some(s)) if !help::runs_help(command) => {
+                    (std::sync::Arc::new(with_subcommand_help(&mut loader, &s, &cwd)), format!("`{command} --help`"))
+                }
                 help::Lookup::Found(Some(s)) => (s, format!("`{command} --help`")),
                 _ => anyhow::bail!(
                     "lig has no spec for {command}, and couldn't parse `{command} --help` or its man page"
@@ -931,6 +937,35 @@ fn new_spec(command: &str, from_help: bool, force: bool) -> Result<()> {
     println!("lig: wrote {} from {source}", path.display());
     println!("lig: {command} completes from it now; check your edits with `lig specs check {command}`");
     Ok(())
+}
+
+/// `spec` with the options and subcommands of each subcommand that loads them from `--help`.
+fn with_subcommand_help(loader: &mut help::HelpLoader, spec: &spec::Subcommand, cwd: &Path) -> spec::Subcommand {
+    let names = |s: &spec::Subcommand| s.subcommands.iter().map(|c| c.meta.names.clone()).collect::<Vec<_>>();
+    let parent = names(spec);
+    let mut spec = spec.clone();
+    for sub in &mut spec.subcommands {
+        let Some(spec::LoadSpec::Help(argv)) = &sub.load_spec else { continue };
+        println!("lig: reading `{} --help`", argv.join(" "));
+        let found = match loader.lookup(argv, cwd, &[], true) {
+            help::Lookup::Found(found) => found,
+            _ => None,
+        };
+        // The same commands again: the parent's help, the program ignoring the word (`mole touchid enable`).
+        if found.as_ref().is_some_and(|f| !f.subcommands.is_empty() && names(f) == parent) {
+            std::sync::Arc::make_mut(sub).load_spec = None;
+            continue;
+        }
+        if let Some(found) = found {
+            let found = with_subcommand_help(loader, &found, cwd);
+            let sub = std::sync::Arc::make_mut(sub);
+            sub.options = found.options;
+            sub.subcommands = found.subcommands;
+            sub.args = found.args;
+            sub.load_spec = None;
+        }
+    }
+    spec
 }
 
 /// Prints what each spec can't use; `false` if any has a problem.

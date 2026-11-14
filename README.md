@@ -229,6 +229,9 @@ Lig knows, start from its spec:
 lig specs new docker       # writes docker.json in your specs folder; edit it from there
 ```
 
+Lig never runs a shell script's `--help` by itself: a script could ignore it and just run.
+`lig specs new` does, for the script you name and its subcommands, and lists each one it reads.
+
 A new command takes a small file in the [Fig spec format](https://fig.io/docs/reference),
 e.g. `deploy.toml`:
 

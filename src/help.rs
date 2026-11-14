@@ -31,6 +31,9 @@ pub struct HelpLoader {
     skip: Vec<String>,
     /// Parsed specs by command line (`"docker compose"`).
     mem: HashMap<String, Option<Arc<Subcommand>>>,
+    /// Run `--help` for shell scripts too, which the popup never does: one may ignore `--help`
+    /// and just run. `lig specs new` sets it, for the command it's asked for by name.
+    pub any_program: bool,
 }
 
 pub fn cache_dir() -> PathBuf {
@@ -86,6 +89,12 @@ fn help_is_safe(exe: &Path) -> bool {
     false
 }
 
+/// Whether the popup runs `<command> --help` by itself (it doesn't for shell scripts).
+pub fn runs_help(command: &str) -> bool {
+    let path = std::env::var("PATH").unwrap_or_default();
+    which(command, &path).is_some_and(|exe| help_is_safe(&exe))
+}
+
 /// Drop man-style overstrike (`x\bx`, `_\bx`) and ANSI escapes.
 fn clean(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -113,7 +122,7 @@ fn clean(text: &str) -> String {
 
 impl HelpLoader {
     pub fn new(timeout: Duration, skip: Vec<String>) -> Self {
-        HelpLoader { cache_dir: cache_dir(), timeout, skip, mem: HashMap::new() }
+        HelpLoader { cache_dir: cache_dir(), timeout, skip, mem: HashMap::new(), any_program: false }
     }
 
     /// The spec for `argv` (`["docker"]`, `["docker", "compose"]`).
@@ -147,7 +156,9 @@ impl HelpLoader {
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .filter(|v| v["key"] == key.as_str() && v["stamp"] == stamp.as_str())
-            .and_then(|v| v["text"].as_str().map(str::to_string));
+            .and_then(|v| v["text"].as_str().map(str::to_string))
+            // Nothing, cached when the popup didn't run it.
+            .filter(|t| !(self.any_program && t.is_empty()));
         let text = match cached {
             Some(t) => t,
             None if !allow_run => return Lookup::NeedsRun,
@@ -179,7 +190,7 @@ impl HelpLoader {
         ] {
             vars.push((k.into(), v.into()));
         }
-        if help_is_safe(exe) {
+        if self.any_program || help_is_safe(exe) {
             let mut a = argv.to_vec();
             a.push("--help".into());
             let out = exec::run(Cmd::Argv(&a), cwd, &vars, self.timeout, None);
@@ -351,6 +362,15 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
     let mut in_commands = false;
     // Indent of the current commands section's items (set by the first); prose is indented differently.
     let mut item_indent: Option<usize> = None;
+    // The program's name, when the commands section writes it before each command (`mo clean`).
+    let mut program: Option<&str> = None;
+    let is_header = |l: &str| {
+        let t = l.trim();
+        indent(l) == 0
+            && !t.is_empty()
+            && (t.ends_with(':') || t.chars().all(|c| !c.is_ascii_lowercase()))
+            && !t.starts_with('-')
+    };
     for (i, line) in lines.iter().enumerate() {
         let t = line.trim();
         if t.is_empty() {
@@ -358,14 +378,35 @@ pub fn parse(text: &str, argv: &[String]) -> Option<Subcommand> {
         }
         let ind = indent(line);
         // Section headers: `Commands:`, `COMMANDS`, `Available Commands:` …
-        if ind == 0 && (t.ends_with(':') || t.chars().all(|c| !c.is_ascii_lowercase())) && !t.starts_with('-') {
+        if is_header(line) {
             let header = t.to_lowercase();
             in_commands = header.contains("command");
             in_args = !in_commands && header.contains("argument");
             item_indent = None;
             arg_indent = None;
+            program = None;
+            if in_commands {
+                let items: Vec<Vec<&str>> = lines[i + 1..]
+                    .iter()
+                    .take_while(|l| !is_header(l))
+                    .filter(|l| indent(l) > 0 && !l.trim().starts_with('-'))
+                    .map(|l| split_gap(l.trim()).0.split_whitespace().collect())
+                    .collect();
+                let first = items.first().and_then(|w| w.first()).copied();
+                if items.len() > 1
+                    && items.iter().all(|w| w.first().copied() == first)
+                    && items.iter().any(|w| w.len() > 1)
+                {
+                    program = first;
+                }
+            }
             continue;
         }
+        let t = match program.and_then(|p| t.strip_prefix(p)) {
+            Some(rest) if in_commands && rest.starts_with(' ') => rest.trim_start(),
+            Some(rest) if in_commands && rest.is_empty() => continue,
+            _ => t,
+        };
         if t.starts_with('-') {
             let (spec, desc) = split_gap(t);
             let desc = if desc.is_empty() { next_desc(i, ind) } else { desc.to_string() };
@@ -606,5 +647,22 @@ mod tests {
         assert_eq!(subs, ["list-units", "start"]);
         assert_eq!(names(&s), ["-t,--type", "-q,--quiet"]);
         assert_eq!(s.options[1].meta.description.as_deref(), Some("Suppress output."));
+    }
+
+    #[test]
+    fn commands_written_after_the_program_name() {
+        // mole's help, which calls itself `mo` (issue #35).
+        let text = " __  __       _\n|  \\/  | ___ | | ___\n|_|  |_|\\___/|_|\\___|  https://mole.fit\n\nCOMMANDS\n  mo                           Main menu\n  mo clean                     Free up disk space\n  mo uninstall                 Remove apps completely\n  mo --help                    Show help\n\n  mo clean --dry-run           Preview cleanup\n\nOPTIONS\n  --debug                      Show detailed operation logs\n";
+        let s = parse(text, &["mole".into()]).unwrap();
+        let subs: Vec<&str> = s.subcommands.iter().map(|c| c.meta.names[0].as_str()).collect();
+        assert_eq!(subs, ["clean", "uninstall"]);
+        assert_eq!(s.subcommands[0].meta.description.as_deref(), Some("Free up disk space"));
+        assert!(matches!(&s.subcommands[0].load_spec, Some(LoadSpec::Help(a)) if a == &["mole", "clean"]));
+        assert_eq!(names(&s), ["--help", "--debug"]);
+        // Commands that merely share a first word keep it.
+        let text = "Commands:\n  run       Run it\n  run-all   Run them all\n";
+        let s = parse(text, &["tool".into()]).unwrap();
+        let subs: Vec<&str> = s.subcommands.iter().map(|c| c.meta.names[0].as_str()).collect();
+        assert_eq!(subs, ["run", "run-all"]);
     }
 }
