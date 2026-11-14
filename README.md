@@ -23,7 +23,7 @@
 
 Your shell completes with `Tab`, as a flat list of words. Lig shows a popup under the cursor
 while you type, like a code editor: what each subcommand and option does, values from your
-system, and the next thing that fits on the line. It brings [Fig](https://fig.io)'s
+system, and the next thing that fits on the line. It brings [Fig](https://github.com/withfig/autocomplete)'s
 experience to any terminal, as a single binary that draws the popup inside the terminal
 itself.
 
@@ -109,8 +109,9 @@ blocks: the `pre` one goes at the **top** of the file, as it restarts the shell 
 prompt, and connects the shell to the popup. Keep the marker comments: `lig doctor` and
 `lig uninstall` look for them. `lig` must be on your `PATH` (or write its full path).
 
+**zsh**, in `~/.zshrc`:
+
 ```zsh
-# ~/.zshrc (bash: ~/.bashrc, with bash in place of zsh)
 # >>> lig pre >>>
 eval "$(lig init zsh pre)"
 # <<< lig pre <<<
@@ -122,8 +123,23 @@ eval "$(lig init zsh post)"
 # <<< lig post <<<
 ```
 
+**bash**, in `~/.bashrc`:
+
+```bash
+# >>> lig pre >>>
+eval "$(lig init bash pre)"
+# <<< lig pre <<<
+
+# ... the rest of your config ...
+
+# >>> lig post >>>
+eval "$(lig init bash post)"
+# <<< lig post <<<
+```
+
+**fish**, in `~/.config/fish/config.fish`:
+
 ```fish
-# ~/.config/fish/config.fish
 # >>> lig pre >>>
 eval (lig init fish pre | string collect)
 # <<< lig pre <<<
@@ -135,8 +151,32 @@ eval (lig init fish post | string collect)
 # <<< lig post <<<
 ```
 
+**nushell** can't eval a command's output, so write the code to two files once (and again
+after updating Lig):
+
+```nu
+lig init nu pre | save -f ($nu.default-config-dir | path join lig-pre.nu)
+lig init nu post | save -f ($nu.default-config-dir | path join lig-post.nu)
+```
+
+then source them in `config.nu` (`$nu.config-path`):
+
+```nu
+# >>> lig pre >>>
+source ($nu.default-config-dir | path join lig-pre.nu)
+# <<< lig pre <<<
+
+# ... the rest of your config ...
+
+# >>> lig post >>>
+source ($nu.default-config-dir | path join lig-post.nu)
+# <<< lig post <<<
+```
+
+**PowerShell**, at the top of `$PROFILE` (Lig loads the rest itself; `powershell` in place of
+`pwsh` for 5.1):
+
 ```powershell
-# Top of $PROFILE (Lig loads the rest itself); powershell in place of pwsh for 5.1
 # >>> lig pre >>>
 Invoke-Expression (& lig init pwsh pre | Out-String)
 # <<< lig pre <<<
@@ -144,8 +184,8 @@ Invoke-Expression (& lig init pwsh pre | Out-String)
 
 - **bash on macOS**: terminals start a login shell, which reads `~/.bash_profile` and not
   `~/.bashrc`; make it read both with `[ -r ~/.bashrc ] && . ~/.bashrc` in `~/.bash_profile`.
-- **nu** can't eval a command's output, so the code itself goes in `config.nu`: `lig init nu pre`
-  at the top, `lig init nu post` at the end. Run `lig install nu` again after updating Lig.
+- **nu** stops at startup if a sourced file is missing: write both files before adding the
+  lines. (`lig install nu` puts the code itself in `config.nu` instead.)
 - **cmd** reads no config file: run `lig shell --shell cmd.exe` as the terminal's command.
 - To see exactly what runs, print it: `lig init zsh pre` (or `post`).
 
@@ -226,6 +266,15 @@ options_after_dash = ["ls", "cp", "mv", "rm", …]  # options only once you type
 online = true              # search package registries as you type
 history = true             # keep the commands that ran, for Ctrl+R
 disabled_commands = []     # never show the popup for these
+
+[colors]                   # change any of the theme's: "#rrggbb", a 256-color number, "default"
+selected_bg = "#45475a"
+match_fg = "214"           # also bg, fg, selected_fg, description_fg, border_fg, scrollbar_fg…
+
+[icons]                    # `lig icons` lists the names
+folder = "📁"              # a glyph,
+git-branch = { color = "208" }               # a color,
+"*.rs" = { glyph = "🦀", color = "#dea584" }  # or both; by extension or file name too
 ```
 
 Try styles without editing anything: `lig preview --all`, `lig preview --theme nord`,
@@ -245,8 +294,8 @@ lig specs new docker       # writes docker.json in your specs folder; edit it fr
 Lig never runs a shell script's `--help` by itself: a script could ignore it and just run.
 `lig specs new` does, for the script you name and its subcommands, and lists each one it reads.
 
-A new command takes a small file in the [Fig spec format](https://fig.io/docs/reference),
-e.g. `deploy.toml`:
+A new command takes a small file in Fig's spec format (all of it, as Lig reads it:
+[docs/specs.md](docs/specs.md)), e.g. `deploy.toml`:
 
 ```toml
 name = "deploy"
@@ -287,7 +336,8 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 
 - **Update**: `lig update` installs the latest release (`--check` only looks). A Lig from a
   package manager updates there, and `lig update` tells you how. Open tabs keep their version.
-  In nu, run `lig install nu` again afterwards: its integration is copied into `config.nu`.
+  In nu, run `lig install nu` again afterwards (by hand: write the two files again), as its
+  integration is a copy.
 - **Skip it once**: `LIG_DISABLE=1 zsh`.
 - **Remove**: `lig uninstall` (or `lig uninstall <shell>`), before removing a packaged Lig.
 
@@ -337,11 +387,14 @@ Built-in specs live in `specs/lig/` (hand-written), `specs/fig/` (generated by
 ## Credits and license
 
 Thanks to the contributors:
-[@techwizrd](https://github.com/techwizrd) (fish support),
-[@mawkler](https://github.com/mawkler) (the Nix flake and home-manager module, and several fixes),
-[@nadelacruz-00](https://github.com/nadelacruz-00) (the zellij mirror),
-[@jeremiasadriano](https://github.com/jeremiasadriano) (the `php` and `artisan` specs) and
-[@ammachado](https://github.com/ammachado) (Apple Silicon macOS and zellij resurrection on macOS).
+
+- [@ammachado](https://github.com/ammachado)
+- [@jeremiasadriano](https://github.com/jeremiasadriano)
+- [@mawkler](https://github.com/mawkler)
+- [@mjsteinbaugh](https://github.com/mjsteinbaugh)
+- [@nadelacruz-00](https://github.com/nadelacruz-00)
+- [@techwizrd](https://github.com/techwizrd)
+- [@xnmp](https://github.com/xnmp)
 
 The specs in `specs/fig/` come from [withfig/autocomplete](https://github.com/withfig/autocomplete),
 © Hercules Labs Inc. and contributors, MIT licensed (see [`specs/fig/LICENSE`](specs/fig/LICENSE)).
