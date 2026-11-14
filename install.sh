@@ -51,13 +51,22 @@ trap 'rm -rf "$tmp"' EXIT
 say "downloading lig $VERSION ($arch)"
 fetch "$url" "$tmp/$name.tar.gz" || fail "couldn't download $url"
 fetch "$url.sha256" "$tmp/$name.tar.gz.sha256" || fail "couldn't download the checksum"
-if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$tmp" && sha256sum -c "$name.tar.gz.sha256") || fail "the download doesn't match its checksum"
-elif command -v shasum >/dev/null 2>&1; then
-    (cd "$tmp" && shasum -a 256 -c "$name.tar.gz.sha256") || fail "the download doesn't match its checksum"
-else
-    fail "sha256sum or shasum is required to verify the download"
-fi
+# The first tool that runs gives the digest: one on PATH can be unusable, like an Intel
+# sha256sum on an Apple Silicon Mac without Rosetta ("Bad CPU type in executable").
+digest() {
+    for tool in "sha256sum" "shasum -a 256" "openssl dgst -sha256 -r"; do
+        sum="$($tool "$1" 2>/dev/null)" || continue
+        sum="${sum%% *}"
+        case "$sum" in
+            "" | *[!0-9a-fA-F]*) continue ;;
+        esac
+        [ "${#sum}" -eq 64 ] && printf '%s\n' "$sum" | tr 'A-F' 'a-f' && return 0
+    done
+    return 1
+}
+got="$(digest "$tmp/$name.tar.gz")" || fail "sha256sum, shasum or openssl is required to verify the download"
+read -r want _ < "$tmp/$name.tar.gz.sha256" || true
+[ "$got" = "$(printf '%s\n' "${want:-}" | tr 'A-F' 'a-f')" ] || fail "the download doesn't match its checksum"
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 
 mkdir -p "$DIR"

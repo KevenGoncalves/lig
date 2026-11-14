@@ -12,16 +12,16 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 class Installer(unittest.TestCase):
-    def install(self, system, arch, target, corrupt=False, checksum_tool='shasum', rosetta=None):
+    def install(self, system, arch, target, corrupt=False, checksum_tool='shasum', rosetta=None, broken=()):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             bin = root / 'bin'
             bin.mkdir()
-            tools = ['sh', 'tar', 'mkdir', 'cp', 'chmod', 'mv', 'rm', 'mktemp', 'gzip']
+            tools = ['sh', 'tar', 'mkdir', 'cp', 'chmod', 'mv', 'rm', 'mktemp', 'gzip', 'tr']
             for tool in tools + ([checksum_tool] if checksum_tool else []):
                 found = shutil.which(tool)
-                if found is None and tool == 'sha256sum':
-                    self.skipTest('sha256sum is not installed')
+                if found is None and tool in ('sha256sum', 'openssl'):
+                    self.skipTest(f'{tool} is not installed')
                 self.assertIsNotNone(found, tool)
                 (bin / tool).symlink_to(found)
             name = f'lig-1.1.0-{target}'
@@ -37,6 +37,10 @@ class Installer(unittest.TestCase):
             (bin / 'uname').write_text(f'#!/bin/sh\ncase "$1" in -s) echo {system};; -m) echo {arch};; esac\n')
             (bin / 'curl').write_text('#!/bin/sh\n# Installer invokes curl -fsSL -o DEST URL\nprintf "%s\\n" "$4" >> "$FIXTURE/urls"\ncase "$4" in *.sha256) cp "$FIXTURE/release.sha256" "$3";; *) cp "$FIXTURE/release.tar.gz" "$3";; esac\n')
             stubs = ['uname', 'curl']
+            for tool in broken:
+                # Found on PATH but can't run, like an Intel binary on Apple Silicon without Rosetta.
+                (bin / tool).write_text(f'#!/bin/sh\necho "sh: {tool}: Bad CPU type in executable" >&2\nexit 126\n')
+                stubs.append(tool)
             if rosetta is not None:
                 # hw.optional.arm64 is 1 on Apple Silicon, even for a shell running under Rosetta.
                 (bin / 'sysctl').write_text(f'#!/bin/sh\n[ "$2" = hw.optional.arm64 ] && echo {int(rosetta)}\n')
@@ -87,6 +91,28 @@ class Installer(unittest.TestCase):
                                                 corrupt=corrupt, checksum_tool='sha256sum')
             self.assertEqual(result.returncode != 0, corrupt, result.stderr)
             self.assertEqual(installed, not corrupt)
+
+    def test_unusable_sha256sum_falls_back_to_shasum(self):
+        # Issue #30: an Intel sha256sum in /usr/local/bin on an M4 Mac.
+        for corrupt in [False, True]:
+            result, installed, _ = self.install('Darwin', 'arm64', 'aarch64-apple-darwin',
+                                                corrupt=corrupt, broken=['sha256sum'])
+            self.assertEqual(result.returncode != 0, corrupt, result.stderr)
+            self.assertEqual(installed, not corrupt)
+
+    def test_openssl_verifies_without_the_other_tools(self):
+        for corrupt in [False, True]:
+            result, installed, _ = self.install('Darwin', 'arm64', 'aarch64-apple-darwin',
+                                                corrupt=corrupt, checksum_tool='openssl')
+            self.assertEqual(result.returncode != 0, corrupt, result.stderr)
+            self.assertEqual(installed, not corrupt)
+
+    def test_only_unusable_tools_refuse_to_install(self):
+        result, installed, _ = self.install('Darwin', 'arm64', 'aarch64-apple-darwin', checksum_tool=None,
+                                            broken=['sha256sum', 'shasum'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('required to verify', result.stderr)
+        self.assertFalse(installed)
 
     def test_missing_checksum_tool_refuses_to_install(self):
         result, installed, _ = self.install('Linux', 'x86_64', 'x86_64-unknown-linux-musl', checksum_tool=None)
