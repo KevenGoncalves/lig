@@ -48,6 +48,30 @@ class ShellSmoke(unittest.TestCase):
         finally:
             self.assertEqual(term.close(17), 17)
 
+    def test_zsh_hook_widget_wrapped_by_another_plugin(self):
+        """zsh-history-substring-search hooks zle-line-finish, then fast-syntax-highlighting wraps the
+        hook's dispatcher: lig must not hook it again (issue #29: endless recursion, FUNCNEST)."""
+        shell = os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh')
+        if not shell:
+            self.skipTest('zsh is unavailable')
+        plugins = (
+            'FUNCNEST=100\nautoload -Uz add-zle-hook-widget\nzmodload zsh/zleparameter\n'
+            '_test_hook() { : }\nadd-zle-hook-widget line-finish _test_hook\n'
+            "zle -N orig-zle-line-finish ${widgets[zle-line-finish]#user:}\n"
+            '_test_wrap() { zle orig-zle-line-finish -- "$@" }\nzle -N zle-line-finish _test_wrap\n'
+        )
+        term = Fish(wrapped=True, shell=shell, extra_config=plugins)
+        try:
+            start = len(term.output)
+            term.send('echo hook-ran\r')
+            term.wait_for(lambda: term.plain(start).count(b'hook-ran') >= 2)
+            self.assertNotIn(b'nested function level', term.plain(start))
+            start = len(term.output)
+            term.send('git ch')
+            term.wait_popup('checkout', start)
+        finally:
+            self.assertEqual(term.close(17), 17)
+
     def smoke(self, shell, extra=''):
         term = Fish(wrapped=True, shell=shell, extra_config=extra)
         try:

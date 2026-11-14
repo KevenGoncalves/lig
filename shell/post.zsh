@@ -83,9 +83,23 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   add-zsh-hook precmd _lig_precmd
 
   builtin autoload -Uz add-zle-hook-widget
-  add-zle-hook-widget line-init _lig_line_init
-  add-zle-hook-widget line-pre-redraw _lig_report
-  add-zle-hook-widget line-finish _lig_line_finish
+  builtin zmodload zsh/zleparameter 2>/dev/null
+  # Run widget $2 on ZLE hook $1. When another widget already wraps the hook's dispatcher
+  # (fast-syntax-highlighting does, after history-substring-search hooked zle-line-finish),
+  # add-zle-hook-widget would make that widget call itself without end: chain onto it instead.
+  _lig_hook() {
+    local hook=zle-$1
+    if [[ -z ${widgets[$hook]-} || ${widgets[$hook]} == user:azhw:$hook ]]; then
+      add-zle-hook-widget $1 $2
+      return
+    fi
+    builtin zle -A $hook _lig_prev_$hook
+    builtin eval "_lig_chain_$hook() { $2; builtin zle _lig_prev_$hook -- \"\$@\" }"
+    builtin zle -N $hook _lig_chain_$hook
+  }
+  _lig_hook line-init _lig_line_init
+  _lig_hook line-pre-redraw _lig_report
+  _lig_hook line-finish _lig_line_finish
   builtin zle -N _lig_insert
   builtin bindkey -M emacs '\e[9147~' _lig_insert
   builtin bindkey -M viins '\e[9147~' _lig_insert
