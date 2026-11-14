@@ -92,6 +92,8 @@ pub struct ShellEnv {
     pub vars: Arc<Vec<(String, String)>>,
     /// The shell is on this host (`lig ssh`): files and commands are there.
     pub remote: Option<Arc<Remote>>,
+    /// The shell's own commands, which come before built-in specs of the same names (nu's `ls`).
+    pub shell_specs: Option<crate::nushell::ShellSpecs>,
 }
 
 /// A candidate before filtering and ranking (see [`Engine::finish`]).
@@ -208,6 +210,8 @@ pub struct Engine {
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
     spec_cmds: Option<Arc<HashSet<String>>>,
+    /// The `shell_specs` the caches were filled with.
+    shell_specs: Option<crate::nushell::ShellSpecs>,
     /// Commands with a user spec: an alias with one keeps it (`alias ls=eza` and `ls.toml`).
     user_cmds: Option<Arc<HashSet<String>>>,
     /// The descriptions of the user's specs, by command: shown next to those commands' names.
@@ -233,6 +237,7 @@ impl Engine {
             path_cmds: None,
             remote_dirs: HashMap::new(),
             spec_cmds: None,
+            shell_specs: None,
             user_cmds: None,
             user_descriptions: None,
         }
@@ -243,6 +248,15 @@ impl Engine {
     /// `manual` (Ctrl+Space) completes command names and empty words regardless of config.
     pub fn complete(&mut self, line: &str, env: &ShellEnv, run_generators: bool, manual: bool) -> Completion {
         let mut cl = parser::parse(line);
+        let same = |a: &Option<crate::nushell::ShellSpecs>, b: &Option<crate::nushell::ShellSpecs>| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if !same(&self.shell_specs, &env.shell_specs) {
+            self.shell_specs = env.shell_specs.clone();
+            self.specs.clear();
+            self.spec_cmds = None;
+        }
         let with_spec = self.spec_names();
         let user = self.user_names();
         expand_aliases(&mut cl, env, &with_spec, &user);
@@ -471,7 +485,12 @@ impl Engine {
                     crate::log(&format!("spec {e}"));
                     None
                 }
-                None => specs::builtin(name).map(Arc::new),
+                None => cx
+                    .env
+                    .shell_specs
+                    .as_ref()
+                    .and_then(|shell| shell.get(name).cloned())
+                    .or_else(|| specs::builtin(name).map(Arc::new)),
             };
             self.specs.insert(name.to_string(), s.clone());
             if s.is_some() || !self.cfg.help_parsing {
@@ -689,11 +708,13 @@ impl Engine {
     /// Commands with a built-in or user spec.
     fn spec_names(&mut self) -> Arc<HashSet<String>> {
         let store = &self.store;
+        let shell = &self.shell_specs;
         self.spec_cmds
             .get_or_insert_with(|| {
                 let mut s: HashSet<String> = specs::lig_names().map(str::to_string).collect();
                 s.extend(specs::FIG.names().map(str::to_string));
                 s.extend(store.commands());
+                s.extend(shell.iter().flat_map(|specs| specs.keys().cloned()));
                 Arc::new(s)
             })
             .clone()

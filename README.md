@@ -7,7 +7,7 @@
 <p align="center">
   <b>IDE-style autocomplete for your terminal.</b><br>
   Subcommands, options, branches, packages and paths in a popup as you type.<br>
-  zsh, bash, fish, PowerShell and cmd, on Linux, macOS and Windows. Written in Rust.
+  zsh, bash, fish, nushell, PowerShell and cmd, on Linux, macOS and Windows. Written in Rust.
 </p>
 
 <p align="center">
@@ -67,16 +67,16 @@ compiles Lig, so it takes a few minutes; `docker build -t lig-demo .` builds it 
 Then turn it on in your shell and open a new terminal:
 
 ```bash
-lig install            # your shell; or: lig install zsh / bash / fish / pwsh / powershell
+lig install            # your shell; or: lig install zsh / bash / fish / nu / pwsh / powershell
 lig doctor             # check the setup
 ```
 
-**Requirements**: Linux or macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 or fish ≥ 4.2.1 (on macOS,
-not Apple's bash 3.2); Windows 10 1809+ with PowerShell or cmd. Optional: `curl` for
+**Requirements**: Linux or macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4, fish ≥ 4.2.1 or nushell
+(tested with 0.117; on macOS, not Apple's bash 3.2); Windows 10 1809+ with PowerShell or cmd. Optional: `curl` for
 package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
 
 `lig install` adds a few lines to your shell's config file (`~/.zshrc`, `~/.bashrc`,
-`config.fish` or the PowerShell profile), backing it up first; to add them yourself, see
+`config.fish`, `config.nu` or the PowerShell profile), backing it up first; to add them yourself, see
 [Set up a shell by hand](#set-up-a-shell-by-hand).
 Prebuilt archives, `.deb` and `.rpm` files are on the
 [releases page](https://github.com/KevenGoncalves/lig/releases/latest).
@@ -143,6 +143,8 @@ Invoke-Expression (& lig init pwsh pre | Out-String)
 
 - **bash on macOS**: terminals start a login shell, which reads `~/.bash_profile` and not
   `~/.bashrc`; make it read both with `[ -r ~/.bashrc ] && . ~/.bashrc` in `~/.bash_profile`.
+- **nu** can't eval a command's output, so the code itself goes in `config.nu`: `lig init nu pre`
+  at the top, `lig init nu post` at the end. Run `lig install nu` again after updating Lig.
 - **cmd** reads no config file: run `lig shell --shell cmd.exe` as the terminal's command.
 - To see exactly what runs, print it: `lig init zsh pre` (or `post`).
 
@@ -294,12 +296,13 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 Lig runs your shell in a pseudo-terminal and passes everything through. It keeps a model of
 the screen, draws the popup under the cursor, and restores what was underneath when it
 closes, which is why it works in any terminal (and on Wayland, where apps can't place
-floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's and cmd's are
-read off the screen, fish and PowerShell answer when Lig asks. Accepting sends a private key
+floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's, nu's and cmd's
+are read off the screen, fish and PowerShell answer when Lig asks. nu's own commands (`ls`,
+`open`, `str replace`…) complete from nu's signatures, not from the coreutils of those names. Accepting sends a private key
 that a shell function binds to edit the line. Slow sources run in the background, so typing
 never waits.
 
-**Limitations**: bash's line, read from the screen, can briefly confuse Lig in a long line
+**Limitations**: bash's and nu's lines, read from the screen, can briefly confuse Lig in a long line
 wrapping at the bottom of a full screen. Specs read from `--help` have no live values. About
 a quarter of Fig's dynamic generators (JavaScript) couldn't be converted.
 

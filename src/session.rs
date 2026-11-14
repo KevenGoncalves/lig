@@ -70,6 +70,8 @@ enum Event {
         loading: Option<String>,
         command: String,
     },
+    /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
+    ShellSpecs(crate::nushell::ShellSpecs),
 }
 
 struct Request {
@@ -241,7 +243,7 @@ fn is_powershell(shell: &Path) -> bool {
 impl InsertionTransport {
     fn for_shell(shell: &Path) -> Self {
         match shell_name(shell).as_str() {
-            "bash" | "fish" | "pwsh" | "powershell" => Self::File,
+            "bash" | "fish" | "nu" | "pwsh" | "powershell" => Self::File,
             "cmd" => Self::Keys,
             _ => Self::Inline,
         }
@@ -347,6 +349,14 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     }
     spawn_stdin_reader(tx.clone());
     spawn_pty_reader(reader, tx.clone());
+    if shell_name(&shell) == "nu" {
+        let (tx, nu) = (tx.clone(), shell.clone());
+        std::thread::spawn(move || {
+            if let Some(specs) = crate::nushell::specs(&nu) {
+                let _ = tx.send(Event::ShellSpecs(specs));
+            }
+        });
+    }
     let resized = tx.clone();
     term::watch_resize(move || resized.send(Event::Resize).is_ok())?;
     let exited = tx.clone();
@@ -366,6 +376,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         fish_shell: shell_name(&shell) == "fish" || is_powershell(&shell),
         report_key: is_powershell(&shell),
         cmd_shell: shell_name(&shell) == "cmd",
+        nu_shell: shell_name(&shell) == "nu",
         prompt_pending: false,
         held: vec![],
         unconfirmed: String::new(),
@@ -562,6 +573,21 @@ fn prompt_marks(out: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+/// nu's own shell-integration marks say what lig's do for other shells: the prompt ends
+/// (`133;B`, before the input on every redraw) and a command starts (`133;C`).
+fn nu_marks(out: &[u8]) -> Vec<(usize, Msg)> {
+    const MARK: &[u8] = b"\x1b]133;";
+    out.windows(MARK.len() + 2)
+        .enumerate()
+        .filter(|(_, w)| w.starts_with(MARK) && matches!(w[MARK.len() + 1], b';' | b'\x07' | b'\x1b'))
+        .filter_map(|(i, w)| match w[MARK.len()] {
+            b'B' => Some((i, Msg::PromptEnd)),
+            b'C' => Some((i, Msg::Finish)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Output that only sets terminal modes, or none: the screen and the line stay as they were.
 /// Fish 4.0 toggles bracketed paste, the keypad and the keyboard protocols around each signal
 /// handler it runs, so around each snapshot reply too.
@@ -683,6 +709,9 @@ struct Session {
     /// cmd: the line is read off the screen like bash's, but the marker comes early
     /// (see [`PROMPT_SETTLE`]), and Enter ends the line.
     cmd_shell: bool,
+    /// nu: the line is read off the screen like bash's, between nu's own prompt-end mark
+    /// and the cursor (see [`nu_marks`]); insertions take fish's key.
+    nu_shell: bool,
     /// cmd's prompt marker arrived and output hasn't paused yet.
     prompt_pending: bool,
     /// Keys typed while `prompt_pending`, sent once the input start is known.
@@ -894,6 +923,11 @@ impl Session {
                 }
                 Event::Done { line, items, loading, command } => self.on_done(line, items, loading, command),
                 Event::Resize => self.on_resize(),
+                Event::ShellSpecs(specs) => {
+                    self.env.shell_specs = Some(specs);
+                    self.items_line.clear();
+                    self.request();
+                }
                 Event::Exit => return,
             }
         }
@@ -1002,6 +1036,10 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
+        if self.nu_shell {
+            msgs.extend(nu_marks(&fwd));
+            msgs.sort_by_key(|(pos, _)| *pos);
+        }
         let pager = self.parser.screen().alternate_screen();
         self.shell_cursor_queries += fwd.windows(4).filter(|w| *w == b"\x1b[6n").count();
         // ConPTY asks its terminal for win32-input-mode; passed on, the terminal would send lig
@@ -1717,7 +1755,8 @@ impl Session {
             } else {
                 format!("{};{};{}", s.delete, s.back, s.insert)
             };
-            match insertion_bytes(self.insertion_transport, self.fish_shell, &self.insert_file, &payload) {
+            let fish_key = self.fish_shell || self.nu_shell;
+            match insertion_bytes(self.insertion_transport, fish_key, &self.insert_file, &payload) {
                 Ok(bytes) => {
                     fwd.extend_from_slice(&bytes);
                     // The shell applies the insertion before it reads the Enter queued behind it.
@@ -2181,6 +2220,14 @@ mod tests {
         // `always` on a complete word runs instead of only closing the popup.
         assert_eq!(enter_action("always", true, false, true, false, false), Run);
         assert_eq!(enter_action("always", true, false, false, false, false), PickAndRun);
+    }
+
+    #[test]
+    fn nu_marks_are_prompt_ends_and_starts() {
+        let out = b"\x1b]133;A;k=i\x1b\\/tmp> \x1b]133;B\x1b\\gi\r\n\x1b]133;C\x1b\\\x1b]133;D;1\x1b\\";
+        let marks: Vec<(usize, Msg)> = nu_marks(out);
+        assert_eq!(marks, [(19, Msg::PromptEnd), (32, Msg::Finish)]);
+        assert!(nu_marks(b"\x1b]133;Bx\x1b]133;").is_empty());
     }
 
     #[test]

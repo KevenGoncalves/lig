@@ -1,4 +1,4 @@
-//! lig: IDE-style autocomplete for zsh, bash, fish, PowerShell and cmd, in any terminal.
+//! lig: IDE-style autocomplete for zsh, bash, fish, nushell, PowerShell and cmd, in any terminal.
 //! `lig shell` ([`session`]) runs the shell in a PTY and draws the popup; [`engine`] makes the suggestions.
 
 mod config;
@@ -17,6 +17,7 @@ mod mirror;
 mod mirror_argv;
 #[cfg(unix)]
 mod mirror_policy;
+mod nushell;
 mod osc;
 mod parser;
 mod popup;
@@ -46,6 +47,8 @@ const POST_FISH: &str = include_str!("../shell/post.fish");
 const PRE_BASH: &str = include_str!("../shell/pre.bash");
 const POST_BASH: &str = include_str!("../shell/post.bash");
 const PRE_PWSH: &str = include_str!("../shell/pre.ps1");
+const PRE_NU: &str = include_str!("../shell/pre.nu");
+const POST_NU: &str = include_str!("../shell/post.nu");
 
 #[derive(Parser)]
 #[command(name = "lig", version, about = "IDE-style autocomplete for your terminal")]
@@ -70,7 +73,7 @@ enum Cmd {
         #[arg(hide = true, value_parser = parse_pad)]
         pad: Option<String>,
     },
-    /// Print shell integration code for fish, zsh, bash or PowerShell
+    /// Print shell integration code for fish, zsh, bash, nu or PowerShell
     Init {
         #[arg(value_enum)]
         shell: ShellKind,
@@ -78,13 +81,13 @@ enum Cmd {
         #[arg(value_enum, default_value_t = Part::All)]
         part: Part,
     },
-    /// Add lig to your fish, zsh, bash or PowerShell configuration (default: your shell); for
+    /// Add lig to your fish, zsh, bash, nu or PowerShell configuration (default: your shell); for
     /// cmd, add a Windows Terminal profile
     Install {
         #[arg(value_enum)]
         shell: Option<ShellKind>,
     },
-    /// Remove lig from your fish, zsh, bash or PowerShell configuration, or cmd's profile
+    /// Remove lig from your fish, zsh, bash, nu or PowerShell configuration, or cmd's profile
     Uninstall {
         #[arg(value_enum)]
         shell: Option<ShellKind>,
@@ -186,6 +189,8 @@ enum ShellKind {
     Powershell,
     /// cmd.exe (a Windows Terminal profile; cmd has no configuration file)
     Cmd,
+    /// Nushell
+    Nu,
 }
 
 impl ShellKind {
@@ -198,7 +203,8 @@ impl ShellKind {
             "pwsh" => Ok(Self::Pwsh),
             "powershell" => Ok(Self::Powershell),
             "cmd" => Ok(Self::Cmd),
-            _ => anyhow::bail!("unsupported shell {shell:?}; specify fish, bash, zsh, pwsh, powershell or cmd"),
+            "nu" => Ok(Self::Nu),
+            _ => anyhow::bail!("unsupported shell {shell:?}; specify fish, bash, zsh, nu, pwsh, powershell or cmd"),
         }
     }
 
@@ -221,6 +227,7 @@ impl ShellKind {
             ShellKind::Pwsh => "pwsh",
             ShellKind::Powershell => "powershell",
             ShellKind::Cmd => "cmd",
+            ShellKind::Nu => "nu",
         }
     }
 
@@ -245,6 +252,13 @@ impl ShellKind {
                 dirs::config_dir().unwrap_or_default().join("powershell/Microsoft.PowerShell_profile.ps1")
             }
             ShellKind::Powershell => documents().join("WindowsPowerShell/Microsoft.PowerShell_profile.ps1"),
+            // nu reads `$XDG_CONFIG_HOME` on every system, else the system's config folder.
+            ShellKind::Nu => std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|d| d.is_absolute())
+                .or_else(dirs::config_dir)
+                .unwrap_or_default()
+                .join("nushell/config.nu"),
             // A Windows Terminal profile fragment (see `cmd_profile`).
             ShellKind::Cmd => {
                 dirs::data_local_dir().unwrap_or_default().join("Microsoft/Windows Terminal/Fragments/lig/lig.json")
@@ -386,6 +400,7 @@ fn init_script(shell: ShellKind, part: Part) -> String {
         ShellKind::Fish => (PRE_FISH, POST_FISH),
         ShellKind::Zsh => (PRE_ZSH, POST_ZSH),
         ShellKind::Bash => (PRE_BASH, POST_BASH),
+        ShellKind::Nu => (PRE_NU, POST_NU),
         ShellKind::Pwsh | ShellKind::Powershell => (PRE_PWSH, ""),
         ShellKind::Cmd => ("", ""),
     };
@@ -467,7 +482,11 @@ fn installed_text(shell: ShellKind, old: &str, bin: &str) -> Result<String> {
         return Ok(format!("{PRE_BEGIN}\n{line}\n{PRE_END}\n{body}"));
     }
     let command = |part| {
-        if matches!(shell, ShellKind::Fish) {
+        if matches!(shell, ShellKind::Nu) {
+            // nu can't eval a command's output: the integration itself goes in the file.
+            let script = if part == "pre" { PRE_NU } else { POST_NU };
+            script.replace("@LIG_BIN@", bin).trim_end().to_string()
+        } else if matches!(shell, ShellKind::Fish) {
             format!("eval ({} init fish {part} | string collect)", fish_quote(bin))
         } else {
             format!("eval \"$(\"{bin}\" init {sh} {part})\"")
@@ -552,6 +571,8 @@ fn install(shell: ShellKind) -> Result<()> {
         println!("lig: open it from Windows Terminal's new-tab menu (restart Windows Terminal if it isn't there).");
         return Ok(());
     }
+    // The shell inside lig finds it by its terminal, which Windows' pseudo consoles don't name.
+    anyhow::ensure!(!(cfg!(windows) && shell == ShellKind::Nu), "lig supports nu on Linux and macOS");
     install_at(shell, &rc, &exe())?;
     println!("lig: updated {}", rc.display());
     if cfg!(target_os = "macos") && matches!(shell, ShellKind::Bash) {
@@ -804,7 +825,7 @@ fn doctor() -> Result<()> {
     let shells: &[ShellKind] = if cfg!(windows) {
         &[ShellKind::Pwsh, ShellKind::Powershell, ShellKind::Cmd]
     } else {
-        &[ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish]
+        &[ShellKind::Zsh, ShellKind::Bash, ShellKind::Fish, ShellKind::Nu]
     };
     for &shell in shells {
         let path = shell.rc();
@@ -1358,6 +1379,21 @@ mod shell_tests {
         assert_eq!(managed_body(&std::fs::read_to_string(&rc).unwrap()).unwrap(), body);
         assert_eq!(std::fs::metadata(&rc).unwrap().permissions().mode() & 0o777, 0o600);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn nu_gets_its_integration_in_the_file() {
+        // nu can't eval a command's output: the code itself goes in config.nu, with lig's path.
+        assert!(matches!(ShellKind::detect("/usr/bin/nu").unwrap(), ShellKind::Nu));
+        let body = "$env.config.show_banner = false\n";
+        let text = installed_text(ShellKind::Nu, body, "/opt/lig").unwrap();
+        assert!(text.starts_with(&format!("{PRE_BEGIN}\n# lig: run this interactive nu")));
+        assert!(text.contains("exec r#'/opt/lig'# shell --shell $nu.current-exe"));
+        assert!(text.contains(&format!("{body}{POST_BEGIN}\n")));
+        assert!(text.contains("def __lig_insert"));
+        assert!(!text.contains("@LIG_BIN@") && !text.contains("eval"));
+        assert_eq!(managed_body(&text).unwrap(), body);
+        assert_eq!(installed_text(ShellKind::Nu, &text, "/opt/lig").unwrap(), text);
     }
 
     #[test]
