@@ -37,15 +37,16 @@ class TmuxMirror(unittest.TestCase):
             def pane(field):
                 return tmux('display-message', '-p', '-t', 'test:0.0', f'#{{{field}}}').strip()
 
-            def wait(what, check):
-                deadline = time.monotonic() + 5
+            def wait(what, check, timeout=5):
+                deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     value = check()
                     if value:
                         return value
                     time.sleep(.1)
                 log = directory / 'state/lig/lig.log'
-                self.fail(f'{what}; lig.log:\n{log.read_text() if log.exists() else ""}')
+                screen = tmux('capture-pane', '-p', '-t', 'test:0.0').rstrip()
+                self.fail(f'{what}; pane:\n{screen}\nps -t: {tty_args()}\nlig.log:\n{log.read_text() if log.exists() else ""}')
 
             def tty_args():
                 out = subprocess.run(['ps', '-t', pane('pane_tty').removeprefix('/dev/'), '-o', 'args='],
@@ -56,7 +57,8 @@ class TmuxMirror(unittest.TestCase):
             launch += [f'{k}={v}' for k, v in env.items()] + [ZSH, '-i']
             try:
                 tmux('new-session', '-d', '-x', '100', '-y', '30', '-s', 'test', '-c', str(home), *launch)
-                wait('no prompt', lambda: 'lig-test' in tmux('capture-pane', '-p', '-t', 'test:0.0'))
+                # A busy CI runner can take a while to start the first shell.
+                wait('no prompt', lambda: 'lig-test' in tmux('capture-pane', '-p', '-t', 'test:0.0'), timeout=15)
                 # One write: with Enter sent apart, the popup could open first and take it.
                 tmux('send-keys', '-t', 'test:0.0', '-l', f'cd {project} && sleep 30\r')
                 wait(f'`ps -t` shows no sleep: {tty_args()}', lambda: ['sleep', '30'] in tty_args())
