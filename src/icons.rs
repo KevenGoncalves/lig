@@ -230,6 +230,7 @@ fn nerd_icon(i: Icon) -> (&'static str, &'static str) {
         Icon::Cloud => ("\u{f0c2}", "38;5;75"),
         Icon::Terminal => ("\u{f120}", "38;5;213"),
         Icon::Variable => ("\u{f0ae7}", "38;5;180"),
+        Icon::History => ("\u{f1da}", "38;5;146"), // history
     }
 }
 
@@ -244,6 +245,7 @@ fn unicode_icon(i: Icon) -> (&'static str, &'static str) {
         Icon::Version => ("#", "38;5;141"),
         Icon::Folder => ("▪", "38;5;75"),
         Icon::Variable => ("$", "38;5;180"),
+        Icon::History => ("↺", "38;5;146"),
     }
 }
 
@@ -334,6 +336,7 @@ pub fn legend(nerd: bool) -> Vec<(&'static str, &'static str, String, String)> {
         (Icon::Cloud, "cloud / kubernetes"),
         (Icon::Terminal, "terminal session"),
         (Icon::Variable, "environment variable"),
+        (Icon::History, "a command from your history (Ctrl+R)"),
     ];
     let mut out = vec![];
     for (k, what) in kinds {

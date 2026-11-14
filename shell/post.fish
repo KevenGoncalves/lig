@@ -60,6 +60,12 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
         printf '\e]6973;R;%s\a' $fish_pid >/dev/tty
     end
 
+    # The line that just ran, and how it ended (for lig's history).
+    function __lig_ran --on-event fish_postexec
+        set -l s $status
+        printf '\e]6973;E;%s;%s\a' $s (__lig_clean "$argv[1]" | string collect) >/dev/tty
+    end
+
     function __lig_finish --on-event fish_preexec
         set -g __lig_editing 0
         printf '\e]6973;F\a' >/dev/tty

@@ -38,6 +38,11 @@ pub enum Msg {
     PromptEnd,
     Hide,
     Finish,
+    /// The command that just ran, with its exit status (for the history).
+    Ran {
+        status: i32,
+        command: String,
+    },
     Path(String),
     Cwd(String),
     Aliases(Vec<(String, String)>),
@@ -137,6 +142,10 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         "H" => Some(Msg::Hide),
         "S" => Some(Msg::PromptEnd),
         "F" => Some(Msg::Finish),
+        "E" => {
+            let (status, command) = rest.split_once(';')?;
+            Some(Msg::Ran { status: status.trim().parse().ok()?, command: command.to_string() })
+        }
         "P" => Some(Msg::Path(rest.to_string())),
         "C" => Some(Msg::Cwd(rest.to_string())),
         "A" => Some(Msg::Aliases(pairs(rest))),
@@ -156,6 +165,16 @@ fn parse(payload: &[u8]) -> Option<Msg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ran_carries_the_status_and_the_whole_line() {
+        assert_eq!(
+            parse(b"E;0;git log --format='%h;%s'"),
+            Some(Msg::Ran { status: 0, command: "git log --format='%h;%s'".into() })
+        );
+        assert_eq!(parse(b"E;127;nope"), Some(Msg::Ran { status: 127, command: "nope".into() }));
+        assert_eq!(parse(b"E;x;ls"), None);
+    }
 
     #[test]
     fn snapshot_replies_have_ids_and_only_buffer_or_hide_state() {

@@ -6,7 +6,13 @@ def __lig_clean [text: string] {
 
 # Builtins and custom commands are sent once; aliases when they change.
 def --env __lig_report [] {
-    mut out = $"\e]6973;C;(__lig_clean $env.PWD)(char bel)"
+    mut out = ""
+    # The line that just ran, and how it ended (for lig's history).
+    if ($env.__lig_ran? | is-not-empty) {
+        $out += $"\e]6973;E;($env.LAST_EXIT_CODE);(__lig_clean $env.__lig_ran)(char bel)"
+        $env.__lig_ran = ""
+    }
+    $out += $"\e]6973;C;(__lig_clean $env.PWD)(char bel)"
     $out += $"\e]6973;P;(__lig_clean ($env.PATH | str join (char esep)))(char bel)"
     let aliases = scope aliases | each {|a| $"($a.name)=($a.expansion)" } | str join (char record_separator) | __lig_clean $in
     if $aliases != ($env.__lig_aliases? | default "") {
@@ -43,6 +49,7 @@ def __lig_insert [] {
 if $nu.is-interactive and ($env.LIG_DISABLE? | is-empty) and ($env.LIG_TTY? | is-not-empty) and ($env.LIG_TTY == (^tty | complete | get stdout | str trim)) {
     $env.config.shell_integration.osc133 = true
     $env.config.hooks.pre_prompt = ($env.config.hooks.pre_prompt? | default [] | append {|| __lig_report })
+    $env.config.hooks.pre_execution = ($env.config.hooks.pre_execution? | default [] | append {|| $env.__lig_ran = (commandline) })
     $env.config.keybindings = ($env.config.keybindings? | default [] | append {
         name: lig_insert
         modifier: control_alt_shift

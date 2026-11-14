@@ -181,6 +181,7 @@ Type as usual; the popup shows what fits.
 | `Enter` | accept the suggestion |
 | `Esc` | close the popup |
 | `Ctrl+Space` | open or close the popup on demand |
+| `Ctrl+R` | your history: past commands matching what's typed |
 
 - **`Enter`** completes the word you're typing (`go bui` → `go build`) or picks the first
   suggestion after a space. On a word that's already complete (`git status`) it runs the
@@ -189,6 +190,10 @@ Type as usual; the popup shows what fits.
   `Ctrl+Space` shows them; `complete_commands = true` always does.
 - **Folders** (`cd`, `mkdir`…) keep the popup open with the subfolders, with **↵ Enter** to
   run the line and **Back** to go up.
+- **History** (`Ctrl+R`) lists the commands that ran without error, in every Lig session,
+  newest first and each once; typing narrows it (fuzzy), and `Enter` puts one on the line.
+  It starts with what zsh, bash, fish and nu remember. A command typed with a leading space
+  isn't kept; `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
   closed, fzf's `Ctrl+T`. Typing brings the popup back.
 
@@ -208,6 +213,7 @@ height = 8                 # max rows, or "30%"
 accept = ["enter"]
 next = ["tab", "down", "ctrl-n"]
 toggle = ["ctrl-space"]
+history = ["ctrl-r"]
 
 [behavior]
 enter_accepts = "auto"     # "always", "after-space", "never"
@@ -215,6 +221,7 @@ enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm", …]  # options only once you type -; "*" for all
 online = true              # search package registries as you type
+history = true             # keep the commands that ran, for Ctrl+R
 disabled_commands = []     # never show the popup for these
 ```
 

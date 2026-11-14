@@ -20,6 +20,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   _lig_line_init() { _lig_last=; _lig_report }
   _lig_line_finish() {
     _lig_last=
+    _lig_ran=$BUFFER
     builtin print -rn -- $'\e]6973;F\a' >$TTY
   }
 
@@ -48,9 +49,15 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_lig_insert)
 
   # Generators need the shell's cwd and PATH; aliases, functions and exported variables sent on change (split by \x1e).
-  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent=
+  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent= _lig_ran=
   _lig_precmd() {
+    local ret=$?
     builtin emulate -L zsh
+    # The line that just ran, and how it ended (for lig's history).
+    if [[ -n $_lig_ran ]]; then
+      builtin print -rn -- $'\e]6973;E;'"$ret;${_lig_ran//[$'\a\e']/ }"$'\a' >$TTY
+      _lig_ran=
+    fi
     builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >$TTY
     local k
     local -a pairs
@@ -78,9 +85,11 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
       _lig_vars=$v
       builtin print -rn -- $'\e]6973;V;'"$v"$'\a' >$TTY
     fi
+    # Prompts after this hook (starship…) still see the command's status.
+    return ret
   }
-  builtin autoload -Uz add-zsh-hook
-  add-zsh-hook precmd _lig_precmd
+  # First, to see the command's own $? (other hooks' commands would change it).
+  precmd_functions=(_lig_precmd ${precmd_functions:#_lig_precmd})
 
   builtin autoload -Uz add-zle-hook-widget
   builtin zmodload zsh/zleparameter 2>/dev/null

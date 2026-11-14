@@ -5,6 +5,7 @@ mod config;
 mod engine;
 mod exec;
 mod help;
+mod history;
 mod icons;
 mod keys;
 #[cfg(target_os = "linux")]

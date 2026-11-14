@@ -5,9 +5,22 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   __lig_aliases=
   __lig_vars=
   __lig_once=
+  __lig_hist=
 
   __lig_prompt() {
     local status=$?
+    # The line that just ran, and how it ended (for lig's history): a new history entry.
+    local h
+    h=$(HISTTIMEFORMAT= builtin history 1)
+    # `history 1` prints the number, `*` if edited, a space, then the line as typed.
+    if [[ $h =~ ^\ *([0-9]+)[*\ ]\ (.*)$ ]]; then
+      [[ -n $__lig_hist && ${BASH_REMATCH[1]} != "$__lig_hist" ]] &&
+        printf '\e]6973;E;%s;%s\a' "$status" "${BASH_REMATCH[2]//[$'\a\e']/ }" >/dev/tty
+      __lig_hist=${BASH_REMATCH[1]}
+    else
+      # No history yet: the next line is entry 1.
+      __lig_hist=${__lig_hist:-0}
+    fi
     printf '\e]6973;C;%s\a\e]6973;P;%s\a' "${PWD//[$'\a\e']/}" "${PATH//[$'\a\e']/}" >/dev/tty
     local k a=
     for k in "${!BASH_ALIASES[@]}"; do a+="$k=${BASH_ALIASES[$k]}"$'\x1e'; done

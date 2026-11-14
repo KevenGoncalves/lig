@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Ctrl+R shows the commands that ran without error (issue #27), in zsh, bash, fish and nu,
+in a private tmux server. Run after cargo build --release: python3 tests/history_tmux.py."""
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from fish_pty import BIN
+
+SHELLS = {
+    'zsh': os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh'),
+    'bash': shutil.which('bash'),
+    'fish': shutil.which('fish'),
+    'nu': os.environ.get('LIG_TEST_NU') or shutil.which('nu'),
+}
+PROMPTS = {
+    'zsh': "PROMPT='hist-test> '\n",
+    'bash': "PS1='hist-test> '\n",
+    'fish': "function fish_prompt; echo -n 'hist-test> '; end\nset -g fish_greeting\n",
+    'nu': "$env.config.show_banner = false\n$env.PROMPT_COMMAND = {|| 'hist-test' }\n$env.PROMPT_COMMAND_RIGHT = ''\n",
+}
+
+
+@unittest.skipUnless(shutil.which('tmux'), 'tmux is required')
+class HistoryTmux(unittest.TestCase):
+    def start(self, kind, config=''):
+        shell = SHELLS[kind]
+        if not shell:
+            self.skipTest(f'{kind} is unavailable')
+        self.dir = tempfile.TemporaryDirectory(prefix='lig-hist-')
+        directory = Path(self.dir.name)
+        home, runtime = directory / 'home', directory / 'runtime'
+        home.mkdir()
+        runtime.mkdir(mode=0o700)
+        (home / '.zsh_history').write_text(': 1700000000:0;echo imported-from-zsh\n')
+        self.state = directory / 'state'
+        env = {'HOME': str(home), 'ZDOTDIR': str(home), 'XDG_CONFIG_HOME': str(home / '.config'),
+               'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
+               'XDG_STATE_HOME': str(self.state), 'XDG_RUNTIME_DIR': str(runtime), 'SHELL': shell, 'LIG_LOG': '1',
+               'HISTFILE': str(home / '.shell_history')}
+        rc = {'zsh': home / '.zshrc', 'bash': home / '.bashrc', 'fish': home / '.config/fish/config.fish',
+              'nu': home / '.config/nushell/config.nu'}[kind]
+        rc.parent.mkdir(parents=True, exist_ok=True)
+        rc.write_text(PROMPTS[kind])
+        if config:
+            (home / '.config/lig').mkdir(parents=True, exist_ok=True)
+            (home / '.config/lig/config.toml').write_text(config)
+        subprocess.run([BIN, 'install', kind], env=dict(os.environ, **env), check=True, capture_output=True)
+        self.base = ['tmux', '-S', str(directory / 'socket'), '-f', '/dev/null']
+        self.addCleanup(lambda: (subprocess.run(self.base + ['kill-server'], capture_output=True), self.dir.cleanup()))
+        launch = ['env', '-u', 'LIG_TTY', '-u', 'LIG_DISABLE', '-u', 'INSIDE_EMACS'] + [f'{k}={v}' for k, v in env.items()]
+        self.tmux('new-session', '-d', '-x', '100', '-y', '30', '-s', 'test', '-c', str(home), *launch, shell)
+        self.wait('no prompt', lambda s: 'hist-test' in s, timeout=15)
+
+    def tmux(self, *args):
+        return subprocess.run(self.base + list(args), capture_output=True, text=True, timeout=5, check=True).stdout
+
+    def screen(self):
+        return self.tmux('capture-pane', '-p', '-t', 'test:0.0')
+
+    def wait(self, what, check, timeout=6):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if check(self.screen()):
+                return
+            time.sleep(.1)
+        log = self.state / 'lig/lig.log'
+        self.fail(f'{what}; pane:\n{self.screen()}\nlig.log:\n{log.read_text()[-3000:] if log.exists() else ""}')
+
+    def run_line(self, line):
+        # One write: with Enter sent apart, the popup could open first and take it.
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', f'{line}\r')
+        self.wait(f'{line!r} did not finish', lambda s: s.rstrip().splitlines()[-1].startswith('hist-test'))
+
+    def check_history(self, kind):
+        self.start(kind)
+        self.run_line('echo hist-ok')
+        self.run_line('ls /no/such/dir-hist-bad')
+        self.run_line(' echo hist-hidden')
+        time.sleep(.5)
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.wait('no history popup', lambda s: 'echo hist-ok' in s and 'imported-from-zsh' in s)
+        entries = ''.join(l for l in self.screen().splitlines() if '↺' in l)
+        self.assertNotIn('dir-hist-bad', entries)
+        self.assertNotIn('hist-hidden', entries)
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'hist-o')
+        self.wait('not narrowed', lambda s: 'imported-from-zsh' not in s and 'echo hist-ok' in s)
+        self.tmux('send-keys', '-t', 'test:0.0', 'Enter')
+        # The last prompt's line: nu may show a hint for the command under it.
+        prompt = lambda s: [l for l in s.splitlines() if l.startswith('hist-test')][-1].rstrip()
+        self.wait('not picked', lambda s: prompt(s).endswith('echo hist-ok') and '↺' not in s)
+
+    def test_zsh(self):
+        self.check_history('zsh')
+
+    def test_bash(self):
+        self.check_history('bash')
+
+    def test_fish(self):
+        self.check_history('fish')
+
+    def test_nu(self):
+        self.check_history('nu')
+
+    def test_off_leaves_ctrl_r_to_the_shell(self):
+        self.start('bash', '[behavior]\nhistory = false\n')
+        self.run_line('echo hist-ok')
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.wait("bash's own search did not open", lambda s: 'reverse-i-search' in s)
+        self.assertFalse((self.state / 'lig/history').exists())
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

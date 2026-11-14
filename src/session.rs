@@ -386,6 +386,8 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         shell_nav: false,
         cwd_fallback: std::env::current_dir().unwrap_or_else(|_| "/".into()),
         bindings: Bindings::new(&cfg.keys),
+        history: cfg.behavior.history.then(crate::history::History::open),
+        history_mode: false,
         cfg,
         pty: writer,
         shell_pty: pty_handle,
@@ -573,6 +575,16 @@ fn prompt_marks(out: &[u8]) -> Vec<usize> {
         .collect()
 }
 
+/// How long ago, roughly: `5m ago`, `3h ago`, `2d ago`.
+fn ago(secs: u64) -> String {
+    match secs {
+        0..60 => "just now".into(),
+        60..3600 => format!("{}m ago", secs / 60),
+        3600..86400 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86400),
+    }
+}
+
 /// nu's own shell-integration marks say what lig's do for other shells: the prompt ends
 /// (`133;B`, before the input on every redraw) and a command starts (`133;C`).
 fn nu_marks(out: &[u8]) -> Vec<(usize, Msg)> {
@@ -723,6 +735,9 @@ struct Session {
     unconfirmed_at: Instant,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
+    /// The commands that ran (`behavior.history`), and whether the popup shows them now.
+    history: Option<crate::history::History>,
+    history_mode: bool,
     insert_file: PathBuf,
     /// Set by bash's prompt marker: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
@@ -1311,8 +1326,18 @@ impl Session {
                 crate::log("reader hidden");
                 self.hidden = true;
             }
+            Msg::Ran { status, command } => {
+                // A leading space keeps a command out, as the shells' `ignorespace` options do.
+                if status == 0
+                    && !command.starts_with(' ')
+                    && let Some(history) = self.history.as_mut()
+                {
+                    history.record(&command);
+                }
+            }
             Msg::Finish => {
                 crate::log("reader finished");
+                self.history_mode = false;
                 self.fish_refresh = None;
                 self.unconfirmed.clear();
                 self.editing = false;
@@ -1376,6 +1401,10 @@ impl Session {
     }
 
     fn request(&mut self) {
+        if self.history_mode {
+            self.show_history();
+            return;
+        }
         let mut env = self.env.clone();
         if env.cwd.as_os_str().is_empty() {
             env.cwd = self.shell_pid.and_then(crate::process::cwd).unwrap_or_else(|| self.cwd_fallback.clone());
@@ -1408,6 +1437,9 @@ impl Session {
     }
 
     fn enter_action(&self) -> Enter {
+        if self.history_mode {
+            return Enter::Pick;
+        }
         // Fish and PowerShell drop an insertion made for a line they no longer have; an
         // Enter queued behind it would then run the half-typed line, so there a pick only picks.
         let runs = !self.fish_shell && self.cfg.behavior.enter_runs_commands.contains(&self.items_command);
@@ -1522,6 +1554,11 @@ impl Session {
                 self.deferred = data[data.len() - rest..].to_vec();
                 break;
             }
+            if self.bindings.action(&key) == Some(Action::History) && self.history.is_some() && self.can_show() {
+                self.toggle_history();
+                redraw = true;
+                continue;
+            }
             if self.bindings.action(&key) == Some(Action::Toggle) && self.can_show() {
                 self.toggle();
                 redraw = true;
@@ -1578,6 +1615,11 @@ impl Session {
                     self.navigated = true;
                     self.selected -= 1;
                     redraw = true;
+                }
+                Some(Action::History) => {
+                    // No history (`behavior.history` off): the key is the shell's.
+                    passthrough = true;
+                    fwd.extend_from_slice(raw);
                 }
                 Some(Action::Dismiss | Action::Toggle) => {
                     self.dismiss();
@@ -1719,6 +1761,42 @@ impl Session {
         }
     }
 
+    /// Show the commands that ran before, or leave them for the usual suggestions.
+    fn toggle_history(&mut self) {
+        self.history_mode = !self.history_mode;
+        self.manual = self.history_mode;
+        self.dismissed = None;
+        self.navigated = false;
+        self.items_line.clear();
+        self.request();
+    }
+
+    /// The history matching the line, newest first; picking one replaces the line.
+    fn show_history(&mut self) {
+        let fuzzy = self.cfg.behavior.fuzzy;
+        let Some(history) = self.history.as_mut() else { return };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let delete = self.line.chars().count();
+        let items = history
+            .search(&self.line, fuzzy)
+            .into_iter()
+            .take(500)
+            .map(|(time, command)| Suggestion {
+                label: command.replace('\n', " ⏎ "),
+                description: if time == 0 { String::new() } else { ago(now.saturating_sub(time)) },
+                kind: Kind::Command,
+                icon: Some(crate::spec::Icon::History),
+                insert: command,
+                delete,
+                back: 0,
+                query: self.line.trim_start().to_string(),
+            })
+            .collect();
+        self.loading = None;
+        // As the worker's answers do: an Enter held for this line can go now.
+        self.on_done(self.line.clone(), items, None, String::new());
+    }
+
     /// Esc again right after closing the popup; sent on, zsh would read the next key as Alt+key.
     fn repeated_dismiss(&mut self, key: &Key) -> bool {
         match self.dismissed_by.take() {
@@ -1729,12 +1807,14 @@ impl Session {
 
     /// Close the popup for this line; it comes back when the line changes.
     fn dismiss(&mut self) {
+        self.history_mode = false;
         self.dismissed = Some(self.line.clone());
         self.manual = false;
     }
 
     /// Insert the selected suggestion; with `run`, run the line after it (`enter_runs_commands`).
     fn accept_selected(&mut self, fwd: &mut Vec<u8>, run: bool) {
+        self.history_mode = false;
         let s = &self.items[self.selected];
         if s.kind == Kind::Execute {
             // The "Enter" item: run the line.

@@ -369,6 +369,7 @@ pub enum Action {
     Prev,
     Dismiss,
     Toggle,
+    History,
 }
 
 /// The `[keys]` config, resolved.
@@ -384,6 +385,7 @@ impl Bindings {
             (&k.prev, Action::Prev),
             (&k.dismiss, Action::Dismiss),
             (&k.toggle, Action::Toggle),
+            (&k.history, Action::History),
         ] {
             for n in names {
                 match Key::parse_name(n) {

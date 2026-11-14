@@ -58,6 +58,7 @@ pub enum Icon {
     Cloud,
     Terminal,
     Variable,
+    History,
 }
 
 impl Icon {
@@ -89,6 +90,7 @@ impl Icon {
             Icon::Cloud => "cloud",
             Icon::Terminal => "terminal",
             Icon::Variable => "variable",
+            Icon::History => "history",
         }
     }
 
@@ -121,6 +123,7 @@ impl Icon {
             "cloud" => Icon::Cloud,
             "terminal" => Icon::Terminal,
             "variable" => Icon::Variable,
+            "history" => Icon::History,
             _ => return None,
         })
     }
