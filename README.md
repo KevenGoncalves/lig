@@ -37,14 +37,22 @@ itself.
 - Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
-## Install
+## Try it in Docker
 
-To try it first, without installing anything, run it in Docker (zsh; add `bash` or `fish` at
-the end for those):
+See Lig before installing it: the demo image opens a shell in a small git project, with
+branches, a Makefile and a few files to complete. Nothing touches your system.
 
 ```bash
-docker build -t lig-demo https://github.com/KevenGoncalves/lig.git && docker run --rm -it lig-demo
+docker build -t lig-demo https://github.com/KevenGoncalves/lig.git
+docker run --rm -it lig-demo           # zsh
+docker run --rm -it lig-demo bash      # or bash, or fish
 ```
+
+Start typing (`git checkout `, `make `, `cd `): the popup opens under the cursor. `Tab` or
+`Enter` accepts, the arrows move, `Esc` closes, and `exit` ends the container. The first build
+compiles Lig, so it takes a few minutes; `docker build -t lig-demo .` builds it from a clone.
+
+## Install
 
 | System | Command |
 | --- | --- |
