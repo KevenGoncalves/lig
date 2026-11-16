@@ -303,7 +303,13 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     }
     let (rows, cols) = term::size().unwrap_or((24, 80));
     // bash, fish, nu and PowerShell read accepted completions from this file.
-    let runtime = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
+    let runtime = match crate::private_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("lig: {e}; starting the shell without lig");
+            exec_shell(&shell, login);
+        }
+    };
     let insert_file = runtime.join(format!("lig-{}.insert", std::process::id()));
     let query_file = insert_file.with_extension("query");
     let mut cmd = shell_command(&shell, login);
@@ -502,7 +508,7 @@ struct RemoteSession {
 
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
 fn is_lig_ssh(pid: u32, control: &str) -> bool {
-    let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lig");
+    let dir = crate::lig_dir();
     // Both sides from the same query, so symlinks and a replaced binary resolve alike.
     let theirs = crate::process::executable(pid);
     Path::new(control) == dir.join(format!("ssh-{pid}"))

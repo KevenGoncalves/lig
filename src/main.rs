@@ -322,6 +322,50 @@ enum SpecsCmd {
 }
 
 /// Append a line to the debug log when `LIG_LOG` is set.
+/// Where lig keeps its sockets and per-session files: `$XDG_RUNTIME_DIR/lig`, else `lig-<uid>`
+/// in the temporary folder (a shared `/tmp` must not get one name for every user).
+pub fn lig_dir() -> PathBuf {
+    match dirs::runtime_dir() {
+        Some(runtime) => runtime.join("lig"),
+        #[cfg(unix)]
+        None => std::env::temp_dir().join(format!("lig-{}", unsafe { libc::geteuid() })),
+        #[cfg(windows)]
+        None => std::env::temp_dir().join("lig"),
+    }
+}
+
+/// [`lig_dir`], made if needed: only a folder of this user's that no one else can write in.
+/// Another user could create it first in a shared `/tmp` and plant links in it, which lig would
+/// then write through.
+pub fn private_dir() -> std::io::Result<PathBuf> {
+    let dir = lig_dir();
+    make_private(&dir)?;
+    Ok(dir)
+}
+
+fn make_private(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(e),
+            _ => {}
+        }
+        let meta = std::fs::symlink_metadata(dir)?;
+        // SAFETY: geteuid has no preconditions.
+        if !meta.is_dir() || meta.uid() != unsafe { libc::geteuid() } {
+            return Err(std::io::Error::other(format!("{} isn't a folder of this user's", dir.display())));
+        }
+        // Made by an older lig with the default mode: it's ours, so close it.
+        if meta.mode() & 0o077 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    #[cfg(windows)]
+    std::fs::create_dir_all(dir)?;
+    Ok(())
+}
+
 pub fn log(msg: &str) {
     if std::env::var_os("LIG_LOG").is_none() {
         return;
@@ -1430,6 +1474,31 @@ mod shell_tests {
         assert_eq!(managed_body(&std::fs::read_to_string(&rc).unwrap()).unwrap(), body);
         assert_eq!(std::fs::metadata(&rc).unwrap().permissions().mode() & 0o777, 0o600);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lig_keeps_its_files_in_a_folder_only_its_user_can_use() {
+        let base = std::env::temp_dir().join(format!("lig-private-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let fresh = base.join("fresh");
+        make_private(&fresh).unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        // An older lig's, with the default mode: closed.
+        let open = base.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        make_private(&open).unwrap();
+        assert_eq!(mode(&open), 0o700);
+        // Planted in its place: a link to another folder, or a file.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&open, &link).unwrap();
+        assert!(make_private(&link).is_err());
+        let file = base.join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(make_private(&file).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

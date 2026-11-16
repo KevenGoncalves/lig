@@ -165,8 +165,14 @@ pub fn ssh(args: &[String]) -> Result<i32> {
         use std::os::unix::process::CommandExt;
         return Err(std::process::Command::new("ssh").args(args).exec().into());
     };
-    let dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir).join("lig");
-    std::fs::create_dir_all(&dir)?;
+    let dir = match crate::private_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("lig: {e}; running plain ssh");
+            use std::os::unix::process::CommandExt;
+            return Err(std::process::Command::new("ssh").args(args).exec().into());
+        }
+    };
     let control = dir.join(format!("ssh-{}", std::process::id()));
     let mut tty = std::fs::OpenOptions::new().write(true).open("/dev/tty")?;
     write!(tty, "\x1b]6973;X;{};{};{}\x07", std::process::id(), control.display(), args[dest])?;
