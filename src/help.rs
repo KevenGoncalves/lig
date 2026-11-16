@@ -651,7 +651,7 @@ mod tests {
 
     #[test]
     fn commands_written_after_the_program_name() {
-        // mole's help, which calls itself `mo` (issue #35).
+        // mole's help, which calls itself `mo`.
         let text = " __  __       _\n|  \\/  | ___ | | ___\n|_|  |_|\\___/|_|\\___|  https://mole.fit\n\nCOMMANDS\n  mo                           Main menu\n  mo clean                     Free up disk space\n  mo uninstall                 Remove apps completely\n  mo --help                    Show help\n\n  mo clean --dry-run           Preview cleanup\n\nOPTIONS\n  --debug                      Show detailed operation logs\n";
         let s = parse(text, &["mole".into()]).unwrap();
         let subs: Vec<&str> = s.subcommands.iter().map(|c| c.meta.names[0].as_str()).collect();

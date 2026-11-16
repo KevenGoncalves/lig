@@ -729,6 +729,7 @@ fn suggestion_value(s: &SuggestionDef) -> Value {
         && s.meta.priority.is_none()
         && s.meta.icon.is_none()
         && s.meta.display_name.is_none()
+        && !s.meta.hidden
         && s.kind.is_none()
         && s.meta.names.len() == 1;
     if plain {
@@ -783,8 +784,62 @@ fn arg_value(a: &Arg) -> Value {
         o.insert("template".into(), if t.len() == 1 { t[0].clone() } else { Value::Array(t) });
     }
     if !a.generators.is_empty() {
-        let gens: Vec<Value> = a.generators.iter().map(|g| serde_json::json!({ "builtin": g.id })).collect();
-        o.insert("generators".into(), Value::Array(gens));
+        o.insert("generators".into(), a.generators.iter().map(|g| generator_value(g)).collect());
+    }
+    Value::Object(o)
+}
+
+fn generator_value(g: &Generator) -> Value {
+    let mut o = serde_json::Map::new();
+    match &g.source {
+        // A builtin brings its own trigger, query term and ttl.
+        GenSource::Rust(_) => {
+            o.insert("builtin".into(), g.id.clone().into());
+            return Value::Object(o);
+        }
+        GenSource::Static(list) => {
+            o.insert("suggestions".into(), list.iter().map(suggestion_value).collect());
+        }
+        GenSource::Script { argv, shell, output } => {
+            let script = match shell {
+                Some(s) => s.clone().into(),
+                None => argv.clone().into(),
+            };
+            o.insert("script".into(), script);
+            match output {
+                Output::Lines { split_on, skip, field } => {
+                    if split_on != "\n" {
+                        o.insert("splitOn".into(), split_on.clone().into());
+                    }
+                    if *skip > 0 {
+                        o.insert("skipLines".into(), (*skip as u64).into());
+                    }
+                    if let Some(f) = field {
+                        o.insert("field".into(), (*f as u64).into());
+                    }
+                }
+                Output::Json(t) => {
+                    let mut j = serde_json::Map::new();
+                    j.insert("name".into(), t.name.clone().into());
+                    if let Some(d) = &t.description {
+                        j.insert("description".into(), d.clone().into());
+                    }
+                    if t.lines {
+                        j.insert("lines".into(), true.into());
+                    }
+                    o.insert("json".into(), Value::Object(j));
+                }
+            }
+        }
+    }
+    if let Some(Trigger::Chars(c)) = &g.trigger {
+        o.insert("trigger".into(), c.clone().into());
+    }
+    if let Some(q) = &g.query_term {
+        o.insert("getQueryTerm".into(), q.clone().into());
+    }
+    if let Some(ttl) = g.cache_ttl {
+        o.insert("cache".into(), serde_json::json!({ "ttl": ttl.as_millis() as u64 }));
     }
     Value::Object(o)
 }
@@ -936,7 +991,6 @@ fn templates(v: Option<&Value>) -> Vec<Template> {
 }
 
 /// Build a spec from a JSON/TOML value in (a static subset of) Fig's format.
-/// Generators may use `script` (a shell string or an argv array) and `splitOn`.
 pub fn from_value(v: &Value) -> Subcommand {
     let directives = v.get("parserDirectives").map(|d| Directives {
         flags_are_posix_noncompliant: flag(d, "flagsArePosixNoncompliant"),
@@ -1304,5 +1358,24 @@ mod tests {
         assert_eq!(a.template, [Template::Folders]);
         assert_eq!(a.generators.len(), 3);
         assert!(matches!(&a.generators[1].source, GenSource::Static(l) if l.len() == 2));
+    }
+
+    #[test]
+    fn script_and_static_generators_round_trip() {
+        let v = serde_json::json!({"name": "x", "args": {"name": "a", "generators": [
+            {"builtin": "git:branches"},
+            {"suggestions": ["one", {"name": "two", "hidden": true}]},
+            {"script": ["ls"], "splitOn": ",", "skipLines": 1, "field": 2, "trigger": "/", "getQueryTerm": ",", "cache": {"ttl": 500}},
+            {"script": "docker ps", "json": {"name": "\u{1}$.Names\u{1}", "description": "d", "lines": true}},
+        ]}});
+        let back = to_value(&from_value(&v));
+        assert_eq!(back, v);
+        assert_eq!(check(&back), Vec::<String>::new());
+    }
+
+    #[test]
+    fn hidden_suggestion_keeps_hidden() {
+        let v = serde_json::json!({"name": "x", "args": {"name": "a", "suggestions": [{"name": "-", "hidden": true}]}});
+        assert_eq!(to_value(&from_value(&v)), v);
     }
 }

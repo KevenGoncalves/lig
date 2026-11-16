@@ -20,7 +20,8 @@ pub type ShellSpecs = Arc<HashMap<String, Arc<Subcommand>>>;
 pub fn specs(nu: &Path) -> Option<ShellSpecs> {
     let meta = std::fs::metadata(nu).ok()?;
     let mut stamp = std::collections::hash_map::DefaultHasher::new();
-    (nu, meta.len(), meta.modified().ok()).hash(&mut stamp);
+    // The script too: a lig with a different one reads nu again.
+    (nu, meta.len(), meta.modified().ok(), SCRIPT).hash(&mut stamp);
     let cache = crate::help::cache_dir().join(format!("nu-{:016x}.json", stamp.finish()));
     // A cache that doesn't parse (cut short, say) is read from nu again.
     let cached = std::fs::read_to_string(&cache).ok().and_then(|text| serde_json::from_str::<Vec<Value>>(&text).ok());

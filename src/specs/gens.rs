@@ -493,15 +493,28 @@ pub fn ssh_host_list() -> Vec<SuggestionDef> {
             i += 1;
         }
         let known = std::fs::read_to_string(home.join(".ssh/known_hosts")).unwrap_or_default();
-        for line in known.lines() {
-            if let Some(h) = line.split_whitespace().next().filter(|h| !h.starts_with('|')) {
-                for h in h.split(',') {
-                    add(h.trim_start_matches('[').split(']').next().unwrap_or(h), "known host");
-                }
-            }
+        for h in known_host_names(&known) {
+            add(h, "known host");
         }
         hosts
     }
+}
+
+/// Host names in a `known_hosts` file: `[host]:port` as `host`; hashed (`|1|…`) ones skipped.
+fn known_host_names(text: &str) -> Vec<&str> {
+    let mut out = vec![];
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let first = fields.next().filter(|f| !f.starts_with('#'));
+        // An optional `@cert-authority` or `@revoked` marker comes before the hosts.
+        let hosts = if first.is_some_and(|f| f.starts_with('@')) { fields.next() } else { first };
+        if let Some(h) = hosts.filter(|h| !h.starts_with('|')) {
+            for h in h.split(',') {
+                out.push(h.trim_start_matches('[').split(']').next().unwrap_or(h));
+            }
+        }
+    }
+    out
 }
 
 pub fn tmux_sessions() -> Generator {
@@ -831,7 +844,14 @@ pub fn kube_namespaces() -> Generator {
 
 #[cfg(test)]
 mod tests {
-    use super::{relative_to, remote_target};
+    use super::{known_host_names, relative_to, remote_target};
+
+    #[test]
+    fn known_hosts_skip_comments_and_markers() {
+        let text = "# comment\n@cert-authority *.example.com ssh-rsa AAAA\n@revoked old.example.com ssh-rsa AAAA\n\
+                    |1|abc=|def= ssh-ed25519 AAAA\n[pi]:2222,10.0.0.2 ssh-ed25519 AAAA\n";
+        assert_eq!(known_host_names(text), ["*.example.com", "old.example.com", "pi", "10.0.0.2"]);
+    }
 
     #[test]
     fn every_listed_generator_exists() {
@@ -1420,11 +1440,13 @@ fn cached_download(cx: &GenCtx, url: &str, file: &str, max_age: std::time::Durat
         .and_then(|t| t.elapsed().ok())
         .is_some_and(|age| age < max_age);
     if !fresh {
-        let tmp = path.with_extension("part");
+        let tmp = path.with_extension(format!("{}.part", std::process::id()));
         let _ = std::fs::create_dir_all(path.parent()?);
         let tmp_s = tmp.to_string_lossy().into_owned();
         if cx.run(&["curl", "-fsSL", "--max-time", "8", "-o", &tmp_s, url]).is_some() {
             let _ = std::fs::rename(&tmp, &path);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
     std::fs::read_to_string(path).ok()
@@ -1794,7 +1816,11 @@ fn cached_output(cx: &GenCtx, argv: &[&str], file: &str, max_age: std::time::Dur
         && let Some(out) = cx.run(argv).filter(|o| !o.trim().is_empty())
     {
         let _ = std::fs::create_dir_all(path.parent()?);
-        let _ = std::fs::write(&path, &out);
+        // Written whole, then renamed: another session never reads half of it.
+        let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+        if std::fs::write(&tmp, &out).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
         return Some(out);
     }
     std::fs::read_to_string(path).ok()

@@ -19,7 +19,6 @@ pub fn lig_names() -> impl Iterator<Item = &'static str> {
 /// the hand-written one says `skipFigSpec`). Spec files are lowercase, so `Get-ChildItem`
 /// (PowerShell) and `PING` (Windows) find theirs.
 pub fn builtin(name: &str) -> Option<Subcommand> {
-    // `.` is `source`.
     let name = if name == "." { "source" } else { name };
     if cfg!(windows)
         && let Some(s) = WINDOWS.load(name)
@@ -61,6 +60,9 @@ pub fn merge(base: &Subcommand, extra: &Subcommand) -> Subcommand {
     }
     if out.additional_suggestions.is_empty() {
         out.additional_suggestions = extra.additional_suggestions.clone();
+    }
+    if out.directives.is_none() {
+        out.directives = extra.directives.clone();
     }
     if out.load_spec.is_none() && base.subcommands.is_empty() && base.args.is_empty() {
         out.load_spec = extra.load_spec.clone();
@@ -106,6 +108,23 @@ mod tests {
         assert_eq!(super::merge(&cd, &fig_cd).args[0].template, [crate::spec::Template::Folders]);
         assert_eq!(install.meta.description.as_deref(), Some("Install packages"));
         assert!(m.find_subcommand("freeze").is_some());
+    }
+
+    /// What `lig specs new` writes for a built-in spec reads back unchanged, without problems.
+    #[test]
+    fn written_builtin_specs_check_clean() {
+        for n in super::LIG.names().chain(super::FIG.names()) {
+            let v = crate::spec::to_value(&super::builtin(n).unwrap());
+            assert_eq!(crate::spec::check(&v), Vec::<String>::new(), "{n}");
+            assert_eq!(crate::spec::to_value(&crate::spec::from_value(&v)), v, "{n}");
+        }
+    }
+
+    #[test]
+    fn merge_keeps_their_parser_directives() {
+        use crate::spec::cmd;
+        let m = super::merge(&cmd("npm", ""), &cmd("npm", "").posix_noncompliant());
+        assert!(m.directives().flags_are_posix_noncompliant);
     }
 
     /// `uv add` and `uv pip install` search PyPI like `pip install`, next to Fig's options.
