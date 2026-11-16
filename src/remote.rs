@@ -233,6 +233,8 @@ mod tests {
         assert_eq!(ls_command("it's/a"), "ls -1Ap -- 'it'\\''s/'");
     }
 
+    // Windows' `bash` may be WSL's, which runs the script in another system.
+    #[cfg(unix)]
     #[test]
     fn quoting_survives_a_posix_or_fish_login_shell() {
         let script = format!("printf '%s|' {} {}", quote(r"it's"), quote(r"a\\b\'c"));
