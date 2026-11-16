@@ -71,7 +71,7 @@ enum Event {
         items: Vec<Suggestion>,
         loading: Option<String>,
         command: String,
-        /// Ask zsh for its own completions of this line.
+        /// Ask the shell (zsh or bash) for its own completions of this line.
         ask_shell: Option<String>,
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
@@ -148,7 +148,6 @@ fn follow_terminal(parser: &mut vt100::Parser, rows: u16, cols: u16, (row, col):
 struct Resync {
     /// The size the model is to get (`None`: it has it already).
     size: Option<(u16, u16)>,
-    /// When to ask.
     ask_at: Instant,
     /// When it was asked; the answer is awaited for [`CURSOR_REPORT_WAIT`].
     asked: Option<Instant>,
@@ -303,7 +302,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         exec_shell(&shell, login);
     }
     let (rows, cols) = term::size().unwrap_or((24, 80));
-    // bash reads accepted completions from this file (see shell/post.bash).
+    // bash, fish, nu and PowerShell read accepted completions from this file.
     let runtime = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
     let insert_file = runtime.join(format!("lig-{}.insert", std::process::id()));
     let query_file = insert_file.with_extension("query");
@@ -770,13 +769,13 @@ struct Session {
     unconfirmed_at: Instant,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
-    /// The line zsh was last asked about (see [`ZSH_COMPLETE_KEY`]).
+    /// The line the shell was last asked about (see [`ZSH_COMPLETE_KEY`]).
     shell_asked: Option<String>,
     /// The commands that ran (`behavior.history`), and whether the popup shows them now.
     history: Option<crate::history::History>,
     history_mode: bool,
     insert_file: PathBuf,
-    /// Set by bash's prompt marker: the line is read off the screen.
+    /// Set by the prompt marker of bash, nu or cmd: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
     /// The last key went to the shell's history or completion (Up/Down/Tab): its lines get
     /// no popup, so those keys keep going to the shell. Typing ends it.
@@ -980,11 +979,15 @@ impl Session {
                     self.on_done(line, items, loading, command)
                 }
                 Event::Resize => self.on_resize(),
-                Event::ShellSpecs(specs) => {
-                    self.env.shell_specs = Some(specs);
-                    self.items_line.clear();
-                    self.request();
-                }
+                // The local nu's, even when they come during a `lig ssh`.
+                Event::ShellSpecs(specs) => match &mut self.remote {
+                    Some(r) => r.local_env.shell_specs = Some(specs),
+                    None => {
+                        self.env.shell_specs = Some(specs);
+                        self.items_line.clear();
+                        self.request();
+                    }
+                },
                 Event::Exit => return,
             }
         }
@@ -1093,15 +1096,17 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
-        // Another shell's own hooks speaking: nu was replaced (`exec bash`).
+        // Another shell's own hooks speaking: nu was replaced (`exec bash`). Over `lig ssh` they
+        // are the remote shell's, and nu is back when it ends.
+        let local_nu = self.nu_shell && self.remote.is_none();
         let other_shell = |m: &Msg| matches!(m, Msg::PromptEnd | Msg::Buffer { .. } | Msg::Ready { .. });
-        if self.nu_shell && msgs.iter().any(|(_, m)| other_shell(m)) {
+        if local_nu && msgs.iter().any(|(_, m)| other_shell(m)) {
             crate::log("shell is no longer nu");
             self.nu_shell = false;
             self.nu_tail.clear();
             self.env.shell_specs = None;
         }
-        if self.nu_shell {
+        if self.nu_shell && self.remote.is_none() {
             let tail = std::mem::take(&mut self.nu_tail);
             let joined = [tail.as_slice(), &fwd].concat();
             msgs.extend(nu_marks(&joined).into_iter().map(|(i, m)| (i.saturating_sub(tail.len()), m)));
@@ -1455,7 +1460,8 @@ impl Session {
 
     /// When to wake up to take down suggestions kept for an older line.
     fn keep_wake(&self) -> Option<Instant> {
-        self.shown.and(self.stale_since).map(|since| since + LOADING_DELAY)
+        // `render` waits for a resync: waking for it meanwhile would spin.
+        self.shown.and(self.stale_since).filter(|_| self.resync.is_none()).map(|since| since + LOADING_DELAY)
     }
 
     fn request(&mut self) {
@@ -1821,6 +1827,7 @@ impl Session {
             self.dismiss();
         } else {
             self.manual = true;
+            self.shell_nav = false;
             self.dismissed = None;
             self.navigated = false;
             self.items_line.clear();
@@ -1851,6 +1858,7 @@ impl Session {
     fn toggle_history(&mut self) {
         self.history_mode = !self.history_mode;
         self.manual = self.history_mode;
+        self.shell_nav = false;
         self.dismissed = None;
         self.navigated = false;
         self.items_line.clear();
@@ -2013,9 +2021,14 @@ impl Session {
     /// popup on it and bash's prompt marker to match, then let the held output through.
     fn resynced(&mut self, report: Option<(u16, u16)>) {
         let Some(r) = self.resync.as_mut() else { return };
+        // No answer completed it: it was typed (a lone Esc), and goes on to the shell.
+        let typed = std::mem::take(&mut r.partial);
         if std::mem::take(&mut r.stale) {
             // For a size since replaced: ask again.
             r.asked = None;
+            if !typed.is_empty() {
+                self.on_input(&typed);
+            }
             return;
         }
         let r = self.resync.take().unwrap();
@@ -2039,6 +2052,9 @@ impl Session {
         self.mark_dirty();
         if !r.held.is_empty() {
             self.on_output(&r.held);
+        }
+        if !typed.is_empty() {
+            self.on_input(&typed);
         }
     }
 
@@ -2385,7 +2401,7 @@ mod tests {
         assert_eq!(enter_action("auto", true, false, false, false, false), PickAndRun);
         assert_eq!(enter_action("auto", true, true, false, false, false), PickAndRun);
         assert_eq!(enter_action("auto", true, false, true, true, false), PickAndRun);
-        // Where Enter wouldn't pick, it runs the line as typed, as before.
+        // Where Enter wouldn't pick, it runs the line as typed.
         assert_eq!(enter_action("auto", true, false, true, false, false), Run);
         assert_eq!(enter_action("auto", true, false, false, false, true), Run);
         assert_eq!(enter_action("after-space", true, false, false, false, false), Run);
