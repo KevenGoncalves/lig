@@ -463,7 +463,12 @@ impl Engine {
             Some(l) => {
                 let mut merged = (*l).clone();
                 merged.meta = sub.meta.clone();
-                merged.options.extend(sub.options.iter().cloned());
+                // Each option once: the loaded one (`--help`'s `-r, --recursive`) over ours (`-r`).
+                for o in &sub.options {
+                    if !merged.options.iter().any(|m| m.meta.names.iter().any(|n| o.meta.names.contains(n))) {
+                        merged.options.push(o.clone());
+                    }
+                }
                 merged.subcommands.extend(sub.subcommands.iter().cloned());
                 merged.load_spec = None;
                 Arc::new(merged)
@@ -1357,6 +1362,18 @@ mod tests {
         // A used switch isn't offered again; the value of `/t:` is.
         assert!(!labels(&mut e, &env, "dir /s /").iter().any(|r| r.0 == "/s"));
         assert!(labels(&mut e, &env, "shutdown /t:").iter().any(|r| r.0 == "60"));
+    }
+
+    #[test]
+    fn a_loaded_spec_and_ours_list_each_option_once() {
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("gnu", "").opts([opt("-r, --recursive", "Copy folders"), opt("--debug", "")]));
+        let mut ours = cmd("mine", "").opts([opt("-r", "Recursive"), opt("-x", "Ours only")]);
+        ours.load_spec = Some(LoadSpec::Name("gnu".into()));
+        e.insert_spec(ours);
+        let labels: Vec<String> = labels(&mut e, &env, "mine -").into_iter().map(|r| r.0).collect();
+        assert_eq!(labels.iter().filter(|l| l.contains("-r")).count(), 1, "{labels:?}");
+        assert!(labels.contains(&"-r, --recursive".into()) && labels.contains(&"-x".into()), "{labels:?}");
     }
 
     #[test]
