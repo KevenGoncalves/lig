@@ -100,15 +100,22 @@ pub fn parse(line: &str) -> CommandLine {
                 in_token = true;
             }
             ' ' | '\t' => finish!(),
+            // `&>file`: a redirection, not `&`.
+            '&' if chars.peek() == Some(&'>') => {
+                finish!();
+                while matches!(chars.peek(), Some('>' | '|')) {
+                    chars.next();
+                }
+                next_redirect = true;
+            }
             // On Windows the backtick is the escape character, matched above.
             '\n' | ';' | '|' | '&' | '(' | ')' | '`' => {
                 finish!();
-                // A command separator: start over with a fresh command.
                 tokens.clear();
                 next_redirect = false;
             }
             '<' | '>' => {
-                // `2>` / `&>`: drop a pure-digit fd prefix.
+                // `2>`: drop a pure-digit fd prefix.
                 if in_token && cur.raw.chars().all(|d| d.is_ascii_digit()) {
                     cur = Token::default();
                     in_token = false;
@@ -258,6 +265,10 @@ mod tests {
         assert!(cl.current.redirect);
         let cl = parse("cmd 2>/dev/null x");
         assert_eq!(vals(&cl), ["cmd"]);
+        let cl = parse("make &> log ins");
+        assert_eq!(vals(&cl), ["make"]);
+        assert!(!cl.current.redirect);
+        assert!(parse("make &>lo").current.redirect);
     }
 
     // POSIX paths and quoting; Windows has its own tests.

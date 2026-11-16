@@ -133,6 +133,8 @@ struct Cx<'a> {
     /// The line as typed (left of the cursor).
     line: &'a str,
     cl: &'a CommandLine,
+    /// The word being completed: `cl.current`, or the value part of `--opt=value`.
+    word: Token,
     env: &'a ShellEnv,
     /// Token values, the one under the cursor last (what generators see).
     tokens: Vec<String>,
@@ -150,7 +152,7 @@ struct Cx<'a> {
     command: String,
     /// The argument has no generated values, so `.`, Enter and Back don't crowd them out.
     only_paths: bool,
-    /// zsh needs asking (see [`Completion::ask_shell`]).
+    /// The shell needs asking (see [`Completion::ask_shell`]).
     ask_shell: Option<String>,
 }
 
@@ -162,7 +164,7 @@ impl Cx<'_> {
     }
 
     fn default_query(&self) -> (String, usize) {
-        (self.cl.current.value.clone(), self.cl.current.raw.chars().count())
+        (self.word.value.clone(), self.word.raw.chars().count())
     }
 
     /// Add a candidate matched against `query`; accepting it replaces the last `delete` characters.
@@ -368,6 +370,7 @@ impl Engine {
         let mut cx = Cx {
             line,
             tokens: cl.values(),
+            word: cl.current.clone(),
             cl: &cl,
             env,
             cands: vec![],
@@ -595,9 +598,11 @@ impl Engine {
                     && let Some(opt) = find_option(&node, &persistent, name)
                 {
                     if let Some(a) = opt.args.first().cloned() {
-                        let delete = cur.raw.rsplit_once(sep.as_str()).map_or(0, |(_, r)| r.chars().count());
+                        let raw = cur.raw.split_once(sep.as_str()).map_or("", |(_, r)| r);
+                        cx.word = Token { raw: raw.to_string(), value: value.to_string(), ..cur.clone() };
+                        let (q, d) = cx.default_query();
                         cx.offer_dot = true;
-                        self.arg_suggestions(&a, cx, value, delete);
+                        self.arg_suggestions(&a, cx, &q, d);
                     }
                     return;
                 }
@@ -751,10 +756,12 @@ impl Engine {
         if !self.cfg.online && g.id.starts_with("online:") {
             return;
         }
-        let cur = &cx.cl.current;
-        let (query, delete) = match g.query_term.as_deref().and_then(|chars| cur.value.rfind(|c| chars.contains(c))) {
+        let cur = &cx.word;
+        let after_last =
+            |s: &str, chars: &str| s.char_indices().rfind(|&(_, c)| chars.contains(c)).map(|(i, c)| i + c.len_utf8());
+        let (query, delete) = match g.query_term.as_deref().and_then(|chars| after_last(&cur.value, chars)) {
             Some(i) => {
-                let q = cur.value[i + 1..].to_string();
+                let q = cur.value[i..].to_string();
                 let d = q.chars().count();
                 (q, d)
             }
@@ -763,9 +770,7 @@ impl Engine {
         let v = &cur.value;
         let trigger_key = match &g.trigger {
             None => String::new(),
-            Some(Trigger::Chars(chars)) => {
-                v.rfind(|c| chars.contains(c)).map_or(String::new(), |i| v[..=i].to_string())
-            }
+            Some(Trigger::Chars(chars)) => after_last(v, chars).map_or(String::new(), |i| v[..i].to_string()),
             Some(Trigger::Change) => v.clone(),
             Some(Trigger::Prefix(n)) => v.chars().take(*n).collect(),
         };
@@ -831,8 +836,7 @@ impl Engine {
         if folders_only && cx.only_paths {
             folder_navigation(cx);
         }
-        let cl = cx.cl;
-        let cur = &cl.current;
+        let cur = &cx.word.clone();
         // The folder itself, first: on an empty word where `offer_dot` asks for it (Enter after
         // `--path ` picks it), and wherever `.` or `..` is typed out, so `code .` + Enter runs it
         // (hidden files come after).
@@ -945,7 +949,7 @@ impl Engine {
             .clone()
     }
 
-    /// Executables on the shell's PATH; those with a built-in or user spec first.
+    /// Aliases, shell functions, builtins and executables on PATH; those with a spec first.
     fn commands(&mut self, cx: &mut Cx<'_>) {
         let path = self.path_commands(cx.env);
         let with_spec = self.spec_names();
@@ -1031,7 +1035,7 @@ impl Engine {
             name: String,
         }
 
-        let cur = &cx.cl.current;
+        let cur = &cx.word;
         let mut scored: Vec<Scored> = vec![];
         for (idx, c) in cx.cands.iter().enumerate() {
             if c.names.iter().all(|n| n.trim().is_empty())
@@ -1121,9 +1125,9 @@ fn folder_navigation(cx: &mut Cx<'_>) {
         return;
     }
     let cl = cx.cl;
-    let cur = &cl.current;
+    let cur = &cx.word.clone();
     if cur.value.ends_with(is_sep) && !cx.cands.iter().any(|c| c.kind == Kind::Execute) {
-        let line = cl.tokens.iter().map(|t| t.raw.as_str()).chain([cur.raw.as_str()]).collect::<Vec<_>>().join(" ");
+        let line = cl.tokens.iter().chain([&cl.current]).map(|t| t.raw.as_str()).collect::<Vec<_>>().join(" ");
         let meta = spec::Meta {
             names: vec![String::new()],
             display_name: Some("Enter".into()),
@@ -1757,6 +1761,27 @@ mod tests {
         let c = e.complete("tool build a", &env, false, false);
         assert!(!c.incomplete);
         assert_eq!(c.items[0].label, "alpha");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn values_after_an_option_and_its_separator() {
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("deploy", "").opts([
+            opt("--out", "").eq().arg(arg("file").files()),
+            opt("--define", "").eq().arg(arg("kv").suggest(&["FOO=bar"])),
+        ]));
+        assert_eq!(labels(&mut e, &env, "deploy --out=su"), [("sub dir/".into(), "sub\\ dir/".into(), 2)]);
+        assert_eq!(labels(&mut e, &env, "deploy --out=sub\\ dir/"), []);
+        assert_eq!(labels(&mut e, &env, "deploy --define=FOO=b"), [("FOO=bar".into(), "FOO=bar ".into(), 5)]);
+    }
+
+    #[test]
+    fn a_multibyte_query_term_or_trigger() {
+        let (mut e, env) = engine();
+        let g = gen_fn("test:arrow", |_| vec![sug("one")]).query_after("→").trigger(Trigger::Chars("→".into()));
+        e.insert_spec(cmd("arrow", "").arg(arg("v").generator(g)));
+        assert_eq!(labels(&mut e, &env, "arrow x→o"), [("one".into(), "one ".into(), 1)]);
     }
 
     #[test]

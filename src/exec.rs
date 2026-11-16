@@ -17,7 +17,6 @@ pub struct Output {
 pub enum Cmd<'a> {
     /// Run through `bash -c` (on Windows, Git's bash, if installed).
     Shell(&'a str),
-    /// Run directly.
     Argv(&'a [String]),
 }
 
@@ -86,8 +85,22 @@ pub fn run(cmd: Cmd<'_>, cwd: &Path, env: &[(String, String)], timeout: Duration
             }
         }
     };
-    let stdout = String::from_utf8_lossy(&t_out.join().unwrap_or_default()).into_owned();
-    let stderr = String::from_utf8_lossy(&t_err.join().unwrap_or_default()).into_owned();
+    // A background process it started (`cmd &`) can hold the pipes open after it exits.
+    let done = |until: Instant| {
+        while !(t_out.is_finished() && t_err.is_finished()) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        t_out.is_finished() && t_err.is_finished()
+    };
+    if !done(deadline) {
+        kill(&mut child);
+        done(Instant::now() + Duration::from_millis(100));
+    }
+    let collect = |t: std::thread::JoinHandle<Vec<u8>>| {
+        let bytes = if t.is_finished() { t.join().unwrap_or_default() } else { Vec::new() };
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let (stdout, stderr) = (collect(t_out), collect(t_err));
     Output { stdout, stderr, status }
 }
 
@@ -122,4 +135,18 @@ fn kill(child: &mut std::process::Child) {
 #[cfg(windows)]
 fn kill(child: &mut std::process::Child) {
     let _ = child.kill();
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_background_process_holding_the_pipe_does_not_outlast_the_timeout() {
+        let start = Instant::now();
+        let out = run(Cmd::Shell("echo hi; sleep 5 &"), Path::new(""), &[], Duration::from_millis(300), None);
+        assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+        assert_eq!(out.status, 0);
+        assert_eq!(out.stdout, "hi\n");
+    }
 }
