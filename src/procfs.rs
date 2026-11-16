@@ -31,7 +31,6 @@ mod tests {
 
     #[test]
     fn stat_matches_old_closure() {
-        // `old` is the session.rs parser this module replaced.
         let old = |s: String| -> Option<(String, i64)> {
             let (head, rest) = s.rsplit_once(')')?;
             let comm = head.split_once('(')?.1.to_string();

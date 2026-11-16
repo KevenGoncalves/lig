@@ -3,7 +3,7 @@
 if (-not $env:LIG_DISABLE -and -not $env:LIG_PID -and $Host.Name -eq 'ConsoleHost' -and
     -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
     $__lig_script = [Environment]::GetCommandLineArgs() | Select-Object -Skip 1 |
-        Where-Object { $_ -match '^[-/](c(o(m(m(a(nd?)?)?)?)?)?|f(i(le?)?)?|e|ec|en\w*|noni\w*|noe\w*)$' }
+        Where-Object { $_ -match '^[-/](c(o(m(m(a(nd?)?)?)?)?)?|f(i(le?)?)?|e|ec|en\w*|noni\w*|noe\w*)$|\.ps1$' }
     if (-not $__lig_script) {
         & '@LIG_BIN@' shell --shell ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
         exit $LASTEXITCODE

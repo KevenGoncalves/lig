@@ -42,7 +42,8 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     _lig_last=
     # zsh-autosuggestions: drop the stale suggestion and fetch a fresh one.
     unset POSTDISPLAY
-    (( ${+functions[_zsh_autosuggest_fetch]} )) && _zsh_autosuggest_fetch
+    # `if`, not `&&`: a widget that returns non-zero beeps.
+    if (( ${+functions[_zsh_autosuggest_fetch]} )); then _zsh_autosuggest_fetch; fi
   }
   # zsh-autosuggestions' widget wrapper would restore the old suggestion mid-read.
   typeset -ga ZSH_AUTOSUGGEST_IGNORE_WIDGETS

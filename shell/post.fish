@@ -41,7 +41,7 @@ if status is-interactive; and test -z "$LIG_DISABLE"; and test -n "$LIG_TTY"; an
     function __lig_prompt --on-event fish_prompt --on-event fish_cancel
         __lig_bind
         set -g __lig_editing 1
-        printf '\e]6973;C;%s\a\e]6973;P;%s\a' (__lig_clean "$PWD") (__lig_clean (string join : -- $PATH)) >/dev/tty
+        printf '\e]6973;C;%s\a\e]6973;P;%s\a' (__lig_clean "$PWD" | string collect) (__lig_clean (string join : -- $PATH)) >/dev/tty
         printf '\e]6973;N;%s\a\e]6973;K;%s\a' (string join \x1e -- (functions --names | string match -rv '^_')) (string join \x1e -- (builtin --names)) >/dev/tty
         set -l vars
         for k in (set --names -x)

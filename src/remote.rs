@@ -41,7 +41,11 @@ impl Remote {
         script += "; ";
         script += &match cmd {
             Cmd::Shell(s) => format!("command -v bash >/dev/null && exec bash -c {0}; exec sh -c {0}", quote(s)),
-            Cmd::Argv(argv) => format!("exec {}", argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")),
+            // `quote` keeps an empty string empty, which would drop an empty argument.
+            Cmd::Argv(argv) => format!(
+                "exec {}",
+                argv.iter().map(|a| if a.is_empty() { "''".into() } else { quote(a) }).collect::<Vec<_>>().join(" ")
+            ),
         };
         let control = self.control.to_string_lossy().into_owned();
         [
@@ -64,9 +68,22 @@ impl Remote {
     }
 }
 
-/// Single-quoted for a POSIX shell or fish; empty stays empty.
+/// Single-quoted for a POSIX shell or fish; empty stays empty. Backslashes go in double
+/// quotes: inside single quotes fish reads `\\` and `\'` as escapes.
 pub fn quote(s: &str) -> String {
-    if s.is_empty() { String::new() } else { format!("'{}'", s.replace('\'', r"'\''")) }
+    if s.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from('\'');
+    for c in s.chars() {
+        match c {
+            '\'' => out.push_str(r"'\''"),
+            '\\' => out.push_str(r#"'"\\"'"#),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// `ls` of the folder in `path` (a typed path: `src/`, `~/x/`, `/etc/`), folders marked with `/`.
@@ -80,7 +97,7 @@ pub fn ls_command(path: &str) -> String {
 }
 
 /// ssh options that take a value (`-p 22`), to find the destination after them.
-const VALUE_OPTIONS: &str = "BbcDEeFIiJLlmOopQRSWw";
+const VALUE_OPTIONS: &str = "BbcDEeFIiJLlmOopPQRSWw";
 
 /// Index of the destination in ssh's arguments, if there's one and no remote command after it.
 fn destination(args: &[String]) -> Option<usize> {
@@ -186,6 +203,7 @@ mod tests {
         assert_eq!(destination(&args("-p 2222 -A admin@pi")), Some(3));
         assert_eq!(destination(&args("-p2222 -i key pi")), Some(3));
         assert_eq!(destination(&args("-v -- pi")), Some(2));
+        assert_eq!(destination(&args("-P work pi")), Some(2));
         assert_eq!(destination(&args("pi uptime")), None);
         assert_eq!(destination(&args("-p 22")), None);
     }
@@ -200,9 +218,25 @@ mod tests {
         let script =
             "cd '/home/me/a b' 2>/dev/null; export LIG_GENERATOR=1 PATH='/usr/bin'; exec 'git' 'branch' 'it'\\''s'";
         assert_eq!(a[a.len() - 1], format!("sh -c {}", quote(script)));
+        let argv: Vec<String> = ["printf", "%s|", "", "x"].map(str::to_string).to_vec();
+        let a = r.argv(Cmd::Argv(&argv), Path::new(""), &[]);
+        assert_eq!(a[a.len() - 1], format!("sh -c {}", quote("export LIG_GENERATOR=1; exec 'printf' '%s|' '' 'x'")));
         assert_eq!(ls_command("~/Doc"), "ls -1Ap -- ~/");
         assert_eq!(ls_command("/etc/ss"), "ls -1Ap -- '/etc/'");
         assert_eq!(ls_command("x"), "ls -1Ap -- ");
         assert_eq!(ls_command("it's/a"), "ls -1Ap -- 'it'\\''s/'");
+    }
+
+    #[test]
+    fn quoting_survives_a_posix_or_fish_login_shell() {
+        let script = format!("printf '%s|' {} {}", quote(r"it's"), quote(r"a\\b\'c"));
+        for (sh, no_rc) in [("sh", None), ("bash", Some("--norc")), ("zsh", Some("-f")), ("fish", Some("-N"))] {
+            let mut cmd = std::process::Command::new(sh);
+            cmd.args(no_rc).arg("-c").arg(format!("sh -c {}", quote(&script)));
+            let Ok(out) = cmd.output() else {
+                continue;
+            };
+            assert_eq!(String::from_utf8_lossy(&out.stdout), r"it's|a\\b\'c|", "{sh}");
+        }
     }
 }

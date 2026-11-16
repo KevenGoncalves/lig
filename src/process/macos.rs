@@ -48,8 +48,7 @@ mod tests {
     }
     #[test]
     fn pointer_aligned_path_has_no_padding() {
-        // "/bin/ls\0" ends exactly on 8 bytes: argv starts right after it. Rounding up past an
-        // aligned end would drop argv[0]; rounding by +8 instead of +7 would do exactly that.
+        // "/bin/ls\0" ends exactly on 8 bytes: argv starts right after it.
         let mut bytes = 1i32.to_ne_bytes().to_vec();
         bytes.extend_from_slice(b"/bin/ls\0ls\0HOME=/x\0");
         assert_eq!(parse_args(&bytes), Some(vec!["ls".into()]));

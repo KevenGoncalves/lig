@@ -16,6 +16,8 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
 
     $global:__lig_prompt = $function:prompt
     function global:prompt {
+        # Every statement here resets $?: keep the command's for the profile's prompt and after it.
+        $ok = $?
         $loc = Get-Location
         if ($loc.Provider.Name -eq 'FileSystem') { __lig_send ('C;' + $loc.ProviderPath) }
         __lig_send ('P;' + $env:PATH)
@@ -43,11 +45,14 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
                 Where-Object { $_.Name -notmatch '^_|:' }
             __lig_send ('N;' + (($functions | ForEach-Object Name) -join $sep))
         }
+        # $? can't be assigned; a failing Write-Error that leaves no trace in $Error sets it false.
+        if ($ok) { $null = 0 } else { Write-Error '' -ErrorAction Ignore }
         $text = & $global:__lig_prompt
         $global:__lig_editing = $true
         # Ready: lig may ask for the line now.
         __lig_send "R;$PID"
         $text
+        if (-not $ok) { Write-Error '' -ErrorAction Ignore }
     }
 
     # Enter: tell lig the line runs, then do what Enter did before.
