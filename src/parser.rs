@@ -330,22 +330,30 @@ mod tests {
         assert_eq!(vals(&cl), ["git", "log", "-1"]);
         let cl = parse("diff <(sort a) <(sort -");
         assert_eq!(vals(&cl), ["sort"]);
-        let cl = parse("echo `git br");
-        assert_eq!(vals(&cl), ["git"]);
         let cl = parse("(cd src && make t");
         assert_eq!(vals(&cl), ["make"]);
     }
 
+    // On Windows the backtick is PowerShell's escape character.
+    #[cfg(unix)]
+    #[test]
+    fn backticks_are_command_substitution() {
+        let cl = parse("echo `git br");
+        assert_eq!(vals(&cl), ["git"]);
+        let cl = parse("echo `hostname` $(echo $(id -u)) -");
+        assert_eq!(vals(&cl), ["echo", "`hostname`", "$(echo $(id -u))"]);
+    }
+
     #[test]
     fn a_closed_substitution_is_part_of_its_word() {
+        let cl = parse("echo $(echo $(id -u)) -");
+        assert_eq!(vals(&cl), ["echo", "$(echo $(id -u))"]);
         let cl = parse("ls $(pwd)/src -");
         assert_eq!(vals(&cl), ["ls", "$(pwd)/src"]);
         assert_eq!(cl.current.value, "-");
         let cl = parse(r#"git commit -m "$(date) done" --am"#);
         assert_eq!(vals(&cl), ["git", "commit", "-m", "$(date) done"]);
         assert_eq!(cl.current.value, "--am");
-        let cl = parse("echo `hostname` $(echo $(id -u)) -");
-        assert_eq!(vals(&cl), ["echo", "`hostname`", "$(echo $(id -u))"]);
         let cl = parse("diff <(sort a) -");
         assert_eq!(vals(&cl), ["diff", "<(sort a)"]);
         let cl = parse("(cd src) && git a");
