@@ -242,6 +242,10 @@ pub struct Behavior {
     pub generator_cache_ms: u64,
     /// Commands for which lig never shows suggestions.
     pub disabled_commands: Vec<String>,
+    /// For a command with no spec, ask these first, in order, before reading its `--help`:
+    /// `"shell"` (what the shell's own Tab offers, in zsh and fish) and `"argc"`
+    /// ([argc-completions](https://github.com/sigoden/argc-completions), once set up).
+    pub completers: Vec<String>,
     /// Build specs for other commands from their `--help` output / man page.
     pub help_parsing: bool,
     /// Kill `--help` / `man` after this many milliseconds.
@@ -319,6 +323,7 @@ impl Default for Behavior {
             generator_timeout_ms: 5000,
             generator_cache_ms: 5000,
             disabled_commands: vec![],
+            completers: vec![],
             help_parsing: true,
             help_timeout_ms: 2000,
             help_skip: vec![],

@@ -79,6 +79,9 @@ pub struct Completion {
     /// The command the suggestions are for, aliases expanded (`gco ` → `git`); empty while
     /// completing a command name.
     pub command: String,
+    /// Ask zsh what its Tab would offer for this line (`behavior.completers`); the answer comes
+    /// back as `ShellEnv::shell_answer`.
+    pub ask_shell: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -94,7 +97,14 @@ pub struct ShellEnv {
     pub remote: Option<Arc<Remote>>,
     /// The shell's own commands, which come before built-in specs of the same names (nu's `ls`).
     pub shell_specs: Option<crate::nushell::ShellSpecs>,
+    /// The shell lig runs, for its own completions (`behavior.completers`).
+    pub shell: Option<PathBuf>,
+    /// zsh's last answer.
+    pub shell_answer: Option<ShellAnswer>,
 }
+
+/// What zsh's Tab offered for a line (left of the cursor): (name, description).
+pub type ShellAnswer = Arc<(String, Vec<(String, String)>)>;
 
 /// A candidate before filtering and ranking (see [`Engine::finish`]).
 struct Cand {
@@ -120,6 +130,8 @@ struct Cand {
 
 /// The state of one completion request.
 struct Cx<'a> {
+    /// The line as typed (left of the cursor).
+    line: &'a str,
     cl: &'a CommandLine,
     env: &'a ShellEnv,
     /// Token values, the one under the cursor last (what generators see).
@@ -138,6 +150,8 @@ struct Cx<'a> {
     command: String,
     /// The argument has no generated values, so `.`, Enter and Back don't crowd them out.
     only_paths: bool,
+    /// zsh needs asking (see [`Completion::ask_shell`]).
+    ask_shell: Option<String>,
 }
 
 impl Cx<'_> {
@@ -210,6 +224,8 @@ pub struct Engine {
     /// Executables on PATH: (when listed, the PATH, names).
     path_cmds: Option<(Instant, String, Arc<BTreeSet<String>>)>,
     spec_cmds: Option<Arc<HashSet<String>>>,
+    /// What `behavior.completers` answered, by completer, folder and line.
+    external: HashMap<String, (Instant, Answer)>,
     /// The `shell_specs` the caches were filled with.
     shell_specs: Option<crate::nushell::ShellSpecs>,
     /// Commands with a user spec: an alias with one keeps it (`alias ls=eza` and `ls.toml`).
@@ -222,6 +238,94 @@ pub struct Engine {
 
 fn exec_vars(env: &ShellEnv) -> Vec<(String, String)> {
     env.path.iter().map(|p| ("PATH".to_string(), p.clone())).collect()
+}
+
+/// A completer's suggestions: (name, description, no space after), and whether it wants
+/// paths listed (`Some(true)`: folders only).
+#[derive(Clone, Default)]
+struct Answer {
+    items: Vec<(String, String, bool)>,
+    paths: Option<bool>,
+}
+
+/// A command line to run, and the variables to run it with.
+type Run = (Vec<String>, Vec<(String, String)>);
+
+/// How to ask `completer` about the line, if it can answer for this command.
+fn completer_command(completer: &str, cx: &Cx<'_>) -> Option<Run> {
+    let cl = cx.cl;
+    let mut vars = exec_vars(cx.env);
+    match completer {
+        // fish prints its own completions for a line, as Tab would show them.
+        "shell" => {
+            let fish = cx.env.shell.as_deref().filter(|s| basename(&s.to_string_lossy()) == "fish")?;
+            let line = cl.tokens.iter().chain([&cl.current]).map(|t| t.raw.as_str()).collect::<Vec<_>>().join(" ");
+            let fish = fish.to_string_lossy();
+            let argv = [fish.as_ref(), "--no-config", "-c", "complete -C $argv[1]", "--", &line];
+            Some((argv.map(str::to_string).to_vec(), vars))
+        }
+        // argc-completions: only for the commands it has a script for (`ARGC_COMPLETIONS_PATH`).
+        "argc" => {
+            let dirs = cx.env.vars.iter().find(|(k, _)| k == "ARGC_COMPLETIONS_PATH")?.1.clone();
+            let command = basename(&cl.tokens.first()?.value).to_string();
+            std::env::split_paths(&dirs).find(|d| d.join(format!("{command}.sh")).is_file())?;
+            vars.push(("ARGC_COMPLETIONS_PATH".into(), dirs));
+            let mut argv: Vec<String> = ["argc", "--argc-compgen", "generic", "-"].map(str::to_string).to_vec();
+            argv.extend(cl.tokens.iter().chain([&cl.current]).map(|t| t.value.clone()));
+            Some((argv, vars))
+        }
+        _ => None,
+    }
+}
+
+/// `complete -C`: `<candidate>\t<description>` lines.
+fn fish_answer(out: &str) -> Answer {
+    let items = out
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let (name, desc) = l.split_once('\t').unwrap_or((l, ""));
+            (name.to_string(), desc.to_string(), false)
+        })
+        .collect();
+    Answer { items, paths: None }
+}
+
+/// `argc --argc-compgen generic`: `<value>[\0][\t/color:…][\t<description>]` lines, and
+/// `__argc_…=` control lines: `__argc_value=file` (or `dir`) asks for paths, `__argc_prefix=`
+/// is typed text the values follow.
+fn argc_answer(out: &str) -> Answer {
+    let mut answer = Answer::default();
+    let mut prefix = String::new();
+    let mut items = vec![];
+    for line in out.lines().filter(|l| !l.trim().is_empty()) {
+        if let Some(value) = line.strip_prefix("__argc_value=") {
+            let value = value.to_lowercase();
+            answer.paths = match value.split(':').next().unwrap_or("") {
+                "dir" | "folder" => Some(true),
+                "file" | "path" | "arg" | "any" => Some(false),
+                _ => answer.paths,
+            };
+            continue;
+        }
+        if let Some(p) = line.strip_prefix("__argc_prefix=") {
+            prefix = p.to_string();
+            continue;
+        }
+        if line.starts_with("__argc_") {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let value = fields.next().unwrap_or_default();
+        let (value, no_space) = match value.strip_suffix('\0') {
+            Some(v) => (v, true),
+            None => (value, false),
+        };
+        let desc = fields.rfind(|f| !f.starts_with("/color:")).unwrap_or_default();
+        items.push((value.to_string(), desc.to_string(), no_space));
+    }
+    answer.items = items.into_iter().map(|(v, d, n)| (format!("{prefix}{v}"), d, n)).collect();
+    answer
 }
 
 impl Engine {
@@ -238,6 +342,7 @@ impl Engine {
             remote_dirs: HashMap::new(),
             spec_cmds: None,
             shell_specs: None,
+            external: HashMap::new(),
             user_cmds: None,
             user_descriptions: None,
         }
@@ -261,6 +366,7 @@ impl Engine {
         let user = self.user_names();
         expand_aliases(&mut cl, env, &with_spec, &user);
         let mut cx = Cx {
+            line,
             tokens: cl.values(),
             cl: &cl,
             env,
@@ -272,6 +378,7 @@ impl Engine {
             offer_dot: false,
             command: String::new(),
             only_paths: true,
+            ask_shell: None,
         };
 
         if let Some((name, braced)) = var_prefix(&cl.current) {
@@ -290,7 +397,14 @@ impl Engine {
         } else if self.cfg.show_on_empty_token || manual || !cl.current.raw.is_empty() {
             let cmd = basename(&cl.tokens[0].value).to_string();
             cx.command = cmd.clone();
-            if !self.cfg.disabled_commands.contains(&cmd)
+            // A command with no spec: what the completers say, before its `--help`.
+            let external = !self.cfg.disabled_commands.contains(&cmd)
+                && !self.cfg.completers.is_empty()
+                && !with_spec.contains(&cmd)
+                && !self.specs.get(&cmd).is_some_and(Option::is_some)
+                && self.external(&mut cx);
+            if !external
+                && !self.cfg.disabled_commands.contains(&cmd)
                 && let Some(root) = self.spec(&cmd, &mut cx)
             {
                 let root = self.resolve(&root, &mut cx);
@@ -298,7 +412,88 @@ impl Engine {
             }
         }
         let (incomplete, loading, command) = (cx.incomplete, cx.loading.take(), cx.command.clone());
-        Completion { items: self.finish(cx), incomplete, loading, command }
+        let ask_shell = cx.ask_shell.take();
+        Completion { items: self.finish(cx), incomplete, loading, command, ask_shell }
+    }
+
+    /// The first of `behavior.completers` with suggestions for the line; `false` if none had
+    /// any (or none applies), so the command's `--help` is read instead.
+    fn external(&mut self, cx: &mut Cx<'_>) -> bool {
+        let cl = cx.cl;
+        let line: String = cl.tokens.iter().chain([&cl.current]).map(|t| t.raw.as_str()).collect::<Vec<_>>().join(" ");
+        for completer in self.cfg.completers.clone() {
+            // zsh answers through the session, from the live shell.
+            let zsh = cx.env.shell.as_deref().is_some_and(|s| basename(&s.to_string_lossy()) == "zsh");
+            if completer == "shell" && zsh {
+                match cx.env.shell_answer.as_deref() {
+                    Some((line, items)) if line == cx.line => {
+                        if items.is_empty() {
+                            continue;
+                        }
+                        let answer = Answer {
+                            items: items.iter().map(|(n, d)| (n.clone(), d.clone(), false)).collect(),
+                            paths: None,
+                        };
+                        self.use_answer(answer, cx);
+                        return true;
+                    }
+                    _ => {
+                        cx.ask_shell = Some(cx.line.to_string());
+                        cx.loading.get_or_insert_with(|| "Asking zsh".into());
+                        return true;
+                    }
+                }
+            }
+            let Some((argv, vars)) = completer_command(&completer, cx) else { continue };
+            let key = format!("{completer}\0{}\0{line}", cx.env.cwd.display());
+            let ttl = Duration::from_millis(self.cfg.generator_cache_ms);
+            let answer = match self.external.get(&key) {
+                Some((at, answer)) if at.elapsed() < ttl => answer.clone(),
+                _ if !cx.run_generators => {
+                    cx.incomplete = true;
+                    cx.loading.get_or_insert_with(|| format!("Asking {completer}"));
+                    return true;
+                }
+                _ => {
+                    let timeout = Duration::from_millis(self.cfg.generator_timeout_ms);
+                    let out = exec::run(Cmd::Argv(&argv), &cx.env.cwd, &vars, timeout, None);
+                    let answer = if completer == "argc" { argc_answer(&out.stdout) } else { fish_answer(&out.stdout) };
+                    self.external.insert(key, (Instant::now(), answer.clone()));
+                    answer
+                }
+            };
+            if answer.items.is_empty() && answer.paths.is_none() {
+                continue;
+            }
+            self.use_answer(answer, cx);
+            return true;
+        }
+        false
+    }
+
+    /// A completer's suggestions, matched against the word under the cursor.
+    fn use_answer(&mut self, answer: Answer, cx: &mut Cx<'_>) {
+        {
+            let (query, delete) = cx.default_query();
+            for (name, desc, no_space) in answer.items {
+                let (kind, suffix) = if name.starts_with('-') {
+                    (Kind::Option, " ")
+                } else if name.ends_with(is_sep) {
+                    (Kind::Folder, "")
+                } else {
+                    (Kind::Arg, " ")
+                };
+                let meta = spec::Meta {
+                    names: vec![name],
+                    description: (!desc.is_empty()).then_some(desc),
+                    ..Default::default()
+                };
+                cx.push(&meta, kind, if no_space { "" } else { suffix }, &query, delete);
+            }
+            if let Some(folders_only) = answer.paths {
+                self.files(cx, folders_only);
+            }
+        }
     }
 
     // ------------------------------------------------------------ walking
@@ -1362,6 +1557,74 @@ mod tests {
         // A used switch isn't offered again; the value of `/t:` is.
         assert!(!labels(&mut e, &env, "dir /s /").iter().any(|r| r.0 == "/s"));
         assert!(labels(&mut e, &env, "shutdown /t:").iter().any(|r| r.0 == "60"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_shells_completions_fill_in_for_commands_without_a_spec() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut e, mut env) = engine();
+        // Prints what `fish --no-config -c 'complete -C $argv[1]' -- <line>` would, line included.
+        let fish = env.cwd.parent().unwrap().join("bin/fish");
+        std::fs::create_dir_all(fish.parent().unwrap()).unwrap();
+        std::fs::write(&fish, "#!/bin/sh\nshift 4\nprintf 'start\\tStart units\\nstop\\tfor %s\\nsrc/\\n' \"$1\"\n")
+            .unwrap();
+        std::fs::set_permissions(&fish, std::fs::Permissions::from_mode(0o755)).unwrap();
+        env.shell = Some(fish);
+        let found = |e: &mut Engine, line| {
+            e.complete(line, &env, true, false).items.into_iter().map(|s| (s.label, s.description)).collect::<Vec<_>>()
+        };
+        // Off by default.
+        assert!(found(&mut e, "nospec s").is_empty());
+        e.cfg.completers = vec!["shell".into()];
+        let items = found(&mut e, "nospec s");
+        assert!(items.contains(&("start".into(), "Start units".into())), "{items:?}");
+        assert!(items.contains(&("stop".into(), "for nospec s".into())), "{items:?}");
+        let src = e.complete("nospec s", &env, true, false).items.into_iter().find(|s| s.label == "src/").unwrap();
+        assert_eq!(src.insert, "src/");
+        // A command with a spec keeps it.
+        assert!(found(&mut e, "tool b").iter().any(|(l, _)| l == "build"));
+    }
+
+    #[test]
+    fn argc_answers_are_read_as_argc_prints_them() {
+        let a = argc_answer("build\t/color:yellow\tBuild it\ndocs/\0\t/color:blue\nplain\n");
+        assert_eq!(
+            a.items,
+            [
+                ("build".into(), "Build it".into(), false),
+                ("docs/".into(), "".into(), true),
+                ("plain".into(), "".into(), false)
+            ]
+        );
+        assert_eq!(a.paths, None);
+        let a = argc_answer("__argc_prefix=key=\nvalue\t/color:default\n__argc_value=dir\n");
+        assert_eq!(a.items, [("key=value".into(), "".into(), false)]);
+        assert_eq!(a.paths, Some(true));
+        assert_eq!(argc_answer("__argc_value=file:.toml\n").paths, Some(false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn argc_answers_for_the_commands_it_has_a_script_for() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut e, mut env) = engine();
+        let root = env.cwd.parent().unwrap().join("argc");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("completions")).unwrap();
+        std::fs::write(root.join("completions/argctool.sh"), "").unwrap();
+        // Prints what `argc --argc-compgen generic - <words>` would, the words included.
+        let argc = root.join("bin/argc");
+        std::fs::write(&argc, "#!/bin/sh\nshift 3\nprintf 'deploy\\t/color:green\\tfor %s\\n' \"$*\"\n").unwrap();
+        std::fs::set_permissions(&argc, std::fs::Permissions::from_mode(0o755)).unwrap();
+        env.path = Some(format!("{}:/usr/bin:/bin", root.join("bin").display()));
+        env.vars = Arc::new(vec![("ARGC_COMPLETIONS_PATH".into(), root.join("completions").display().to_string())]);
+        e.cfg.completers = vec!["argc".into()];
+        let items = e.complete("argctool d", &env, true, false).items;
+        assert_eq!(items.len(), 1, "{:?}", items.iter().map(|s| &s.label).collect::<Vec<_>>());
+        assert_eq!((items[0].label.as_str(), items[0].description.as_str()), ("deploy", "for argctool d"));
+        // No script for it: argc isn't asked.
+        assert!(e.complete("otherthing d", &env, true, false).items.is_empty());
     }
 
     #[test]

@@ -889,6 +889,8 @@ fn complete(line: &str, cwd: Option<PathBuf>, aliases: Vec<String>) -> Result<()
                 .filter_map(|a| a.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
                 .collect(),
         ),
+        // For the shell's own completions (`behavior.completers`), as in a session.
+        shell: std::env::var_os("SHELL").map(PathBuf::from),
         ..Default::default()
     };
     let t = std::time::Instant::now();

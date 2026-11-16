@@ -265,6 +265,7 @@ complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 online = true              # search package registries as you type
 history = true             # keep the commands that ran, for Ctrl+R
+completers = []            # for commands with no spec: ["shell", "argc"], see below
 disabled_commands = []     # never show the popup for these
 
 [colors]                   # change any of the theme's: "#rrggbb", a 256-color number, "default"
@@ -309,6 +310,11 @@ args = { name = "env", suggestions = ["staging", "production"] }
 name = "logs"
 args = { name = "service", generators = { script = ["deploy", "list-services"] } }
 ```
+
+For a command with no spec, Lig reads its `--help`. `completers` asks others first, in order:
+`"shell"` takes what your shell's own Tab offers (zsh's completion system, fish's completions),
+and `"argc"` the [argc-completions](https://github.com/sigoden/argc-completions) scripts once
+they're set up in your shell.
 
 An alias completes as the command it runs (`gco` as `git checkout`), unless it has a spec of
 its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza` from eza's.

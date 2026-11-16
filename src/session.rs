@@ -34,6 +34,8 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 const SNAPSHOT_ATTEMPTS: u8 = 3;
 /// Key sequence bound to the insert function in bash and zsh.
 const INSERT_KEY: &str = "\x1b[9147~";
+/// Asks zsh what its Tab would offer (see shell/post.zsh).
+const ZSH_COMPLETE_KEY: &[u8] = b"\x1b[9148~";
 /// Ctrl+Alt+Shift+F12: the insert key of fish and PowerShell.
 const SNAPSHOT_INSERT_KEY: &str = "\x1b[24;8~";
 /// Ctrl+Alt+Shift+F11: asks PowerShell for its line (fish gets `SIGUSR1`).
@@ -69,6 +71,8 @@ enum Event {
         items: Vec<Suggestion>,
         loading: Option<String>,
         command: String,
+        /// Ask zsh for its own completions of this line.
+        ask_shell: Option<String>,
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
     ShellSpecs(crate::nushell::ShellSpecs),
@@ -387,6 +391,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         shell_nav: false,
         cwd_fallback: std::env::current_dir().unwrap_or_else(|_| "/".into()),
         bindings: Bindings::new(&cfg.keys),
+        shell_asked: None,
         history: cfg.behavior.history.then(crate::history::History::open),
         history_mode: false,
         cfg,
@@ -397,13 +402,14 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         editing: false,
         hidden: false,
         line: String::new(),
-        env: if shell_name(&shell) == "cmd" {
-            ShellEnv {
-                builtins: std::sync::Arc::new(CMD_BUILTINS.iter().map(|b| b.to_string()).collect()),
-                ..Default::default()
-            }
-        } else {
-            ShellEnv::default()
+        env: ShellEnv {
+            builtins: if shell_name(&shell) == "cmd" {
+                std::sync::Arc::new(CMD_BUILTINS.iter().map(|b| b.to_string()).collect())
+            } else {
+                Default::default()
+            },
+            shell: Some(shell.clone()),
+            ..Default::default()
         },
         shell_pid,
         tty,
@@ -648,10 +654,22 @@ fn worker(rx: Receiver<Request>, tx: Sender<Event>, behavior: crate::config::Beh
             req = newer;
         }
         let c = engine.complete(&req.line, &req.env, false, req.manual);
-        let _ = tx.send(Event::Done { line: req.line.clone(), items: c.items, loading: c.loading, command: c.command });
+        let _ = tx.send(Event::Done {
+            line: req.line.clone(),
+            items: c.items,
+            loading: c.loading,
+            command: c.command,
+            ask_shell: c.ask_shell,
+        });
         if c.incomplete && rx.is_empty() {
             let c = engine.complete(&req.line, &req.env, true, req.manual);
-            let _ = tx.send(Event::Done { line: req.line, items: c.items, loading: None, command: c.command });
+            let _ = tx.send(Event::Done {
+                line: req.line,
+                items: c.items,
+                loading: c.loading.filter(|_| c.ask_shell.is_some()),
+                command: c.command,
+                ask_shell: c.ask_shell,
+            });
         }
     }
 }
@@ -752,6 +770,8 @@ struct Session {
     unconfirmed_at: Instant,
     fish_refresh: Option<FishRefresh>,
     cfg: Config,
+    /// The line zsh was last asked about (see [`ZSH_COMPLETE_KEY`]).
+    shell_asked: Option<String>,
     /// The commands that ran (`behavior.history`), and whether the popup shows them now.
     history: Option<crate::history::History>,
     history_mode: bool,
@@ -953,7 +973,12 @@ impl Session {
                         self.on_input(&data);
                     }
                 }
-                Event::Done { line, items, loading, command } => self.on_done(line, items, loading, command),
+                Event::Done { line, items, loading, command, ask_shell } => {
+                    if let Some(asked) = ask_shell {
+                        self.ask_shell(asked);
+                    }
+                    self.on_done(line, items, loading, command)
+                }
                 Event::Resize => self.on_resize(),
                 Event::ShellSpecs(specs) => {
                     self.env.shell_specs = Some(specs);
@@ -1353,6 +1378,11 @@ impl Session {
             Msg::Hide => {
                 crate::log("reader hidden");
                 self.hidden = true;
+            }
+            Msg::ShellCompletions { line, items } => {
+                self.env.shell_answer = Some(std::sync::Arc::new((line, items)));
+                self.items_line.clear();
+                self.request();
             }
             Msg::Ran { status, command } => {
                 // A leading space keeps a command out, as the shells' `ignorespace` options do.
@@ -1796,6 +1826,17 @@ impl Session {
             self.items_line.clear();
             self.request();
         }
+    }
+
+    /// Ask zsh what its Tab would offer for `line`, once per line, and only while zsh is the
+    /// shell at the prompt: the key means nothing to another shell (`exec bash`).
+    fn ask_shell(&mut self, line: String) {
+        let zsh = self.insertion_transport == InsertionTransport::Inline && self.remote.is_none() && !self.fish_shell;
+        if !zsh || !self.editing || line != self.line || self.shell_asked.as_deref() == Some(line.as_str()) {
+            return;
+        }
+        self.shell_asked = Some(line);
+        self.write_pty(ZSH_COMPLETE_KEY);
     }
 
     /// Show the commands that ran before, or leave them for the usual suggestions.

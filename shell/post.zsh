@@ -114,6 +114,41 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   builtin bindkey -M viins '\e[9147~' _lig_insert
   builtin bindkey -M vicmd '\e[9147~' _lig_insert
 
+  # lig asks with ESC [9148~ what Tab would offer (behavior.completers = ["shell"]): the
+  # matches are collected as zsh adds them, then sent; the line and the screen stay as they are.
+  typeset -ga _lig_matches
+  _lig_compadd() {
+    # Queries (-O, -A, -D) are zsh's own business.
+    if (( ${@[(I)-[OAD]*]} )); then builtin compadd "$@"; return; fi
+    local -a hits shown
+    local display= i
+    for (( i = 1; i <= $#; i++ )); do
+      [[ ${@[i]} == -d ]] && display=${@[i+1]}
+      [[ ${@[i]} == -d?* ]] && display=${@[i]#-d}
+    done
+    builtin compadd -A hits "$@"
+    [[ -n $display ]] && shown=( "${(@P)display}" )
+    for (( i = 1; i <= $#hits; i++ )); do _lig_matches+=( "${hits[i]}"$'\t'"${shown[i]}" ); done
+    builtin compadd "$@"
+  }
+  _lig_quiet() { compstate[insert]=''; compstate[list]=''; }
+  _lig_complete() {
+    _lig_matches=()
+    if (( $+functions[_main_complete] )); then
+      local -a comppostfuncs=( _lig_quiet )
+      compadd() { _lig_compadd "$@" }
+      _main_complete
+      builtin unfunction compadd
+    fi
+    local m=${(pj:\x1e:)_lig_matches}
+    builtin print -rn -- $'\e]6973;Z;'"${LBUFFER//[$'\a\e\x1d']/ }"$'\x1d'"${m//[$'\a\e']/ }"$'\a' >$TTY
+  }
+  # Not named *complete*: _lig_report would take the next prompt for zsh's own menu.
+  builtin zle -C _lig_ask complete-word _lig_complete
+  builtin bindkey -M emacs '\e[9148~' _lig_ask
+  builtin bindkey -M viins '\e[9148~' _lig_ask
+  builtin bindkey -M vicmd '\e[9148~' _lig_ask
+
   # Ghostty's prompt marks (OSC 133) tell it the shell is idle, so closing it needs no confirmation.
   if [[ -n $LIG_GHOSTTY ]]; then
     builtin unset LIG_GHOSTTY

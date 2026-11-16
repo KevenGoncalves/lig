@@ -38,6 +38,11 @@ pub enum Msg {
     PromptEnd,
     Hide,
     Finish,
+    /// What the shell's own Tab would offer for `line` (left of the cursor): (name, description).
+    ShellCompletions {
+        line: String,
+        items: Vec<(String, String)>,
+    },
     /// The command that just ran, with its exit status (for the history).
     Ran {
         status: i32,
@@ -142,6 +147,20 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         "H" => Some(Msg::Hide),
         "S" => Some(Msg::PromptEnd),
         "F" => Some(Msg::Finish),
+        "Z" => {
+            let (line, list) = rest.split_once('\x1d')?;
+            let items = list
+                .split('\x1e')
+                .filter(|m| !m.is_empty())
+                .map(|m| {
+                    let (name, shown) = m.split_once('\t').unwrap_or((m, ""));
+                    // zsh shows `name  -- description`.
+                    let desc = shown.split_once(" -- ").map_or("", |(_, d)| d.trim());
+                    (name.to_string(), desc.to_string())
+                })
+                .collect();
+            Some(Msg::ShellCompletions { line: line.to_string(), items })
+        }
         "E" => {
             let (status, command) = rest.split_once(';')?;
             Some(Msg::Ran { status: status.trim().parse().ok()?, command: command.to_string() })
@@ -165,6 +184,23 @@ fn parse(payload: &[u8]) -> Option<Msg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_completions_carry_the_line_and_each_match() {
+        let msg = "Z;setopt auto_c\x1dauto_cd\tauto_cd  -- cd by naming a folder\x1eauto_continue\t";
+        assert_eq!(
+            parse(msg.as_bytes()),
+            Some(Msg::ShellCompletions {
+                line: "setopt auto_c".into(),
+                items: vec![
+                    ("auto_cd".into(), "cd by naming a folder".into()),
+                    ("auto_continue".into(), String::new())
+                ],
+            })
+        );
+        assert_eq!(parse(b"Z;ls \x1d"), Some(Msg::ShellCompletions { line: "ls ".into(), items: vec![] }));
+        assert_eq!(parse(b"Z;no separator"), None);
+    }
 
     #[test]
     fn ran_carries_the_status_and_the_whole_line() {
