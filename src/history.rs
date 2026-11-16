@@ -151,8 +151,14 @@ fn line(time: u64, command: &str) -> String {
 
 fn parse_line(line: &str) -> Option<(u64, String)> {
     let (time, command) = line.split_once('\t')?;
-    let mut out = String::with_capacity(command.len());
-    let mut chars = command.chars();
+    let out = unescape(command);
+    (!out.trim().is_empty()).then(|| (time.parse().unwrap_or(0), out))
+}
+
+/// `\n` is a newline and `\x` is `x`, read left to right (lig's file and fish's history).
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
@@ -164,7 +170,7 @@ fn parse_line(line: &str) -> Option<(u64, String)> {
             None => out.push('\\'),
         }
     }
-    (!out.trim().is_empty()).then(|| (time.parse().unwrap_or(0), out))
+    out
 }
 
 /// What zsh, bash, fish and nu remember, oldest first within each.
@@ -242,7 +248,7 @@ fn fish(text: &str) -> Vec<(u64, String)> {
     let mut out: Vec<(u64, String)> = vec![];
     for l in text.lines() {
         if let Some(command) = l.strip_prefix("- cmd: ") {
-            out.push((0, command.replace("\\n", "\n").replace("\\\\", "\\")));
+            out.push((0, unescape(command)));
         } else if let (Some(time), Some(last)) = (l.trim_start().strip_prefix("when: "), out.last_mut()) {
             last.0 = time.trim().parse().unwrap_or(0);
         }
@@ -332,5 +338,7 @@ mod tests {
             fish("- cmd: git push\n  when: 1700000100\n- cmd: echo a\\nb\n  when: 7\n  paths:\n    - x\n"),
             [(1700000100, "git push".into()), (7, "echo a\nb".into())]
         );
+        // fish writes `echo \n` (a backslash and an n) as `echo \\n`.
+        assert_eq!(fish("- cmd: echo \\\\n\n"), [(0, "echo \\n".into())]);
     }
 }

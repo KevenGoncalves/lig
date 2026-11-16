@@ -239,9 +239,14 @@ fn one(s: &[u8]) -> (usize, Key) {
         c @ 0x1c..=0x1f => (1, Key::ctrl((b'\\' + c - 0x1c) as char)),
         _ => {
             let len = utf8_len(s).min(s.len());
-            match std::str::from_utf8(&s[..len]).ok().and_then(|t| t.chars().next()) {
-                Some(c) => (len, Key::plain(Code::Char(c))),
-                None => (len, Key::plain(Code::Raw(s[..len].to_vec()))),
+            match std::str::from_utf8(&s[..len]) {
+                Ok(t) => (len, Key::plain(Code::Char(t.chars().next().unwrap_or('\u{fffd}')))),
+                // An invalid lead byte doesn't take the keys after it; a character cut off at
+                // the end of the chunk stays whole.
+                Err(e) => {
+                    let len = e.error_len().unwrap_or(len);
+                    (len, Key::plain(Code::Raw(s[..len].to_vec())))
+                }
             }
         }
     };
@@ -254,6 +259,14 @@ fn escape_sequence(s: &[u8]) -> (usize, Key) {
         return (1, Key::plain(Code::Esc));
     }
     match s[1] {
+        // The Linux console's F1-F5: `ESC [ [ A`…`E`.
+        b'[' if s.len() >= 4 && s[2] == b'[' => {
+            let code = match s[3] {
+                c @ b'A'..=b'E' => Code::F(c - b'A' + 1),
+                _ => Code::Raw(s[..4].to_vec()),
+            };
+            (4, Key::plain(code))
+        }
         b'[' => {
             if s[2..].starts_with(b"200~") {
                 // Bracketed paste: one opaque chunk.
@@ -283,6 +296,10 @@ fn escape_sequence(s: &[u8]) -> (usize, Key) {
         // Alt+key: ESC, then the key.
         _ => {
             let (len, mut key) = one(&s[1..]);
+            // A raw key's name is its bytes, so the ESC goes in them, not in `alt`.
+            if matches!(key.code, Code::Raw(_)) {
+                return (1 + len, Key::plain(Code::Raw(s[..1 + len].to_vec())));
+            }
             key.alt = true;
             (1 + len, key)
         }
@@ -453,6 +470,27 @@ mod tests {
         assert_eq!(keys(b"\x1b[9;5u\x1b[27;5;9~\x1b[97;7u\x1b[65;2u"), ["ctrl-tab", "ctrl-tab", "ctrl-alt-a", "A"]);
         assert_eq!(keys(b"\r\n\x1b[106;5u\x1b[109;5u"), ["enter", "ctrl-j", "ctrl-j", "enter"]);
         assert_eq!(keys(b"\x1b[99;3x"), ["\\x1b[99;3x"]);
+    }
+
+    #[test]
+    fn invalid_utf8_keeps_the_next_keys() {
+        assert_eq!(keys(b"\xe9\ra"), ["\\xe9", "enter", "a"]);
+        assert_eq!(keys(b"a\xc3"), ["a", "\\xc3"]);
+        assert_eq!(split("é".as_bytes())[0].0.len(), 2);
+    }
+
+    #[test]
+    fn linux_console_function_keys() {
+        assert_eq!(keys(b"\x1b[[A\x1b[[E\x1b[[Ax"), ["f1", "f5", "f1", "x"]);
+    }
+
+    #[test]
+    fn alt_raw_names_read_back() {
+        let input = b"\x1b\x1b[99;3x";
+        let (bytes, key) = &split(input)[0];
+        assert_eq!(bytes.len(), input.len());
+        assert_eq!(key.name(), "\\x1b\\x1b[99;3x");
+        assert_eq!(Key::parse_name(&key.name()).as_ref(), Some(key));
     }
 
     #[test]

@@ -98,7 +98,8 @@ fn wrap(text: &str, w: usize) -> Vec<String> {
             let mut head = String::new();
             let mut rest = String::new();
             for c in word.chars() {
-                if rest.is_empty() && head.width() + c.width().unwrap_or(0) <= w {
+                // A character wider than the line still goes on one, or this never ends.
+                if rest.is_empty() && (head.is_empty() || head.width() + c.width().unwrap_or(0) <= w) {
                     head.push(c);
                 } else {
                     rest.push(c);
@@ -138,7 +139,6 @@ fn frame_text(desc: &str, w: usize, n: usize) -> Vec<String> {
     lines
 }
 
-/// Truncate to `w` columns (adding `…` when cut) and pad to exactly `w`.
 /// `s` as the popup can show it: a terminal would act on control characters (an escape
 /// sequence, a tab) instead of showing them, and the rows would lose their alignment.
 pub fn printable(s: &str) -> String {
@@ -154,6 +154,7 @@ pub fn printable(s: &str) -> String {
         .collect()
 }
 
+/// Truncate to `w` columns (adding `…` when cut) and pad to exactly `w`.
 fn fit(s: &str, w: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
@@ -214,9 +215,10 @@ pub fn layout_at(
     // Without a border the scrollbar takes its own column.
     let bar = 1 - b;
     let chrome_w = 2 * b + style.pad_l + style.pad_r + icon_w + bar;
-    let name_need = (items.iter().map(|s| s.label.width()).max().unwrap_or(1) as u16).clamp(4, 44);
+    // Capped before the cast to u16: a longer one would wrap around.
+    let name_need = items.iter().map(|s| s.label.width()).max().unwrap_or(1).clamp(4, 44) as u16;
     let bottom = ui.descriptions && ui.description_position == "bottom";
-    let longest_desc = items.iter().map(|s| s.description.width()).max().unwrap_or(0) as u16;
+    let longest_desc = items.iter().map(|s| s.description.width()).max().unwrap_or(0).min(usize::from(cols)) as u16;
     let desc_need = if ui.descriptions && !bottom { longest_desc.min(style.desc_max) } else { 0 };
 
     // Width: fixed, or fit to the content within `min_width..=max_width`.
@@ -372,7 +374,10 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
         lines.push(blank(&t));
     }
     if let Some(bd) = st.border {
-        let counter = if n > h && selected < n { format!(" {}/{} ", selected + 1, n) } else { String::new() };
+        // Left out when it doesn't fit between the corners and one `─`.
+        let counter = Some(format!(" {}/{} ", selected + 1, n))
+            .filter(|c| n > h && selected < n && c.width() + 3 <= w)
+            .unwrap_or_default();
         let fill = w.saturating_sub(2 + counter.width() + usize::from(!counter.is_empty()));
         let tail =
             if counter.is_empty() { String::new() } else { format!("\x1b[{}m{counter}{edge}{}", t.info_fg, bd[4]) };
@@ -635,6 +640,35 @@ mod tests {
         assert_eq!(wrap("one two three four", 9), ["one two", "three", "four"]);
         assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
         assert_eq!(frame_text("one two three four", 9, 2), ["one two", "three …"]);
+    }
+
+    #[test]
+    fn wide_characters_wrap_on_narrow_lines() {
+        assert_eq!(wrap("中文", 1), ["中", "文"]);
+    }
+
+    #[test]
+    fn counter_left_out_of_a_narrow_border() {
+        use crate::config::Size;
+        let ui = Ui { icons: "none".into(), density: "compact".into(), width: Size::Cells(8), ..Ui::default() };
+        let it = items(20);
+        let l = layout(&ui, &it, (24, 80), (2, 10), 0).unwrap();
+        assert_eq!(l.rect.width, 8);
+        for line in render(&ui, &l, &it, 2, 0) {
+            assert_eq!(strip(&line).width(), 8, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn huge_labels_and_descriptions_size_like_long_ones() {
+        let ui = Ui { icons: "none".into(), ..Ui::default() };
+        let mut it = items(1);
+        it[0].label = "x".repeat(65_536);
+        it[0].description = String::new();
+        assert_eq!(layout(&ui, &it, (24, 100), (2, 10), 0).unwrap().name_w, 44);
+        let mut it = items(1);
+        it[0].description = "y".repeat(65_540);
+        assert_eq!(layout(&ui, &it, (24, 100), (2, 10), 0).unwrap().rect.width, 100);
     }
 
     #[test]

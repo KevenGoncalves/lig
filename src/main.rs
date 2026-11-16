@@ -455,7 +455,13 @@ fn fish_quote(s: &str) -> String {
     format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
+/// `text` without its UTF-8 byte order mark, and the mark (Windows PowerShell's editors write one).
+fn split_bom(text: &str) -> (&str, &str) {
+    text.strip_prefix('\u{feff}').map_or(("", text), |rest| ("\u{feff}", rest))
+}
+
 fn managed_body(old: &str) -> Result<String> {
+    let (bom, old) = split_bom(old);
     let mut expected_end = None;
     for line in old.lines().map(str::trim_end) {
         if let Some(end) = match line {
@@ -471,16 +477,17 @@ fn managed_body(old: &str) -> Result<String> {
         }
     }
     anyhow::ensure!(expected_end.is_none(), "unterminated lig configuration block");
-    Ok(strip_block(&strip_block(old, PRE_BEGIN, PRE_END), POST_BEGIN, POST_END))
+    Ok(format!("{bom}{}", strip_block(&strip_block(old, PRE_BEGIN, PRE_END), POST_BEGIN, POST_END)))
 }
 
 fn installed_text(shell: ShellKind, old: &str, bin: &str) -> Result<String> {
     let body = managed_body(old)?;
+    let (bom, body) = split_bom(&body);
     let sh = shell.name();
     if shell.powershell() {
         // Only the top: lig loads the rest itself.
         let line = format!("Invoke-Expression (& {} init {sh} pre | Out-String)", ps_quote(bin));
-        return Ok(format!("{PRE_BEGIN}\n{line}\n{PRE_END}\n{body}"));
+        return Ok(format!("{bom}{PRE_BEGIN}\n{line}\n{PRE_END}\n{body}"));
     }
     let command = |part| {
         if matches!(shell, ShellKind::Nu) {
@@ -494,7 +501,7 @@ fn installed_text(shell: ShellKind, old: &str, bin: &str) -> Result<String> {
         }
     };
     Ok(format!(
-        "{PRE_BEGIN}\n{}\n{PRE_END}\n{body}{}{POST_BEGIN}\n{}\n{POST_END}\n",
+        "{bom}{PRE_BEGIN}\n{}\n{PRE_END}\n{body}{}{POST_BEGIN}\n{}\n{POST_END}\n",
         command("pre"),
         if body.is_empty() || body.ends_with('\n') { "" } else { "\n" },
         command("post")
@@ -1450,6 +1457,18 @@ mod shell_tests {
         assert_eq!(strip_block(&installed, LOGIN_BEGIN, LOGIN_END), format!("{user}\n"));
         let own = "[ -f ~/.bashrc ] && source ~/.bashrc\n";
         assert_eq!(login_text(own), own, "user's own bashrc hook is respected");
+    }
+
+    #[test]
+    fn byte_order_mark_stays_first() {
+        let hand = format!("\u{feff}{PRE_BEGIN}\nold line\n{PRE_END}\n$x = 1\n");
+        let text = installed_text(ShellKind::Powershell, &hand, "lig").unwrap();
+        assert!(text.starts_with(&format!("\u{feff}{PRE_BEGIN}\n")));
+        assert!(text.ends_with(&format!("{PRE_END}\n$x = 1\n")) && !text.contains("old line"));
+        assert_eq!(managed_body(&text).unwrap(), "\u{feff}$x = 1\n");
+        let text = installed_text(ShellKind::Zsh, "\u{feff}x=1\n", "lig").unwrap();
+        assert_eq!(text.matches('\u{feff}').count(), 1);
+        assert!(text.starts_with(&format!("\u{feff}{PRE_BEGIN}\n")));
     }
 
     #[test]

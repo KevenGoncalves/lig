@@ -13,6 +13,8 @@
 //!   `N;<name>\x1e<name>…`  the shell's function names
 //!   `K;<name>\x1e<name>…`  the shell's builtins
 //!   `V;<k=v>\x1e<k=v>…`    the shell's exported variables
+//!   `E;<status>;<command>` the command that just ran, and how it ended (history)
+//!   `Z;<line>\x1d<name>\t<shown>\x1e…`  what the shell's Tab offers for line (zsh, bash)
 //!   `X;<pid>;<socket>;<host>`  `lig ssh` logs in to host (see `remote.rs`)
 //!   `Y`                    that `lig ssh` ended
 
@@ -105,7 +107,10 @@ impl OscFilter {
                     self.pending = rest.to_vec();
                     return;
                 }
-                None => break,
+                None => {
+                    out.extend_from_slice(rest);
+                    break;
+                }
                 Some(k) => {
                     if let Some(m) = parse(&body[..k]) {
                         msgs.push((out.len(), m));
@@ -283,6 +288,17 @@ mod tests {
                 Msg::Vars(vec![("HOME".into(), "/home/me".into()), ("X".into(), "a=b".into())]),
             ]
         );
+    }
+
+    #[test]
+    fn an_endless_message_is_passed_through() {
+        let mut f = OscFilter::default();
+        let (mut out, mut msgs) = (vec![], vec![]);
+        let mut data = b"\x1b]6973;B;0;".to_vec();
+        data.resize(MAX_PENDING + 10, b'x');
+        f.feed(&data, &mut out, &mut msgs);
+        assert_eq!(out, data);
+        assert!(msgs.is_empty() && f.take_pending().is_empty());
     }
 
     #[test]

@@ -91,15 +91,19 @@ fn normalize(key: &str) -> String {
 
 /// Load `[icons]` (call once, before drawing). Unknown names are reported; file names are taken as is.
 pub fn set_overrides(icons: &BTreeMap<String, IconOverride>) {
+    let _ = OVERRIDES.set(overrides(icons));
+}
+
+fn overrides(icons: &BTreeMap<String, IconOverride>) -> Overrides {
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     let mut map = Overrides::new();
     for (key, value) in icons {
-        let name = normalize(key);
-        let known = KINDS.iter().any(|k| kind_name(*k) == name)
-            || Icon::from_name(&name).is_some()
-            || name.contains('.')
-            || key.starts_with(|c: char| c.is_uppercase());
-        if !known {
+        let mut name = normalize(key);
+        let known = KINDS.iter().any(|k| kind_name(*k) == name) || Icon::from_name(&name).is_some();
+        if !known && (name.contains('.') || key.starts_with(|c: char| c.is_uppercase())) {
+            // A file name, matched lowercased but with its `_` (`BUILD_NOTES`).
+            name = key.trim().to_lowercase();
+        } else if !known {
             eprintln!("lig: unknown icon {key:?} in [icons] (`lig icons` lists the names)");
             continue;
         }
@@ -109,7 +113,7 @@ pub fn set_overrides(icons: &BTreeMap<String, IconOverride>) {
         };
         map.insert(name, (glyph.map(leak), color.map(|c| leak(crate::config::sgr_color(&c, 38)))));
     }
-    let _ = OVERRIDES.set(map);
+    map
 }
 
 /// `(glyph, SGR color)` for a suggestion: the built-in one, then the
@@ -401,5 +405,18 @@ mod tests {
         assert_eq!(get(Kind::Option, None, "-v"), default_glyph(Kind::Option, None, "-v", true));
         assert_eq!(normalize("Git_Branch"), "git-branch");
         assert_eq!(normalize("*.RS"), "*.rs");
+    }
+
+    #[test]
+    fn file_name_overrides_keep_underscores() {
+        let icons: BTreeMap<String, IconOverride> = [
+            ("BUILD_NOTES".to_string(), IconOverride::Glyph("N".into())),
+            ("Git_Branch".to_string(), IconOverride::Glyph("B".into())),
+        ]
+        .into();
+        let map = overrides(&icons);
+        let get = |kind, icon, label: &str| apply(&map, kind, icon, label, default_glyph(kind, icon, label, true));
+        assert_eq!(get(Kind::File, None, "BUILD_NOTES").0, "N");
+        assert_eq!(get(Kind::Arg, Some(Icon::GitBranch), "main").0, "B");
     }
 }
