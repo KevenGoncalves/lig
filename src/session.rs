@@ -1509,7 +1509,16 @@ impl Session {
         }
     }
 
-    fn apply_done(&mut self, line: String, items: Vec<Suggestion>, loading: Option<String>, command: String) {
+    fn apply_done(&mut self, line: String, mut items: Vec<Suggestion>, loading: Option<String>, command: String) {
+        // Shown as text, whatever a generator or the history holds; what's inserted is untouched.
+        for s in &mut items {
+            if s.label.chars().any(char::is_control) {
+                s.label = popup::printable(&s.label);
+            }
+            if s.description.chars().any(char::is_control) {
+                s.description = popup::printable(&s.description);
+            }
+        }
         self.items_command = command;
         self.loading = match (loading, self.loading.take()) {
             // Still loading the same line: keep the original start time.

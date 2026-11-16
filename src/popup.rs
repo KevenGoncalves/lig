@@ -139,6 +139,21 @@ fn frame_text(desc: &str, w: usize, n: usize) -> Vec<String> {
 }
 
 /// Truncate to `w` columns (adding `…` when cut) and pad to exactly `w`.
+/// `s` as the popup can show it: a terminal would act on control characters (an escape
+/// sequence, a tab) instead of showing them, and the rows would lose their alignment.
+pub fn printable(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\t' | '\n' | '\r' => ' ',
+            // The Control Pictures block: ␛ for Esc.
+            '\0'..='\x1f' => char::from_u32(0x2400 + c as u32).unwrap_or('?'),
+            '\x7f' => '␡',
+            c if c.is_control() => '�',
+            c => c,
+        })
+        .collect()
+}
+
 fn fit(s: &str, w: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
@@ -581,6 +596,13 @@ mod tests {
         let l = layout(&ui, &few, (40, 100), (2, 10), 0).unwrap();
         assert_eq!(l.visible(), 6);
         assert_eq!(render(&ui, &l, &few, 0, 0).len(), 8);
+    }
+
+    #[test]
+    fn control_characters_are_shown_not_sent() {
+        assert_eq!(printable("echo \x1b[31mred\x1b[0m"), "echo ␛[31mred␛[0m");
+        assert_eq!(printable("a\tb\nc\x7f\u{85}"), "a b c␡�");
+        assert_eq!(printable("plain ⏎ text"), "plain ⏎ text");
     }
 
     #[test]
