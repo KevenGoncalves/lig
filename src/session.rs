@@ -34,7 +34,7 @@ const SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(100);
 const SNAPSHOT_ATTEMPTS: u8 = 3;
 /// Key sequence bound to the insert function in bash and zsh.
 const INSERT_KEY: &str = "\x1b[9147~";
-/// Asks zsh what its Tab would offer (see shell/post.zsh).
+/// Asks zsh or bash what its Tab would offer (see shell/post.zsh, shell/post.bash).
 const ZSH_COMPLETE_KEY: &[u8] = b"\x1b[9148~";
 /// Ctrl+Alt+Shift+F12: the insert key of fish and PowerShell.
 const SNAPSHOT_INSERT_KEY: &str = "\x1b[24;8~";
@@ -1828,11 +1828,19 @@ impl Session {
         }
     }
 
-    /// Ask zsh what its Tab would offer for `line`, once per line, and only while zsh is the
-    /// shell at the prompt: the key means nothing to another shell (`exec bash`).
+    /// Ask the shell what its Tab would offer for `line`, once per line, and only while zsh or
+    /// bash is the shell at the prompt: the key means nothing to another one (`exec fish`).
     fn ask_shell(&mut self, line: String) {
-        let zsh = self.insertion_transport == InsertionTransport::Inline && self.remote.is_none() && !self.fish_shell;
-        if !zsh || !self.editing || line != self.line || self.shell_asked.as_deref() == Some(line.as_str()) {
+        let local = self.remote.is_none() && !self.fish_shell && !self.nu_shell && !self.cmd_shell;
+        // zsh reports its buffer (inline insertions); bash's line is read after its prompt marker.
+        let zsh = self.insertion_transport == InsertionTransport::Inline;
+        let bash = self.insertion_transport == InsertionTransport::File && self.prompt_end.is_some();
+        if !local
+            || !(zsh || bash)
+            || !self.editing
+            || line != self.line
+            || self.shell_asked.as_deref() == Some(line.as_str())
+        {
             return;
         }
         self.shell_asked = Some(line);

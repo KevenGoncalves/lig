@@ -243,7 +243,7 @@ pub struct Behavior {
     /// Commands for which lig never shows suggestions.
     pub disabled_commands: Vec<String>,
     /// For a command with no spec, ask these first, in order, before reading its `--help`:
-    /// `"shell"` (what the shell's own Tab offers, in zsh and fish) and `"argc"`
+    /// `"shell"` (what the shell's own Tab offers, in zsh, bash and fish) and `"argc"`
     /// ([argc-completions](https://github.com/sigoden/argc-completions), once set up).
     pub completers: Vec<String>,
     /// Build specs for other commands from their `--help` output / man page.

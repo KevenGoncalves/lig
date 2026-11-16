@@ -312,7 +312,8 @@ args = { name = "service", generators = { script = ["deploy", "list-services"] }
 ```
 
 For a command with no spec, Lig reads its `--help`. `completers` asks others first, in order:
-`"shell"` takes what your shell's own Tab offers (zsh's completion system, fish's completions),
+`"shell"` takes what your shell's own Tab offers (zsh's completion system, bash-completion,
+fish's completions),
 and `"argc"` the [argc-completions](https://github.com/sigoden/argc-completions) scripts once
 they're set up in your shell.
 

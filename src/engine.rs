@@ -79,8 +79,8 @@ pub struct Completion {
     /// The command the suggestions are for, aliases expanded (`gco ` → `git`); empty while
     /// completing a command name.
     pub command: String,
-    /// Ask zsh what its Tab would offer for this line (`behavior.completers`); the answer comes
-    /// back as `ShellEnv::shell_answer`.
+    /// Ask the shell (zsh, bash) what its Tab would offer for this line (`behavior.completers`);
+    /// the answer comes back as `ShellEnv::shell_answer`.
     pub ask_shell: Option<String>,
 }
 
@@ -99,11 +99,11 @@ pub struct ShellEnv {
     pub shell_specs: Option<crate::nushell::ShellSpecs>,
     /// The shell lig runs, for its own completions (`behavior.completers`).
     pub shell: Option<PathBuf>,
-    /// zsh's last answer.
+    /// The live shell's last answer (zsh, bash).
     pub shell_answer: Option<ShellAnswer>,
 }
 
-/// What zsh's Tab offered for a line (left of the cursor): (name, description).
+/// What the shell's Tab offered for a line (left of the cursor): (name, description).
 pub type ShellAnswer = Arc<(String, Vec<(String, String)>)>;
 
 /// A candidate before filtering and ranking (see [`Engine::finish`]).
@@ -422,9 +422,9 @@ impl Engine {
         let cl = cx.cl;
         let line: String = cl.tokens.iter().chain([&cl.current]).map(|t| t.raw.as_str()).collect::<Vec<_>>().join(" ");
         for completer in self.cfg.completers.clone() {
-            // zsh answers through the session, from the live shell.
-            let zsh = cx.env.shell.as_deref().is_some_and(|s| basename(&s.to_string_lossy()) == "zsh");
-            if completer == "shell" && zsh {
+            // zsh and bash answer through the session, from the live shell.
+            let live = cx.env.shell.as_deref().map(|s| basename(&s.to_string_lossy()).to_string());
+            if let Some(shell) = live.filter(|s| completer == "shell" && matches!(s.as_str(), "zsh" | "bash")) {
                 match cx.env.shell_answer.as_deref() {
                     Some((line, items)) if line == cx.line => {
                         if items.is_empty() {
@@ -439,7 +439,7 @@ impl Engine {
                     }
                     _ => {
                         cx.ask_shell = Some(cx.line.to_string());
-                        cx.loading.get_or_insert_with(|| "Asking zsh".into());
+                        cx.loading.get_or_insert_with(|| format!("Asking {shell}"));
                         return true;
                     }
                 }

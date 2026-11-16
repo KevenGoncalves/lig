@@ -103,6 +103,39 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   }
   bind -x '"\e[9147~": __lig_insert'
 
+  # lig asks with ESC [9148~ what Tab would offer (behavior.completers = ["shell"]): the
+  # command's completion (bash-completion's function, `complete -W` words) runs as Tab
+  # would run it, and its matches are sent back; the line stays as it is. No command
+  # substitution: in bash 5.2 one inside `bind -x` can lose the line (see __lig_insert).
+  __lig_complete() {
+    local line=${READLINE_LINE:0:READLINE_POINT} spec= words= func= f="$LIG_QUERY_FILE.bash"
+    local -a COMP_WORDS COMPREPLY=()
+    read -ra COMP_WORDS <<< "$line"
+    [[ -z $line || $line == *[[:space:]] ]] && COMP_WORDS+=("")
+    local COMP_CWORD=$(( ${#COMP_WORDS[@]} - 1 )) COMP_LINE=$line COMP_POINT=${#line} COMP_TYPE=9 COMP_KEY=9
+    local cmd=${COMP_WORDS[0]} cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
+    if (( COMP_CWORD > 0 )); then
+      complete -p -- "$cmd" > "$f" 2>/dev/null || {
+        # Not loaded yet: bash-completion's default (`complete -D`) loads it.
+        complete -p -D > "$f" 2>/dev/null && IFS= read -r spec < "$f" &&
+          [[ $spec =~ -F\ ([^ ]+) ]] && "${BASH_REMATCH[1]}" "$cmd" "$cur" "$prev" >/dev/null 2>&1
+        complete -p -- "$cmd" > "$f" 2>/dev/null
+      }
+      IFS= read -r spec < "$f"
+      [[ $spec =~ -F\ ([^ ]+) ]] && func=${BASH_REMATCH[1]}
+      [[ $spec =~ -W\ \'([^\']*)\' ]] && words=${BASH_REMATCH[1]}
+      if [[ -n $func ]]; then
+        "$func" "$cmd" "$cur" "$prev" >/dev/null 2>&1
+      elif [[ -n $words ]]; then
+        compgen -W "$words" -- "$cur" > "$f" 2>/dev/null && mapfile -t COMPREPLY < "$f"
+      fi
+    fi
+    local IFS=$'\x1e'
+    local m="${COMPREPLY[*]}"
+    printf '\e]6973;Z;%s\x1d%s\a' "${line//[$'\a\e\x1d']/ }" "${m//[$'\a\e']/ }" >/dev/tty
+  }
+  bind -x '"\e[9148~": __lig_complete'
+
   # Ghostty's prompt marks (OSC 133) tell it the shell is idle, so closing it needs no confirmation.
   if [[ -n $LIG_GHOSTTY ]]; then
     unset LIG_GHOSTTY
