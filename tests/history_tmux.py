@@ -53,10 +53,20 @@ class HistoryTmux(unittest.TestCase):
             (home / '.config/lig/config.toml').write_text(config)
         subprocess.run([BIN, 'install', kind], env=dict(os.environ, **env), check=True, capture_output=True)
         self.base = ['tmux', '-S', str(directory / 'socket'), '-f', '/dev/null']
-        self.addCleanup(lambda: (subprocess.run(self.base + ['kill-server'], capture_output=True), self.dir.cleanup()))
+        self.addCleanup(self.stop)
         launch = ['env', '-u', 'LIG_TTY', '-u', 'LIG_DISABLE', '-u', 'INSIDE_EMACS'] + [f'{k}={v}' for k, v in env.items()]
         self.tmux('new-session', '-d', '-x', '100', '-y', '30', '-s', 'test', '-c', str(home), *launch, shell)
         self.wait('no prompt', lambda s: 'hist-test' in s, timeout=15)
+
+    def stop(self):
+        subprocess.run(self.base + ['kill-server'], capture_output=True)
+        # bash writes its history when the hangup reaches it, which can be mid-removal.
+        for _ in range(50):
+            try:
+                return self.dir.cleanup()
+            except OSError:
+                time.sleep(.1)
+        self.dir.cleanup()
 
     def tmux(self, *args):
         return subprocess.run(self.base + list(args), capture_output=True, text=True, timeout=5, check=True).stdout

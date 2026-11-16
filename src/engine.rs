@@ -272,7 +272,8 @@ fn completer_command(completer: &str, cx: &Cx<'_>) -> Option<Run> {
             let command = basename(&cl.tokens.first()?.value).to_string();
             std::env::split_paths(&dirs).find(|d| d.join(format!("{command}.sh")).is_file())?;
             vars.push(("ARGC_COMPLETIONS_PATH".into(), dirs));
-            let mut argv: Vec<String> = ["argc", "--argc-compgen", "generic", "-"].map(str::to_string).to_vec();
+            // No script: argc finds `<command>.sh` in ARGC_COMPLETIONS_PATH.
+            let mut argv: Vec<String> = ["argc", "--argc-compgen", "generic", ""].map(str::to_string).to_vec();
             argv.extend(cl.tokens.iter().chain([&cl.current]).map(|t| t.value.clone()));
             Some((argv, vars))
         }
@@ -1617,7 +1618,7 @@ mod tests {
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::create_dir_all(root.join("completions")).unwrap();
         std::fs::write(root.join("completions/argctool.sh"), "").unwrap();
-        // Prints what `argc --argc-compgen generic - <words>` would, the words included.
+        // Prints what `argc --argc-compgen generic '' <words>` would, the words included.
         let argc = root.join("bin/argc");
         std::fs::write(&argc, "#!/bin/sh\nshift 3\nprintf 'deploy\\t/color:green\\tfor %s\\n' \"$*\"\n").unwrap();
         std::fs::set_permissions(&argc, std::fs::Permissions::from_mode(0o755)).unwrap();

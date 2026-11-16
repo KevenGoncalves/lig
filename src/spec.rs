@@ -207,7 +207,7 @@ pub enum Template {
 }
 
 /// When cached generator results must be recomputed while typing a token.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Trigger {
     /// When the part of the token up to the last of these characters changes.
     Chars(String),
@@ -792,10 +792,8 @@ fn arg_value(a: &Arg) -> Value {
 fn generator_value(g: &Generator) -> Value {
     let mut o = serde_json::Map::new();
     match &g.source {
-        // A builtin brings its own trigger, query term and ttl.
         GenSource::Rust(_) => {
             o.insert("builtin".into(), g.id.clone().into());
-            return Value::Object(o);
         }
         GenSource::Static(list) => {
             o.insert("suggestions".into(), list.iter().map(suggestion_value).collect());
@@ -832,13 +830,21 @@ fn generator_value(g: &Generator) -> Value {
             }
         }
     }
-    if let Some(Trigger::Chars(c)) = &g.trigger {
+    // A builtin's own trigger, query term and ttl come with it; only a spec's changes are written.
+    let base = matches!(g.source, GenSource::Rust(_)).then(|| crate::specs::gens::builtin(&g.id)).flatten();
+    if let Some(Trigger::Chars(c)) = &g.trigger
+        && base.as_ref().is_none_or(|b| b.trigger != g.trigger)
+    {
         o.insert("trigger".into(), c.clone().into());
     }
-    if let Some(q) = &g.query_term {
+    if let Some(q) = &g.query_term
+        && base.as_ref().is_none_or(|b| b.query_term != g.query_term)
+    {
         o.insert("getQueryTerm".into(), q.clone().into());
     }
-    if let Some(ttl) = g.cache_ttl {
+    if let Some(ttl) = g.cache_ttl
+        && base.as_ref().is_none_or(|b| b.cache_ttl != g.cache_ttl)
+    {
         o.insert("cache".into(), serde_json::json!({ "ttl": ttl.as_millis() as u64 }));
     }
     Value::Object(o)
@@ -1048,8 +1054,16 @@ fn arg_from(v: &Value) -> Arg {
 }
 
 fn generator_from(v: &Value) -> Option<Generator> {
+    let trigger = v.get("trigger").and_then(Value::as_str).map(|s| Trigger::Chars(s.into()));
+    let query_term = string(v, "getQueryTerm");
+    let cache_ttl = v.get("cache").and_then(|c| c.get("ttl")).and_then(Value::as_u64).map(Duration::from_millis);
     if let Some(id) = v.get("builtin").and_then(Value::as_str) {
-        return crate::specs::gens::builtin(id);
+        // The spec's own trigger, query term and ttl replace the builtin's.
+        let mut g = crate::specs::gens::builtin(id)?;
+        g.trigger = trigger.or(g.trigger);
+        g.query_term = query_term.or(g.query_term);
+        g.cache_ttl = cache_ttl.or(g.cache_ttl);
+        return Some(g);
     }
     let (source, id) = if let Some(list) = v.get("suggestions") {
         let list = one_or_many(Some(list)).into_iter().filter_map(suggestion).collect();
@@ -1074,14 +1088,7 @@ fn generator_from(v: &Value) -> Option<Generator> {
         };
         (GenSource::Script { argv, shell, output }, format!("script:{:x}", fnv(&list_key(v))))
     };
-    Some(Generator {
-        id,
-        source,
-        trigger: v.get("trigger").and_then(Value::as_str).map(|s| Trigger::Chars(s.into())),
-        query_term: string(v, "getQueryTerm"),
-        cache_ttl: v.get("cache").and_then(|c| c.get("ttl")).and_then(Value::as_u64).map(Duration::from_millis),
-        filter: true,
-    })
+    Some(Generator { id, source, trigger, query_term, cache_ttl, filter: true })
 }
 
 fn list_key(v: &Value) -> String {
@@ -1358,12 +1365,16 @@ mod tests {
         assert_eq!(a.template, [Template::Folders]);
         assert_eq!(a.generators.len(), 3);
         assert!(matches!(&a.generators[1].source, GenSource::Static(l) if l.len() == 2));
+        let a =
+            arg_from(&serde_json::json!({"name": "x", "generators": {"builtin": "git:branches", "cache": {"ttl": 9}}}));
+        assert_eq!(a.generators[0].cache_ttl, Some(Duration::from_millis(9)));
     }
 
     #[test]
     fn script_and_static_generators_round_trip() {
         let v = serde_json::json!({"name": "x", "args": {"name": "a", "generators": [
             {"builtin": "git:branches"},
+            {"builtin": "git:tags", "trigger": "/", "cache": {"ttl": 60000}},
             {"suggestions": ["one", {"name": "two", "hidden": true}]},
             {"script": ["ls"], "splitOn": ",", "skipLines": 1, "field": 2, "trigger": "/", "getQueryTerm": ",", "cache": {"ttl": 500}},
             {"script": "docker ps", "json": {"name": "\u{1}$.Names\u{1}", "description": "d", "lines": true}},

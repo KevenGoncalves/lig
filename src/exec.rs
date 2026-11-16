@@ -74,16 +74,15 @@ pub fn run(cmd: Cmd<'_>, cwd: &Path, env: &[(String, String)], timeout: Duration
         b
     });
     let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break st.code().unwrap_or(1),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
-            _ => {
-                kill(&mut child);
-                let _ = child.wait();
-                break 124;
-            }
+    let timed_out = loop {
+        if exited(&mut child) {
+            break false;
         }
+        if Instant::now() >= deadline {
+            kill(&mut child);
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     };
     // A background process it started (`cmd &`) can hold the pipes open after it exits.
     let done = |until: Instant| {
@@ -96,6 +95,11 @@ pub fn run(cmd: Cmd<'_>, cwd: &Path, env: &[(String, String)], timeout: Duration
         kill(&mut child);
         done(Instant::now() + Duration::from_millis(100));
     }
+    let status = match child.wait() {
+        _ if timed_out => 124,
+        Ok(st) => st.code().unwrap_or(1),
+        Err(_) => 1,
+    };
     let collect = |t: std::thread::JoinHandle<Vec<u8>>| {
         let bytes = if t.is_finished() { t.join().unwrap_or_default() } else { Vec::new() };
         String::from_utf8_lossy(&bytes).into_owned()
@@ -127,6 +131,21 @@ fn detach(c: &mut Command) {
     c.creation_flags(CREATE_NO_WINDOW);
 }
 
+/// Whether the child has exited, leaving it unreaped until `wait`: its ID, which is its process
+/// group's, stays taken meanwhile, so `kill` can't reach a process that reused it.
+#[cfg(unix)]
+fn exited(child: &mut std::process::Child) -> bool {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+    let r = unsafe { libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut info, flags) };
+    r != 0 || info.si_signo != 0
+}
+
+#[cfg(windows)]
+fn exited(child: &mut std::process::Child) -> bool {
+    child.try_wait().map_or(true, |s| s.is_some())
+}
+
 #[cfg(unix)]
 fn kill(child: &mut std::process::Child) {
     unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
@@ -148,5 +167,14 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
         assert_eq!(out.status, 0);
         assert_eq!(out.stdout, "hi\n");
+    }
+
+    #[test]
+    fn exit_codes_and_timeouts() {
+        assert_eq!(run(Cmd::Shell("exit 3"), Path::new(""), &[], Duration::from_secs(5), None).status, 3);
+        let start = Instant::now();
+        let out = run(Cmd::Shell("echo a; sleep 5"), Path::new(""), &[], Duration::from_millis(200), None);
+        assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+        assert_eq!((out.status, out.stdout.as_str()), (124, "a\n"));
     }
 }

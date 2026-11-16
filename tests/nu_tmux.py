@@ -86,6 +86,11 @@ class NuTmux(unittest.TestCase):
         self.type('open main')
         self.wait('no file in the new folder', lambda s: 'main.rs' in s)
 
+    def test_programs_nu_runs_do_not_see_ligs_state(self):
+        self.type("^env | lines | where {|l| $l =~ '^__lig' } | length | $'lig-vars=($in)'\r")
+        self.wait('env did not run', lambda s: 'lig-vars=' in s.replace(self.prompt_line(), ''))
+        self.assertIn('lig-vars=0', self.screen())
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

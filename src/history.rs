@@ -35,8 +35,13 @@ fn private_file(path: &Path, append: bool) -> std::io::Result<std::fs::File> {
 impl History {
     /// `~/.local/state/lig/history`, read when first needed.
     pub fn open() -> Self {
-        let dir = dirs::state_dir().or_else(dirs::data_local_dir).unwrap_or_else(std::env::temp_dir).join("lig");
-        History { path: dir.join("history"), entries: vec![], read_len: 0, loaded: false, home: dirs::home_dir() }
+        History {
+            path: crate::state_dir().join("history"),
+            entries: vec![],
+            read_len: 0,
+            loaded: false,
+            home: dirs::home_dir(),
+        }
     }
 
     #[cfg(test)]

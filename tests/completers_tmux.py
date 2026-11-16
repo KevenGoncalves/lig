@@ -11,6 +11,15 @@ import unittest
 from pathlib import Path
 from fish_pty import BIN
 
+# argc and a folder of argc scripts, as argc-completions sets up (LIG_TEST_ARGC=path/to/argc).
+ARGC = os.environ.get('LIG_TEST_ARGC') or shutil.which('argc')
+ARGC_SCRIPT = """# @cmd Deploy the app
+# @arg env[staging|production]
+deploy() { :; }
+# @cmd Show the logs
+logs() { :; }
+eval "$(argc --argc-eval "$0" "$@")"
+"""
 SHELLS = {'zsh': os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh'), 'fish': shutil.which('fish'),
           'bash': shutil.which('bash')}
 BASH_COMPLETION = '/usr/share/bash-completion/bash_completion'
@@ -25,7 +34,7 @@ RC = {
 
 @unittest.skipUnless(shutil.which('tmux'), 'tmux is required')
 class CompletersTmux(unittest.TestCase):
-    def start(self, kind, completers='["shell"]'):
+    def start(self, kind, completers='["shell"]', extra_env=None):
         shell = SHELLS[kind]
         if not shell:
             self.skipTest(f'{kind} is unavailable')
@@ -43,7 +52,8 @@ class CompletersTmux(unittest.TestCase):
         self.state = directory / 'state'
         env = {'HOME': str(home), 'ZDOTDIR': str(home), 'HISTFILE': str(home / '.history'), 'XDG_CONFIG_HOME': str(home / '.config'),
                'XDG_DATA_HOME': str(home / '.local/share'), 'XDG_CACHE_HOME': str(home / '.cache'),
-               'XDG_STATE_HOME': str(self.state), 'XDG_RUNTIME_DIR': str(runtime), 'SHELL': shell, 'LIG_LOG': '1'}
+               'XDG_STATE_HOME': str(self.state), 'XDG_RUNTIME_DIR': str(runtime), 'SHELL': shell, 'LIG_LOG': '1',
+               **(extra_env or {})}
         subprocess.run([BIN, 'install', kind], env=dict(os.environ, **env), check=True, capture_output=True)
         self.base = ['tmux', '-S', str(directory / 'socket'), '-f', '/dev/null']
         self.addCleanup(lambda: (subprocess.run(self.base + ['kill-server'], capture_output=True), self.dir.cleanup()))
@@ -101,6 +111,20 @@ class CompletersTmux(unittest.TestCase):
         self.start('bash')
         self.tmux('send-keys', '-t', 'test:0.0', '-l', 'timedatectl set-')
         self.wait('no timedatectl subcommands', lambda s: 'set-timezone' in self.popup(s) and 'set-ntp' in self.popup(s))
+
+    @unittest.skipUnless(ARGC, 'argc is unavailable')
+    def test_argc_completes_the_commands_it_has_a_script_for(self):
+        scripts = Path(tempfile.mkdtemp(prefix='lig-argc-'))
+        self.addCleanup(shutil.rmtree, scripts)
+        (scripts / 'ligdeploy.sh').write_text(ARGC_SCRIPT)
+        path = f"{Path(ARGC).resolve().parent}:{os.environ['PATH']}"
+        self.start('zsh', completers='["argc"]', extra_env={'ARGC_COMPLETIONS_PATH': str(scripts), 'PATH': path})
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'ligdeploy ')
+        self.wait('no subcommands from argc', lambda s: 'Deploy the app' in self.popup(s) and 'logs' in self.popup(s))
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'deploy p')
+        self.wait('no values from argc', lambda s: 'production' in self.popup(s) and 'staging' not in self.popup(s))
+        self.tmux('send-keys', '-t', 'test:0.0', 'Enter')
+        self.wait('production not inserted', lambda s: self.prompt(s) == 'comp> ligdeploy deploy production')
 
     def test_off_by_default(self):
         self.start('zsh', completers='[]')

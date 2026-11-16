@@ -25,6 +25,9 @@ pub fn specs(nu: &Path) -> Option<ShellSpecs> {
     let cache = crate::help::cache_dir().join(format!("nu-{:016x}.json", stamp.finish()));
     // A cache that doesn't parse (cut short, say) is read from nu again.
     let cached = std::fs::read_to_string(&cache).ok().and_then(|text| serde_json::from_str::<Vec<Value>>(&text).ok());
+    if cached.is_some() {
+        crate::help::touch(&cache);
+    }
     let flat = match cached {
         Some(flat) => flat,
         None => {

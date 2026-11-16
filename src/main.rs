@@ -366,11 +366,16 @@ fn make_private(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// `~/.local/state/lig`: history and the log.
+pub fn state_dir() -> PathBuf {
+    dirs::state_dir().or_else(dirs::data_local_dir).unwrap_or_else(std::env::temp_dir).join("lig")
+}
+
 pub fn log(msg: &str) {
     if std::env::var_os("LIG_LOG").is_none() {
         return;
     }
-    let dir = dirs::state_dir().unwrap_or_else(std::env::temp_dir).join("lig");
+    let dir = state_dir();
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("lig.log")) {
         let _ = writeln!(f, "{msg}");
@@ -649,17 +654,27 @@ fn uninstall(shell: ShellKind) -> Result<()> {
     }
     let old = match std::fs::read_to_string(&rc) {
         Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.into()),
     };
-    std::fs::write(&rc, managed_body(&old)?)?;
-    println!("lig: removed from {}", rc.display());
+    let new = managed_body(&old)?;
+    if new == old {
+        println!("lig: not set up in {}", rc.display());
+        return Ok(());
+    }
+    std::fs::write(&rc, new)?;
+    println!("lig: removed from {}; new {} sessions start without it", rc.display(), shell.name());
     if cfg!(target_os = "macos") && matches!(shell, ShellKind::Bash) {
         let login = bash_login_file(&dirs::home_dir().unwrap_or_default());
         if let Ok(text) = std::fs::read_to_string(&login) {
             std::fs::write(&login, strip_block(&text, LOGIN_BEGIN, LOGIN_END))?;
         }
     }
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "lig".into());
+    println!("To remove lig itself, delete {exe} (or uninstall its package), then if you like:");
+    println!("  {}  (settings)", config::config_dir().display());
+    println!("  {}  (caches)", help::cache_dir().parent().unwrap_or(Path::new("")).display());
+    println!("  {}  (history)", state_dir().display());
     Ok(())
 }
 
@@ -669,9 +684,30 @@ fn run(cmd: &mut std::process::Command) -> Result<()> {
     Ok(())
 }
 
-/// A version as numbers, for comparing (`v1.0.10` > `1.0.9`).
-fn version_key(v: &str) -> Vec<u64> {
-    v.trim_start_matches('v').split(['.', '-']).map_while(|p| p.parse().ok()).collect()
+/// A part of a pre-release (`rc.2`): numbers sort before words, as in semver.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PreRelease {
+    Number(u64),
+    Word(String),
+}
+
+/// A version for comparing, as semver orders them: `v1.0.10` > `1.0.9`, and
+/// `1.4.0` > `1.4.0-rc.2` > `1.4.0-rc.1`.
+fn version_key(v: &str) -> (Vec<u64>, bool, Vec<PreRelease>) {
+    let v = v.trim_start_matches('v');
+    let v = v.split('+').next().unwrap_or(v);
+    let (core, pre) = v.split_once('-').map_or((v, None), |(core, pre)| (core, Some(pre)));
+    let mut numbers: Vec<u64> = core.split('.').map_while(|p| p.parse().ok()).collect();
+    while numbers.last() == Some(&0) {
+        numbers.pop();
+    }
+    let parts = pre
+        .unwrap_or_default()
+        .split('.')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.parse().map_or_else(|_| PreRelease::Word(p.into()), PreRelease::Number))
+        .collect();
+    (numbers, pre.is_none(), parts)
 }
 
 fn release_target(os: &str, arch: &str) -> Option<&'static str> {
@@ -1403,6 +1439,10 @@ mod shell_tests {
         assert!(version_key("v1.1.0") > version_key("1.0.99"));
         assert_eq!(version_key("v1.0.5"), version_key("1.0.5"));
         assert!(version_key("2.0.0-rc1") > version_key("1.9.9"));
+        assert!(version_key("v1.4.0") > version_key("1.4.0-rc1"));
+        assert!(version_key("1.4.0-rc.10") > version_key("1.4.0-rc.2"));
+        assert!(version_key("1.4.0-rc.1") > version_key("1.4.0-beta"));
+        assert_eq!(version_key("1.4"), version_key("v1.4.0+build.5"));
     }
 
     #[test]

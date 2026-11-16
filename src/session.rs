@@ -375,6 +375,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     let (req_tx, req_rx) = unbounded::<Request>();
     let behavior = cfg.behavior.clone();
     std::thread::spawn(move || worker(req_rx, tx, behavior));
+    std::thread::spawn(crate::help::prune_cache);
 
     let mut s = Session {
         insert_file,

@@ -32,15 +32,31 @@ impl CommandLine {
 /// escapes with a backtick (cmd's `^` is rare enough to treat as text).
 const ESCAPE: char = if cfg!(windows) { '`' } else { '\\' };
 
+/// A `$(`, `` ` ``, `<(` or `(` not closed yet: what the line goes back to when it is.
+struct Open {
+    tokens: Vec<Token>,
+    cur: Token,
+    in_token: bool,
+    next_redirect: bool,
+    quote: Option<char>,
+    /// `$(…)`, `` `…` `` and `<(…)` are part of a word; `(…)` is a command of its own.
+    word: bool,
+    backtick: bool,
+    /// Where it starts in the line, for the word's text.
+    start: usize,
+}
+
 #[allow(unused_assignments)]
 pub fn parse(line: &str) -> CommandLine {
+    let chars: Vec<char> = line.chars().collect();
     let mut tokens: Vec<Token> = Vec::new();
     let mut cur = Token::default();
     let mut in_token = false;
     let mut quote: Option<char> = None;
     let mut escape = false;
     let mut next_redirect = false;
-    let mut chars = line.chars().peekable();
+    let mut open: Vec<Open> = Vec::new();
+    let mut i = 0;
 
     macro_rules! finish {
         () => {
@@ -52,8 +68,44 @@ pub fn parse(line: &str) -> CommandLine {
             }
         };
     }
+    macro_rules! enter {
+        ($word:expr, $backtick:expr, $start:expr) => {
+            open.push(Open {
+                tokens: std::mem::take(&mut tokens),
+                cur: std::mem::take(&mut cur),
+                in_token,
+                next_redirect,
+                quote,
+                word: $word,
+                backtick: $backtick,
+                start: $start,
+            });
+            in_token = false;
+            next_redirect = false;
+            quote = None;
+        };
+    }
+    macro_rules! leave {
+        () => {
+            let o = open.pop().unwrap();
+            tokens = o.tokens;
+            cur = o.cur;
+            in_token = o.in_token;
+            next_redirect = o.next_redirect;
+            quote = o.quote;
+            if o.word {
+                let text: String = chars[o.start..i].iter().collect();
+                cur.raw.push_str(&text);
+                cur.value.push_str(&text);
+                in_token = true;
+            }
+        };
+    }
 
-    while let Some(c) = chars.next() {
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
+        let next = chars.get(i).copied();
         if escape {
             escape = false;
             cur.raw.push(c);
@@ -74,15 +126,24 @@ pub fn parse(line: &str) -> CommandLine {
                 continue;
             }
             Some('"') => {
-                cur.raw.push(c);
-                if c == '"' {
-                    quote = None;
-                } else if c == ESCAPE && matches!(chars.peek(), Some('"' | '\\' | '$' | '`')) {
-                    let n = chars.next().unwrap();
-                    cur.raw.push(n);
+                if c == '$' && next == Some('(') {
+                    i += 1;
+                    enter!(true, false, i - 2);
+                } else if c == '`' && ESCAPE != '`' {
+                    enter!(true, true, i - 1);
+                } else if c == ESCAPE
+                    && let Some(n @ ('"' | '\\' | '$' | '`')) = next
+                {
+                    i += 1;
+                    cur.raw.extend([c, n]);
                     cur.value.push(n);
                 } else {
-                    cur.value.push(c);
+                    cur.raw.push(c);
+                    if c == '"' {
+                        quote = None;
+                    } else {
+                        cur.value.push(c);
+                    }
                 }
                 continue;
             }
@@ -101,15 +162,32 @@ pub fn parse(line: &str) -> CommandLine {
             }
             ' ' | '\t' => finish!(),
             // `&>file`: a redirection, not `&`.
-            '&' if chars.peek() == Some(&'>') => {
+            '&' if next == Some('>') => {
                 finish!();
-                while matches!(chars.peek(), Some('>' | '|')) {
-                    chars.next();
+                while matches!(chars.get(i), Some('>' | '|')) {
+                    i += 1;
                 }
                 next_redirect = true;
             }
+            '$' | '<' | '>' if next == Some('(') => {
+                i += 1;
+                enter!(true, false, i - 2);
+            }
             // On Windows the backtick is the escape character, matched above.
-            '\n' | ';' | '|' | '&' | '(' | ')' | '`' => {
+            '`' if open.last().is_some_and(|o| o.backtick) => {
+                leave!();
+            }
+            '`' => {
+                enter!(true, true, i - 1);
+            }
+            ')' if open.last().is_some_and(|o| !o.backtick) => {
+                leave!();
+            }
+            '(' => {
+                finish!();
+                enter!(false, false, i - 1);
+            }
+            '\n' | ';' | '|' | '&' | ')' => {
                 finish!();
                 tokens.clear();
                 next_redirect = false;
@@ -121,16 +199,10 @@ pub fn parse(line: &str) -> CommandLine {
                     in_token = false;
                 }
                 finish!();
-                while matches!(chars.peek(), Some('>' | '<' | '&' | '|')) {
-                    chars.next();
+                while matches!(chars.get(i), Some('>' | '<' | '&' | '|')) {
+                    i += 1;
                 }
                 next_redirect = true;
-            }
-            '$' if chars.peek() == Some(&'(') => {
-                chars.next();
-                finish!();
-                tokens.clear();
-                next_redirect = false;
             }
             _ => {
                 cur.raw.push(c);
@@ -253,6 +325,32 @@ mod tests {
         assert_eq!(vals(&cl), ["grep"]);
         assert_eq!(cl.current.value, "-");
         let cl = parse("echo $(git br");
+        assert_eq!(vals(&cl), ["git"]);
+        let cl = parse(r#"git commit -m "$(git log -1 --form"#);
+        assert_eq!(vals(&cl), ["git", "log", "-1"]);
+        let cl = parse("diff <(sort a) <(sort -");
+        assert_eq!(vals(&cl), ["sort"]);
+        let cl = parse("echo `git br");
+        assert_eq!(vals(&cl), ["git"]);
+        let cl = parse("(cd src && make t");
+        assert_eq!(vals(&cl), ["make"]);
+    }
+
+    #[test]
+    fn a_closed_substitution_is_part_of_its_word() {
+        let cl = parse("ls $(pwd)/src -");
+        assert_eq!(vals(&cl), ["ls", "$(pwd)/src"]);
+        assert_eq!(cl.current.value, "-");
+        let cl = parse(r#"git commit -m "$(date) done" --am"#);
+        assert_eq!(vals(&cl), ["git", "commit", "-m", "$(date) done"]);
+        assert_eq!(cl.current.value, "--am");
+        let cl = parse("echo `hostname` $(echo $(id -u)) -");
+        assert_eq!(vals(&cl), ["echo", "`hostname`", "$(echo $(id -u))"]);
+        let cl = parse("diff <(sort a) -");
+        assert_eq!(vals(&cl), ["diff", "<(sort a)"]);
+        let cl = parse("(cd src) && git a");
+        assert_eq!(vals(&cl), ["git"]);
+        let cl = parse("a=(x y) git c");
         assert_eq!(vals(&cl), ["git"]);
     }
 

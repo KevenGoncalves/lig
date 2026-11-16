@@ -162,8 +162,16 @@ class Fish:
         path = self.home / 'buffer'
         path.unlink(missing_ok=True)
         # F12, not a control key: macOS's tty swallows ^O (and ^C, …) while fish runs a command.
-        os.write(self.fd, BUFFER_KEY)
-        self.wait_for(lambda: path.exists() and path.stat().st_size > 0)
+        # Sent again if it gets no answer: one that arrives while fish still waits for its
+        # startup queries' replies can be lost.
+        for attempt in range(4):
+            os.write(self.fd, BUFFER_KEY)
+            try:
+                self.wait_for(lambda: path.exists() and path.stat().st_size > 0, timeout=3)
+                break
+            except AssertionError:
+                if attempt == 3:
+                    raise
         return path.read_text().strip()
 
     def assert_buffer(self, expected):

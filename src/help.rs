@@ -40,6 +40,47 @@ pub fn cache_dir() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("lig").join("help")
 }
 
+/// Cache files not used for this long are removed by [`prune_cache`].
+const CACHE_MAX_AGE: Duration = Duration::from_secs(60 * 24 * 3600);
+
+/// Marks a cache file as used, at most once a day, so [`prune_cache`] keeps it.
+pub fn touch(file: &Path) {
+    let Ok(f) = std::fs::File::options().append(true).open(file) else { return };
+    let old = f.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    if old.is_some_and(|age| age > Duration::from_secs(24 * 3600)) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+/// Removes `~/.cache/lig` files unused for [`CACHE_MAX_AGE`] (`--help` output of commands since
+/// removed, nu versions since updated) and what interrupted writes left. Runs once a day.
+pub fn prune_cache() {
+    if let Some(root) = cache_dir().parent() {
+        prune(root);
+    }
+}
+
+fn prune(root: &Path) {
+    let mark = root.join("pruned");
+    let age = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+    if age(&mark).is_some_and(|a| a < Duration::from_secs(24 * 3600)) || std::fs::create_dir_all(root).is_err() {
+        return;
+    }
+    let _ = std::fs::write(&mark, "");
+    for dir in [root.to_path_buf(), root.join("help")] {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for path in entries.flatten().map(|e| e.path()).filter(|p| p.is_file()) {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let partial = name.ends_with(".tmp") || name.ends_with(".part");
+            let max = if partial { Duration::from_secs(24 * 3600) } else { CACHE_MAX_AGE };
+            // Top-level files are downloads with fixed names, refreshed in place.
+            if (partial || dir != root) && age(&path).is_some_and(|a| a > max) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 /// FNV-1a, stable across builds (used for cache file names).
 fn fnv(s: &str) -> u64 {
     s.bytes().fold(0xcbf29ce484222325, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
@@ -157,6 +198,7 @@ impl HelpLoader {
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .filter(|v| v["key"] == key.as_str() && v["stamp"] == stamp.as_str())
             .and_then(|v| v["text"].as_str().map(str::to_string))
+            .inspect(|_| touch(&file))
             // Nothing, cached when the popup didn't run it.
             .filter(|t| !(self.any_program && t.is_empty()));
         let text = match cached {
@@ -553,6 +595,33 @@ fn parse_positional(left: &str, desc: &str) -> Option<crate::spec::Arg> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pruning_keeps_what_was_used_lately() {
+        let root = std::env::temp_dir().join(format!("lig-prune-test-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("help")).unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(90 * 24 * 3600);
+        let file = |name: &str, modified| {
+            let path = root.join(name);
+            std::fs::write(&path, "x").unwrap();
+            std::fs::File::options().append(true).open(&path).unwrap().set_modified(modified).unwrap();
+            path
+        };
+        let unused = file("help/1.json", old);
+        let used = file("help/2.json", old);
+        let fresh = file("help/3.json", std::time::SystemTime::now());
+        let download = file("npm.json", old);
+        let partial = file("npm.json.12.part", old);
+        touch(&used);
+        prune(&root);
+        assert!(!unused.exists() && !partial.exists());
+        assert!(used.exists() && fresh.exists() && download.exists());
+        // Once a day: a second run leaves an old file alone.
+        let unused = file("help/1.json", old);
+        prune(&root);
+        assert!(unused.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn windows_switches_from_help() {
