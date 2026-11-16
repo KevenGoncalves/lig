@@ -84,7 +84,9 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     if [[ -n $LIG_REMOTE ]]; then
       IFS= read -r -s -d $'\a' p || return
     else
-      p=$(<"$LIG_INSERT_FILE") || return
+      # Bash 5.2's $(<file) shortcut inside bind -x can discard the completed
+      # operands when the line runs. Read directly, preserving trailing newlines.
+      IFS= read -r -d '' p < "$LIG_INSERT_FILE" || [[ -n $p ]] || return
     fi
     local del=${p%%;*}
     p=${p#*;}
