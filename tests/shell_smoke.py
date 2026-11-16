@@ -8,6 +8,34 @@ from pathlib import Path
 from fish_pty import Fish
 
 class ShellSmoke(unittest.TestCase):
+    def test_bash_completed_operands_reach_commands(self):
+        shell = shutil.which('bash')
+        if not shell:
+            self.skipTest('bash is unavailable')
+        specs = {
+            name: f'{{"name":"{name}","args":{{"suggestions":["{operand}"]}}}}'
+            for name, operand in [('mkdir', 'created'), ('touch', 'created.txt'), ('cd', 'destination')]
+        }
+        term = Fish(wrapped=True, shell=shell, specs=specs,
+                    after_config='mkdir -p "$HOME/destination"\ncd "$HOME"\n')
+        try:
+            for command, prefix, operand in [('mkdir', 'cre', 'created'),
+                                             ('touch', 'cre', 'created.txt'),
+                                             ('cd', 'des', 'destination')]:
+                start = len(term.output)
+                term.send(f'{command} {prefix}')
+                term.wait_popup(operand, start)
+                term.send(b'\r')
+                term.send(b'\r')
+                if command == 'cd':
+                    term.send('pwd > "$HOME/cwd"\r')
+                    term.wait_for(lambda: (term.home / 'cwd').exists())
+                    self.assertEqual((term.home / 'cwd').read_text().strip(), str(term.home / operand))
+                else:
+                    self.assertTrue((term.home / operand).exists(), term.plain(start))
+        finally:
+            self.assertEqual(term.close(17), 17)
+
     def test_theme_reloads_with_the_popup_open(self):
         """A new theme in config.toml shows in a running session; a broken file keeps the last one."""
         shell = shutil.which('bash')
