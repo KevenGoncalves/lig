@@ -873,7 +873,10 @@ impl Engine {
         };
         let mut entries: Vec<(bool, String)> = listed
             .iter()
-            .filter(|(is_dir, name)| (!name.starts_with('.') || base.starts_with('.')) && (*is_dir || !folders_only))
+            .filter(|(is_dir, name)| {
+                (!name.starts_with('.') || base.starts_with('.') || self.cfg.show_hidden_files)
+                    && (*is_dir || !folders_only)
+            })
             .cloned()
             .collect();
         // Folders first, then by name.
@@ -1512,6 +1515,35 @@ mod tests {
         assert!(labels(&mut e, &env, "edit ..").is_empty());
         // Before anything is typed, Enter picks a real entry: no `.` there.
         assert!(!labels(&mut e, &env, "edit ").iter().any(|s| s.0 == "."));
+    }
+
+    #[test]
+    fn show_hidden_files_lists_dot_entries_without_a_dot_prefix() {
+        let dir = std::env::temp_dir().join(format!(
+            "lig-test-hidden-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("work")).unwrap();
+        std::fs::write(dir.join("work/.secret"), "").unwrap();
+        std::fs::write(dir.join("work/visible.txt"), "").unwrap();
+        let cfg = Behavior { show_hidden_files: true, ..Behavior::default() };
+        let mut e = Engine::new(Store::with_dirs(vec![dir.join("specs")]), cfg);
+        e.insert_spec(cmd("edit", "").arg(arg("path").files()));
+        let env = ShellEnv { cwd: dir.join("work"), ..Default::default() };
+        let r = labels(&mut e, &env, "edit ");
+        assert!(r.iter().any(|s| s.0 == ".secret"), "{r:?}");
+        assert!(r.iter().any(|s| s.0 == "visible.txt"), "{r:?}");
+    }
+
+    #[test]
+    fn hidden_files_stay_hidden_by_default() {
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("edit", "").arg(arg("path").files()));
+        std::fs::write(env.cwd.join(".secret"), "").unwrap();
+        let r = labels(&mut e, &env, "edit ");
+        assert!(!r.iter().any(|s| s.0.starts_with('.')), "{r:?}");
     }
 
     #[test]

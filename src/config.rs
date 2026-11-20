@@ -220,6 +220,8 @@ pub struct Behavior {
     /// Commands that open files (editors, viewers, players…): their files and
     /// folders come before their options, as if `files_first` were on.
     pub files_first_commands: Vec<String>,
+    /// List hidden files and folders (dot files) even without a dot typed.
+    pub show_hidden_files: bool,
     /// Commands whose options show only once you type `-`, so their files and other
     /// suggestions get the room. `"*"` for every command.
     pub options_after_dash: Vec<String>,
@@ -315,6 +317,7 @@ impl Default for Behavior {
             insert_space: false,
             files_first: false,
             files_first_commands: FILES_FIRST_COMMANDS.iter().map(|c| c.to_string()).collect(),
+            show_hidden_files: false,
             options_after_dash: OPTIONS_AFTER_DASH.iter().map(|c| c.to_string()).collect(),
             show_on_empty_token: true,
             complete_commands: false,
