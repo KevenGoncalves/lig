@@ -263,6 +263,7 @@ enter_accepts = "auto"     # "always", "after-space", "never"
 enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"] (zsh, bash)
 complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
+show_hidden_files = false  # list dot files without typing a dot first
 online = true              # search package registries as you type
 history = true             # keep the commands that ran, for Ctrl+R
 completers = []            # for commands with no spec: ["shell", "argc"], see below
