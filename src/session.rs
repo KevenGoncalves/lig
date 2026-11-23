@@ -1649,6 +1649,12 @@ impl Session {
             if self.repeated_dismiss(&key) {
                 continue;
             }
+            // Ctrl+C abandons the line in every shell: no popup for it, even when the shell
+            // doesn't report the next one (a zle-line-init that replaced lig's, #49).
+            if key == Key::ctrl('c') && self.bindings.action(&key).is_none() {
+                self.dismiss();
+                redraw = true;
+            }
             if !self.popup_open() {
                 if key != Key::ENTER {
                     self.just_accepted = false;
