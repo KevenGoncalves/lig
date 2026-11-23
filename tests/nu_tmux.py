@@ -86,9 +86,11 @@ class NuTmux(unittest.TestCase):
         self.type('open main')
         self.wait('no file in the new folder', lambda s: 'main.rs' in s)
         # The history has the line that ran, not lig's insert key's command.
-        history = self.log.with_name('history')
-        self.wait('cd src/ not in the history', lambda s: history.exists() and 'cd src/' in history.read_text())
-        self.assertNotIn('__lig_insert', history.read_text())
+        # lig's state: XDG_STATE_HOME, or on macOS ~/Library/Application Support.
+        places = [self.log.with_name('history'), Path(self.env['HOME']) / 'Library/Application Support/lig/history']
+        history = lambda: next((p.read_text() for p in places if p.exists()), '')
+        self.wait('cd src/ not in the history', lambda s: 'cd src/' in history())
+        self.assertNotIn('__lig_insert', history())
 
     def test_programs_nu_runs_do_not_see_ligs_state(self):
         self.type("^env | lines | where {|l| $l =~ '^__lig' } | length | $'lig-vars=($in)'\r")
