@@ -31,7 +31,9 @@ def --env __lig_report [] {
 }
 
 # lig writes `<delete>;<back>;<text>` to $env.LIG_INSERT_FILE, then sends Ctrl+Alt+Shift+F12.
-def __lig_insert [] {
+def --env __lig_insert [] {
+    # nu runs pre_execution hooks for this key's command too: it isn't a line that ran.
+    $env.__lig.ran = ""
     let parts = open --raw $env.LIG_INSERT_FILE | into string | split row --number 3 ";"
     if ($parts | length) != 3 { return }
     let delete = $parts.0 | into int

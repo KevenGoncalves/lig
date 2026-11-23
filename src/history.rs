@@ -204,7 +204,9 @@ fn line(time: u64, command: &str) -> String {
 fn parse_line(line: &str) -> Option<(u64, String)> {
     let (time, command) = line.split_once('\t')?;
     let out = unescape(command);
-    (!out.trim().is_empty()).then(|| (time.parse().unwrap_or(0), out))
+    // lig's own hooks, which nu used to record as lines that ran (see shell/post.nu).
+    (!out.trim().is_empty() && !matches!(out.as_str(), "__lig_insert" | "_lig_insert"))
+        .then(|| (time.parse().unwrap_or(0), out))
 }
 
 /// `\n` is a newline and `\x` is `x`, read left to right (lig's file and fish's history).
@@ -227,30 +229,50 @@ fn unescape(s: &str) -> String {
 
 /// What zsh, bash, fish and nu remember, oldest first within each.
 fn import(home: &Path) -> Vec<(u64, String)> {
-    let read = |p: PathBuf| std::fs::read(p).ok();
+    let read = |p: &Path| std::fs::read(p).ok();
     let mut out = vec![];
     let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from).unwrap_or_else(|| home.to_path_buf());
-    if let Some(bytes) = read(zdotdir.join(".zsh_history")) {
-        out.extend(zsh(&bytes));
+    let path = zdotdir.join(".zsh_history");
+    if let Some(bytes) = read(&path) {
+        out.extend(dated(zsh(&bytes), &path));
     }
-    if let Some(bytes) = read(home.join(".bash_history")) {
-        out.extend(bash(&String::from_utf8_lossy(&bytes)));
+    let path = home.join(".bash_history");
+    if let Some(bytes) = read(&path) {
+        out.extend(dated(bash(&String::from_utf8_lossy(&bytes)), &path));
     }
     // fish keeps XDG's folders on macOS too.
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|d| d.is_absolute())
         .unwrap_or_else(|| home.join(".local/share"));
-    if let Some(bytes) = read(data.join("fish/fish_history")) {
+    if let Some(bytes) = read(&data.join("fish/fish_history")) {
         out.extend(fish(&String::from_utf8_lossy(&bytes)));
     }
     let config = dirs::config_dir().unwrap_or_else(|| home.join(".config"));
-    if let Some(bytes) = read(config.join("nushell/history.txt")) {
-        out.extend(
-            String::from_utf8_lossy(&bytes).lines().filter(|l| !l.trim().is_empty()).map(|l| (0, l.to_string())),
-        );
+    let path = config.join("nushell/history.txt");
+    if let Some(bytes) = read(&path) {
+        let text = String::from_utf8_lossy(&bytes);
+        let runs = text.lines().filter(|l| !l.trim().is_empty()).map(|l| (0, l.to_string())).collect();
+        out.extend(dated(runs, &path));
     }
     out
+}
+
+/// Undated commands (bash without `HISTTIMEFORMAT`, nu's history.txt) end when their file last
+/// changed, a second apart in order: they sort among the dated ones by how recent they are,
+/// not all below them.
+fn dated(mut runs: Vec<(u64, String)>, path: &Path) -> Vec<(u64, String)> {
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let Some(last) = modified.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs()) else {
+        return runs;
+    };
+    let n = runs.len() as u64;
+    for (i, run) in runs.iter_mut().enumerate() {
+        if run.0 == 0 {
+            run.0 = last.saturating_sub(n - 1 - i as u64);
+        }
+    }
+    runs
 }
 
 /// `: <time>:<duration>;<command>` (extended history) or plain lines; a trailing `\` continues
@@ -405,5 +427,22 @@ mod tests {
         );
         // fish writes `echo \n` (a backslash and an n) as `echo \\n`.
         assert_eq!(fish("- cmd: echo \\\\n\n"), [(0, "echo \\n".into())]);
+    }
+
+    #[test]
+    fn ligs_own_hooks_are_not_listed() {
+        assert_eq!(parse_line("5\t__lig_insert"), None);
+        assert_eq!(parse_line("5\techo __lig_insert"), Some((5, "echo __lig_insert".into())));
+    }
+
+    #[test]
+    fn undated_commands_end_when_their_file_changed() {
+        let path = std::env::temp_dir().join(format!("lig-dated-{}", std::process::id()));
+        std::fs::write(&path, "").unwrap();
+        let at = UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options().append(true).open(&path).unwrap().set_modified(at).unwrap();
+        let runs = vec![(0, "a".into()), (500, "b".into()), (0, "c".into())];
+        assert_eq!(dated(runs, &path), [(999_998, "a".into()), (500, "b".into()), (1_000_000, "c".into())]);
+        std::fs::remove_file(&path).unwrap();
     }
 }

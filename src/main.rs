@@ -1567,7 +1567,7 @@ mod shell_tests {
         assert!(text.starts_with(&format!("{PRE_BEGIN}\n# lig: run this interactive nu")));
         assert!(text.contains("exec r#'/opt/lig'# shell --shell $nu.current-exe"));
         assert!(text.contains(&format!("{body}{POST_BEGIN}\n")));
-        assert!(text.contains("def __lig_insert"));
+        assert!(text.contains("def --env __lig_insert"));
         assert!(!text.contains("@LIG_BIN@") && !text.contains("eval"));
         assert_eq!(managed_body(&text).unwrap(), body);
         assert_eq!(installed_text(ShellKind::Nu, &text, "/opt/lig").unwrap(), text);

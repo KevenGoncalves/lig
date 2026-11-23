@@ -85,6 +85,10 @@ class NuTmux(unittest.TestCase):
         self.tmux('send-keys', '-t', 'test:0.0', 'Enter')
         self.type('open main')
         self.wait('no file in the new folder', lambda s: 'main.rs' in s)
+        # The history has the line that ran, not lig's insert key's command.
+        history = self.log.with_name('history')
+        self.wait('cd src/ not in the history', lambda s: history.exists() and 'cd src/' in history.read_text())
+        self.assertNotIn('__lig_insert', history.read_text())
 
     def test_programs_nu_runs_do_not_see_ligs_state(self):
         self.type("^env | lines | where {|l| $l =~ '^__lig' } | length | $'lig-vars=($in)'\r")
