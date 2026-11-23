@@ -238,10 +238,12 @@ pub struct Behavior {
     /// PyPI versions, Snap Store, Flathub). What you type for the package name is sent
     /// to them.
     pub online: bool,
-    /// Keep the commands that ran without error, from every lig session (first seeded from
-    /// your shells' histories), for `keys.history` to show. Off: nothing is kept, and the
-    /// history key goes to the shell.
+    /// Keep the commands that ran, from every lig session (first seeded from your shells'
+    /// histories), for `keys.history` to show. Off: nothing is kept, and the history key goes
+    /// to the shell.
     pub history: bool,
+    /// Keep only the commands that ran without error (exit status 0) in `history`.
+    pub history_success_only: bool,
     /// Kill generator commands after this many milliseconds.
     pub generator_timeout_ms: u64,
     /// Cache generator results for this long when the spec doesn't say.
@@ -328,6 +330,7 @@ impl Default for Behavior {
             complete_commands: false,
             online: true,
             history: true,
+            history_success_only: false,
             generator_timeout_ms: 5000,
             generator_cache_ms: 5000,
             disabled_commands: vec![],

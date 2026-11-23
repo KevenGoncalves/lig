@@ -1,6 +1,7 @@
-//! The commands that ran and exited 0, shared by every lig session, newest first and each
-//! once; Ctrl+R shows them (`behavior.history`). The first time, the shells' own histories
-//! seed it (their exit codes are unknown, so those keep their failures).
+//! The commands that ran (only those that exited 0 with `behavior.history_success_only`),
+//! shared by every lig session, newest first and each once; Ctrl+R shows them
+//! (`behavior.history`). The first time, the shells' own histories seed it (their exit
+//! codes are unknown, so those keep their failures).
 //!
 //! The file has one `<unix time>\t<command>` line per run, appended; a command's `\` and
 //! newlines are written `\\` and `\n`.
@@ -89,7 +90,7 @@ impl History {
         }
     }
 
-    /// A command that ran and exited 0.
+    /// A command that ran.
     pub fn record(&mut self, command: &str) {
         let command = command.trim();
         if command.is_empty() {

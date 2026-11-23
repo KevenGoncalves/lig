@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Ctrl+R shows the commands that ran without error (issue #27), in zsh, bash, fish and nu,
+"""Ctrl+R shows the commands that ran (issue #27; with history_success_only, only those that
+ran without error, issue #56), in zsh, bash, fish and nu,
 in a private tmux server. Run after cargo build --release: python3 tests/history_tmux.py."""
 import os
 import shutil
@@ -18,7 +19,7 @@ SHELLS = {
 }
 PROMPTS = {
     'zsh': "PROMPT='hist-test> '\n",
-    # A hook before lig's that leaves $? at 0: the failed command must still stay out.
+    # A hook before lig's that leaves $? at 0: with history_success_only, the failed command must still stay out.
     'bash': "PS1='hist-test> '\nPROMPT_COMMAND='true'\n",
     'fish': "function fish_prompt; echo -n 'hist-test> '; end\nset -g fish_greeting\n",
     'nu': "$env.config.show_banner = false\n$env.PROMPT_COMMAND = {|| 'hist-test' }\n$env.PROMPT_COMMAND_RIGHT = ''\n",
@@ -88,8 +89,8 @@ class HistoryTmux(unittest.TestCase):
         self.tmux('send-keys', '-t', 'test:0.0', '-l', f'{line}\r')
         self.wait(f'{line!r} did not finish', lambda s: s.rstrip().splitlines()[-1].startswith('hist-test'))
 
-    def check_history(self, kind):
-        self.start(kind)
+    def check_history(self, kind, success_only=False):
+        self.start(kind, '[behavior]\nhistory_success_only = true\n' if success_only else '')
         self.run_line('echo hist-ok')
         self.run_line('ls /no/such/dir-hist-bad')
         self.run_line(' echo hist-hidden')
@@ -97,7 +98,10 @@ class HistoryTmux(unittest.TestCase):
         self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
         self.wait('no history popup', lambda s: 'echo hist-ok' in s and 'imported-from-zsh' in s)
         entries = ''.join(l for l in self.screen().splitlines() if '↺' in l)
-        self.assertNotIn('dir-hist-bad', entries)
+        if success_only:
+            self.assertNotIn('dir-hist-bad', entries)
+        else:
+            self.assertIn('dir-hist-bad', entries)
         self.assertNotIn('hist-hidden', entries)
         self.tmux('send-keys', '-t', 'test:0.0', '-l', 'hist-o')
         self.wait('not narrowed', lambda s: 'imported-from-zsh' not in s and 'echo hist-ok' in s)
@@ -117,6 +121,12 @@ class HistoryTmux(unittest.TestCase):
 
     def test_nu(self):
         self.check_history('nu')
+
+    def test_success_only_leaves_failures_out(self):
+        for kind in ['zsh', 'bash', 'fish', 'nu']:
+            with self.subTest(kind):
+                self.check_history(kind, success_only=True)
+                self.doCleanups()
 
     def test_off_leaves_ctrl_r_to_the_shell(self):
         self.start('bash', '[behavior]\nhistory = false\n')

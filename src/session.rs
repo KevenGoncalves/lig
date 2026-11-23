@@ -1529,7 +1529,7 @@ impl Session {
             }
             Msg::Ran { status, command } => {
                 // A leading space keeps a command out, as the shells' `ignorespace` options do.
-                if status == 0
+                if (status == 0 || !self.cfg.behavior.history_success_only)
                     && !command.starts_with(' ')
                     && let Some(history) = self.history.as_mut()
                 {

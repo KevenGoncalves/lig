@@ -34,7 +34,7 @@ itself.
   scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI, Snap and Flathub.
 - Knows your **aliases, functions and variables** (`gco ` completes like `git checkout `,
   `$HO` → `$HOME`).
-- **History** on `Ctrl+R`: the commands that worked, from every session, fuzzy-searched.
+- **History** on `Ctrl+R`: the commands you ran, from every session, fuzzy-searched.
 - Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
@@ -233,10 +233,11 @@ Type as usual; the popup shows what fits.
   run the line and **Back** to go up.
 - **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
   you type `-` (`options_after_dash`).
-- **History** (`Ctrl+R`) lists the commands that ran without error, in every Lig session,
-  newest first and each once; typing narrows it (fuzzy), and `Enter` puts one on the line.
-  It starts with what zsh, bash, fish and nu remember. A command typed with a leading space
-  isn't kept; `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
+- **History** (`Ctrl+R`) lists the commands you ran, in every Lig session, newest first
+  and each once; typing narrows it (fuzzy), and `Enter` puts one on the line. It starts with
+  what zsh, bash, fish and nu remember. A command typed with a leading space isn't kept;
+  `history_success_only = true` keeps only those that ran without error, and
+  `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
   closed, fzf's `Ctrl+T`. Typing brings the popup back.
 
@@ -268,6 +269,7 @@ hide_variable_values = []  # also mask these $VARS' values: ["GH_*", "*_URL"], "
                            # (names with TOKEN, KEY, PASS, SECRET, PAT, PWD… always are)
 online = true              # search package registries as you type
 history = true             # keep the commands that ran, for Ctrl+R
+history_success_only = false  # keep only those that ran without error
 completers = []            # for commands with no spec: ["shell", "argc"], see below
 disabled_commands = []     # never show the popup for these
 
