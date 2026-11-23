@@ -30,6 +30,13 @@ _lig_cleanup
 LIG_EOF
   exec "$s" --rcfile "$d/rc" -i <"$LIG_TTY"
   ;;
+fish)
+  cat >"$d/post.fish" <<'LIG_EOF'
+@POST_FISH@
+LIG_EOF
+  # After the user's config, as an install puts it at its end.
+  exec "$s" -l -C "source '$d/post.fish'; command rm -rf '$d'" <"$LIG_TTY"
+  ;;
 esac
 rm -rf "$d"
 t=$LIG_TTY

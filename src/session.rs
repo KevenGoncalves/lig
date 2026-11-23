@@ -82,6 +82,11 @@ enum Event {
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
     ShellSpecs(crate::nushell::ShellSpecs),
+    /// An insertion for a host's fish is in its file (see `host_insert`): press its key.
+    HostInsert {
+        ok: bool,
+        run: bool,
+    },
     /// A `lig ssh` host's `.zsh_history` and `.bash_history`; `ok` if they could be read.
     HostHistory {
         ok: bool,
@@ -525,6 +530,8 @@ struct RemoteSession {
     history: crate::history::HostHistory,
     /// Over `lig mosh`: its client always has the alternate screen, which isn't a full-screen app's.
     mosh: bool,
+    /// Fish there takes insertions from this file, which lig writes over its ssh connection.
+    insert_file: Option<String>,
 }
 
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
@@ -898,9 +905,15 @@ impl Session {
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
-                    let sent = if self.remote.is_some() {
-                        // The host can't read the query file: the id follows the key.
-                        self.write_pty(format!("{HOST_REPORT_KEY}{}\x07", self.fish_sequence).as_bytes());
+                    let sent = if let Some(r) = &self.remote {
+                        // The host can't read the query file: bash reads the id after the key;
+                        // fish can't, and answers 0, taken for the request in flight.
+                        let ask = if r.insert_file.is_some() {
+                            REPORT_KEY.to_string()
+                        } else {
+                            format!("{HOST_REPORT_KEY}{}\x07", self.fish_sequence)
+                        };
+                        self.write_pty(ask.as_bytes());
                         true
                     } else {
                         std::fs::write(&self.query_file, self.fish_sequence.to_string()).is_ok() && self.ask_for_line()
@@ -1027,6 +1040,15 @@ impl Session {
                         self.request();
                     }
                 },
+                Event::HostInsert { ok, run } => {
+                    if ok && self.remote.is_some() {
+                        let mut keys = SNAPSHOT_INSERT_KEY.as_bytes().to_vec();
+                        if run {
+                            keys.push(b'\r');
+                        }
+                        self.write_pty(&keys);
+                    }
+                }
                 Event::HostHistory { ok, zsh, bash } => {
                     if let Some(r) = &mut self.remote {
                         if ok {
@@ -1303,6 +1325,7 @@ impl Session {
             insertion_transport: self.insertion_transport,
             history: Default::default(),
             mosh,
+            insert_file: None,
         });
         self.fish_shell = false;
         self.zsh_shell = false;
@@ -1398,27 +1421,31 @@ impl Session {
                 self.items_line.clear();
                 self.request();
             }
-            Msg::Ready { pid } => {
+            Msg::Ready { pid, insert_file } => {
                 crate::log(&format!("reader ready fish={} pid={:?} from={pid:?}", self.fish_shell, self.shell_pid));
                 // Fish that replaced the shell lig started (`exec fish`): same process.
                 if !self.fish_shell && pid.is_some() && pid == self.shell_pid {
                     self.switch_shell(ShellKind::Fish);
                 }
-                // A host's bash over `lig mosh` answers when asked too: mosh drops what would
-                // mark its line on the screen.
-                let mosh = self.remote.as_ref().is_some_and(|r| r.mosh);
-                if mosh {
+                // A host's shell that says it's ready answers when asked: fish, and bash over
+                // `lig mosh` (mosh drops what would mark its line on the screen).
+                let host = self.remote.is_some();
+                if let Some(r) = &mut self.remote {
                     self.fish_shell = true;
+                    r.insert_file = insert_file;
                 }
                 if self.fish_shell {
                     self.editing = true;
                     let mut refresh =
-                        FishRefresh { timeout: mosh.then_some(HOST_SNAPSHOT_TIMEOUT), ..Default::default() };
+                        FishRefresh { timeout: host.then_some(HOST_SNAPSHOT_TIMEOUT), ..Default::default() };
                     refresh.changed();
                     self.fish_refresh = Some(refresh);
                 }
             }
             Msg::Snapshot { id, buffer } => {
+                // 0: a host's fish, which can't say which request it answers (see above).
+                let in_flight = self.fish_refresh.as_ref().and_then(|r| r.in_flight.as_ref()).map(|p| p.id);
+                let id = if id == 0 && self.remote.is_some() { in_flight.unwrap_or(0) } else { id };
                 if self.fish_refresh.as_mut().is_some_and(|refresh| refresh.reported(id)) {
                     match buffer {
                         Some((cursor, text)) => self.on_buffer(cursor, &text),
@@ -1957,6 +1984,19 @@ impl Session {
         self.request();
     }
 
+    /// Fish on a host reads an insertion from its file: written there over the ssh connection, in
+    /// the background, before the key that applies it. Fish checks the line is still the one lig saw.
+    fn host_insert(&self, file: String, payload: String, run: bool) {
+        let Some(remote) = self.env.remote.clone() else { return };
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            let write = format!("printf %s {} > {}", crate::remote::quote(&payload), crate::remote::quote(&file));
+            let cmd = crate::exec::Cmd::Shell(&write);
+            let out = crate::exec::run(cmd, Path::new(""), &[], Duration::from_secs(5), Some(&remote));
+            let _ = events.send(Event::HostInsert { ok: out.status == 0, run });
+        });
+    }
+
     /// Reads the `lig ssh` host's history files, in the background.
     fn fetch_host_history(&self) {
         let Some(remote) = self.env.remote.clone() else { return };
@@ -2056,15 +2096,19 @@ impl Session {
                 format!("{};{};{}", s.delete, s.back, s.insert)
             };
             let fish_key = self.fish_shell || self.nu_shell;
-            match insertion_bytes(self.insertion_transport, fish_key, &self.insert_file, &payload) {
-                Ok(bytes) => {
-                    fwd.extend_from_slice(&bytes);
-                    // The shell applies the insertion before it reads the Enter queued behind it.
-                    if run {
-                        fwd.push(b'\r');
+            if let Some(file) = self.remote.as_ref().and_then(|r| r.insert_file.clone()) {
+                self.host_insert(file, payload, run);
+            } else {
+                match insertion_bytes(self.insertion_transport, fish_key, &self.insert_file, &payload) {
+                    Ok(bytes) => {
+                        fwd.extend_from_slice(&bytes);
+                        // The shell applies the insertion before it reads the Enter queued behind it.
+                        if run {
+                            fwd.push(b'\r');
+                        }
                     }
+                    Err(error) => crate::log(&format!("completion insertion failed: {error}")),
                 }
-                Err(error) => crate::log(&format!("completion insertion failed: {error}")),
             }
         }
         self.items.clear();

@@ -24,9 +24,11 @@ const MAX_PENDING: usize = 1 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Msg {
-    /// Fish's signal handler is installed; `pid` is the fish process to signal.
+    /// Fish's signal handler is installed; `pid` is the fish process to signal. On a `lig ssh`
+    /// or `lig mosh` host it's asked with a key instead, and takes insertions from `insert_file`.
     Ready {
         pid: Option<u32>,
+        insert_file: Option<String>,
     },
     InsertRejected,
     Snapshot {
@@ -135,7 +137,10 @@ fn parse(payload: &[u8]) -> Option<Msg> {
     let s = String::from_utf8_lossy(payload);
     let (kind, rest) = s.split_once(';').unwrap_or((&s, ""));
     match kind {
-        "R" => Some(Msg::Ready { pid: rest.parse().ok() }),
+        "R" => {
+            let (pid, file) = rest.split_once(';').map_or((rest, None), |(p, f)| (p, Some(f.to_string())));
+            Some(Msg::Ready { pid: pid.parse().ok(), insert_file: file })
+        }
         "J" => Some(Msg::InsertRejected),
         "Q" => {
             let (id, state) = rest.split_once(';')?;
@@ -242,9 +247,14 @@ mod tests {
         assert!(out.is_empty());
         assert_eq!(
             msgs.into_iter().map(|(_, m)| m).collect::<Vec<_>>(),
-            vec![Msg::Ready { pid: None }, Msg::Buffer { cursor: 6, text: "café;🙂\n".into() }, Msg::Hide]
+            vec![
+                Msg::Ready { pid: None, insert_file: None },
+                Msg::Buffer { cursor: 6, text: "café;🙂\n".into() },
+                Msg::Hide
+            ]
         );
-        assert_eq!(parse(b"R;4242"), Some(Msg::Ready { pid: Some(4242) }));
+        assert_eq!(parse(b"R;4242"), Some(Msg::Ready { pid: Some(4242), insert_file: None }));
+        assert_eq!(parse(b"R;7;/tmp/tmp.x"), Some(Msg::Ready { pid: Some(7), insert_file: Some("/tmp/tmp.x".into()) }));
     }
 
     #[test]

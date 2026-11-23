@@ -1,9 +1,9 @@
-//! `lig ssh`: ssh with lig's shell integration for the remote zsh or bash, and a
+//! `lig ssh`: ssh with lig's shell integration for the remote zsh, bash or fish, and a
 //! multiplexed connection that lig runs completions over. Nothing is installed on the
 //! host: the hooks go in a temp dir that the remote shell removes at its first prompt.
 //!
 //! `lig ssh` tells the lig session around it with `X;<pid>;<control socket>;<destination>`
-//! before ssh starts and `Y` after it ends; in between, the remote shell's messages drive
+//! (`lig mosh` adds `;mosh`) before ssh starts and `Y` after it ends; in between, the remote shell's messages drive
 //! the popup and commands for suggestions run on the host.
 
 #[cfg(unix)]
@@ -16,6 +16,7 @@ use crate::exec::Cmd;
 
 const POST_ZSH: &str = include_str!("../shell/post.zsh");
 const POST_BASH: &str = include_str!("../shell/post.bash");
+const POST_FISH: &str = include_str!("../shell/post.fish");
 const BOOTSTRAP: &str = include_str!("../shell/remote.sh");
 const ZSHENV: &str = include_str!("../shell/remote.zshenv");
 const BASHRC: &str = include_str!("../shell/remote.bashrc");
@@ -130,7 +131,8 @@ fn remote_command(out: Option<&str>) -> String {
             .replace("@ZSHENV@", ZSHENV)
             .replace("@POST_ZSH@", POST_ZSH)
             .replace("@BASHRC@", BASHRC)
-            .replace("@POST_BASH@", POST_BASH);
+            .replace("@POST_BASH@", POST_BASH)
+            .replace("@POST_FISH@", POST_FISH);
     format!("echo {} | base64 -d | sh", base64(script.as_bytes()))
 }
 
@@ -285,7 +287,7 @@ pub fn ssh(args: &[String]) -> Result<i32> {
 /// `lig mosh <mosh args>`: plain mosh outside lig, or with a remote command. mosh drops the
 /// hooks' messages (it sends the screen, not the bytes), so they go to a file on the host
 /// that lig follows over an ssh connection of its own, which also runs what suggestions need.
-/// zsh only: bash's line is read off the screen at marks mosh drops too.
+/// bash, which lig reads off the screen there, is asked for its line instead (see shell/post.bash).
 #[cfg(unix)]
 pub fn mosh(args: &[String]) -> Result<i32> {
     use std::os::unix::process::CommandExt;
