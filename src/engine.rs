@@ -879,8 +879,14 @@ impl Engine {
             })
             .cloned()
             .collect();
-        // Folders first, then by name.
-        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
+        // Folders first, then by name; dot entries (`show_hidden_files`) after the others unless
+        // a dot was typed, so `cd ` in a home folder doesn't open on `.cache/`, `.config/`…
+        let hidden = |name: &str| !base.starts_with('.') && name.starts_with('.');
+        entries.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| hidden(&a.1).cmp(&hidden(&b.1)))
+                .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+        });
         for (is_dir, name) in entries {
             let (kind, label, suffix) =
                 if is_dir { (Kind::Folder, format!("{name}{SEP}"), "") } else { (Kind::File, name, " ") };
@@ -1535,6 +1541,17 @@ mod tests {
         let r = labels(&mut e, &env, "edit ");
         assert!(r.iter().any(|s| s.0 == ".secret"), "{r:?}");
         assert!(r.iter().any(|s| s.0 == "visible.txt"), "{r:?}");
+        // Folders, then files; each with its dot entries last.
+        std::fs::create_dir_all(dir.join("work/.config")).unwrap();
+        std::fs::create_dir_all(dir.join("work/src")).unwrap();
+        let r: Vec<String> =
+            labels(&mut e, &env, "edit ").into_iter().map(|s| s.0).filter(|l| l != "." && l != "..").collect();
+        let at = |l: &str| r.iter().position(|x| x == l).unwrap();
+        assert!(
+            at("src/") < at(".config/") && at(".config/") < at("visible.txt") && at("visible.txt") < at(".secret"),
+            "{r:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
