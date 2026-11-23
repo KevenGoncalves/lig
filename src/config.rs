@@ -192,6 +192,8 @@ pub struct Keys {
     pub toggle: Vec<String>,
     /// Show the commands you ran before (with `behavior.history`).
     pub history: Vec<String>,
+    /// Show the commands you ran before in this folder.
+    pub folder_history: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,6 +294,7 @@ impl Default for Keys {
             dismiss: v(&["esc"]),
             toggle: v(&["ctrl-space"]),
             history: v(&["ctrl-r"]),
+            folder_history: v(&["alt-r"]),
         }
     }
 }

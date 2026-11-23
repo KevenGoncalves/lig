@@ -128,6 +128,24 @@ class HistoryTmux(unittest.TestCase):
                 self.check_history(kind, success_only=True)
                 self.doCleanups()
 
+    def test_folder_history_on_alt_r(self):
+        for kind in ['zsh', 'bash', 'fish', 'nu']:
+            with self.subTest(kind):
+                self.start(kind)
+                # A space after the folder: `cd` takes no more, so Enter runs the line (right after
+                # the folder, it would pick from the folder popup).
+                for line in ['mkdir fa fb', 'cd fa ', 'echo in-fa', 'cd ../fb ', 'echo in-fb']:
+                    self.run_line(line)
+                time.sleep(.5)
+                entries = lambda: ''.join(l for l in self.screen().splitlines() if '↺' in l)
+                self.tmux('send-keys', '-t', 'test:0.0', 'M-r')
+                self.wait("no folder history", lambda s: 'echo in-fb' in entries())
+                self.assertNotIn('in-fa', entries())
+                # Ctrl+R switches to all of it.
+                self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+                self.wait('no full history', lambda s: 'echo in-fa' in entries() and 'echo in-fb' in entries())
+                self.doCleanups()
+
     def test_off_leaves_ctrl_r_to_the_shell(self):
         self.start('bash', '[behavior]\nhistory = false\n')
         self.run_line('echo hist-ok')

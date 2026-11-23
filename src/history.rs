@@ -3,8 +3,9 @@
 //! (`behavior.history`). The first time, the shells' own histories seed it (their exit
 //! codes are unknown, so those keep their failures).
 //!
-//! The file has one `<unix time>\t<command>` line per run, appended; a command's `\` and
-//! newlines are written `\\` and `\n`.
+//! The file has one `<unix time>[@<folder>]\t<command>` line per run, appended; a command's
+//! `\` and newlines are written `\\` and `\n`. The folder is where it ran, for the folder's
+//! own history (`keys.folder_history`); older lig reads such a line's time as 0.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,8 +15,8 @@ const COMPACT: usize = 2;
 
 pub struct History {
     path: PathBuf,
-    /// (time, command), newest first, each command once.
-    entries: Vec<(u64, String)>,
+    /// (time, command, folder), newest first, each command once per folder.
+    entries: Vec<Run>,
     /// The file's length when read: another session appended if it grew.
     read_len: u64,
     /// Read yet: not before the first command or search, so a new tab starts at once.
@@ -23,6 +24,9 @@ pub struct History {
     /// Whose shell histories seed it.
     home: Option<PathBuf>,
 }
+
+/// A command, when it ran, and where (if known).
+type Run = (u64, String, Option<String>);
 
 /// Private, like the shells' own history files.
 fn private_file(path: &Path, append: bool) -> std::io::Result<std::fs::File> {
@@ -57,7 +61,7 @@ impl History {
         }
         let mut seed = self.home.as_deref().map(import).unwrap_or_default();
         seed.sort_by_key(|(time, _)| *time);
-        let text: String = seed.iter().map(|(time, command)| line(*time, command)).collect();
+        let text: String = seed.iter().map(|(time, command)| line(*time, command, None)).collect();
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -76,11 +80,12 @@ impl History {
             return;
         }
         let text = String::from_utf8_lossy(&std::fs::read(&self.path).unwrap_or_default()).into_owned();
-        let runs: Vec<(u64, String)> = text.lines().filter_map(parse_line).collect();
-        self.entries = newest_unique(runs.iter().cloned());
+        let runs: Vec<Run> = text.lines().filter_map(parse_line).collect();
+        self.entries = newest_unique_runs(runs.iter().cloned());
         self.read_len = len;
         if runs.len() > COMPACT * self.entries.len() + 1000 {
-            let text: String = self.entries.iter().rev().map(|(time, command)| line(*time, command)).collect();
+            let text: String =
+                self.entries.iter().rev().map(|(time, command, dir)| line(*time, command, dir.as_deref())).collect();
             let tmp = self.path.with_extension("tmp");
             use std::io::Write;
             let written = private_file(&tmp, false).and_then(|mut f| f.write_all(text.as_bytes()));
@@ -90,8 +95,8 @@ impl History {
         }
     }
 
-    /// A command that ran.
-    pub fn record(&mut self, command: &str) {
+    /// A command that ran, in `dir` if known.
+    pub fn record(&mut self, command: &str, dir: Option<&str>) {
         let command = command.trim();
         if command.is_empty() {
             return;
@@ -100,7 +105,7 @@ impl History {
         // Seeded before the first line, which would otherwise make the file look old.
         self.seed();
         let before = std::fs::metadata(&self.path).map_or(0, |m| m.len());
-        let text = line(time, command);
+        let text = line(time, command, dir);
         use std::io::Write;
         if let Err(e) = private_file(&self.path, true).and_then(|mut f| f.write_all(text.as_bytes())) {
             crate::log(&format!("history: {e}"));
@@ -113,14 +118,16 @@ impl History {
         if before == self.read_len {
             self.read_len += text.len() as u64;
         }
-        self.entries.retain(|(_, c)| c != command);
-        self.entries.insert(0, (time, command.to_string()));
+        let dir = dir.filter(|d| storable(d)).map(str::to_string);
+        self.entries.retain(|(_, c, d)| !(c == command && *d == dir));
+        self.entries.insert(0, (time, command.to_string(), dir));
     }
 
-    /// The commands matching `query`, newest first (see [`matching`]).
-    pub fn search(&mut self, query: &str, fuzzy: bool) -> Vec<(u64, String)> {
+    /// The commands matching `query`, newest first (see [`matching`]); with `dir`, only those
+    /// that ran there.
+    pub fn search(&mut self, query: &str, fuzzy: bool, dir: Option<&str>) -> Vec<(u64, String)> {
         self.reload();
-        matching(&self.entries, query, fuzzy)
+        matching(&in_dir(&self.entries, dir), query, fuzzy)
     }
 }
 
@@ -128,8 +135,8 @@ impl History {
 /// bash history files. In memory only: the host's history is its shells' to keep.
 #[derive(Default)]
 pub struct HostHistory {
-    /// Run in this session, newest first.
-    session: Vec<(u64, String)>,
+    /// Run in this session, newest first, with the host's folder.
+    session: Vec<Run>,
     /// From the host's files, newest first.
     files: Vec<(u64, String)>,
     /// The files were asked for.
@@ -141,14 +148,15 @@ pub const HOST_FILES: &str =
     r#"for f in "${ZDOTDIR:-$HOME}/.zsh_history" "$HOME/.bash_history"; do base64 <"$f" | tr -d '\n'; echo; done"#;
 
 impl HostHistory {
-    pub fn record(&mut self, command: &str) {
+    pub fn record(&mut self, command: &str, dir: Option<&str>) {
         let command = command.trim();
         if command.is_empty() {
             return;
         }
         let time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-        self.session.retain(|(_, c)| c != command);
-        self.session.insert(0, (time, command.to_string()));
+        let dir = dir.map(str::to_string);
+        self.session.retain(|(_, c, d)| !(c == command && *d == dir));
+        self.session.insert(0, (time, command.to_string(), dir));
     }
 
     /// The host's files, as [`HOST_FILES`] sent them.
@@ -159,9 +167,14 @@ impl HostHistory {
         self.files = newest_unique(runs.into_iter());
     }
 
-    pub fn search(&self, query: &str, fuzzy: bool) -> Vec<(u64, String)> {
-        let mut all = self.session.clone();
-        all.extend(self.files.iter().filter(|(_, c)| !self.session.iter().any(|(_, s)| s == c)).cloned());
+    /// With `dir`, only what ran there in this session: the host's files don't say where.
+    pub fn search(&self, query: &str, fuzzy: bool, dir: Option<&str>) -> Vec<(u64, String)> {
+        let mut all = in_dir(&self.session, dir);
+        if dir.is_none() {
+            all.extend(
+                self.files.iter().filter(|(_, c)| !all.iter().any(|(_, s)| s == c)).cloned().collect::<Vec<_>>(),
+            );
+        }
         matching(&all, query, fuzzy)
     }
 }
@@ -192,22 +205,47 @@ fn in_order(query: &str, text: &str) -> bool {
     query.chars().filter(|c| !c.is_whitespace()).all(|q| chars.any(|c| c == q))
 }
 
+/// The runs in `dir`, or each command once (its newest run) when `dir` is `None`.
+fn in_dir(runs: &[Run], dir: Option<&str>) -> Vec<(u64, String)> {
+    let mut seen = std::collections::HashSet::new();
+    runs.iter()
+        .filter(|(_, c, d)| match dir {
+            Some(dir) => d.as_deref() == Some(dir),
+            None => seen.insert(c.clone()),
+        })
+        .map(|(t, c, _)| (*t, c.clone()))
+        .collect()
+}
+
+/// Each command once per folder, at its latest run there, newest first.
+fn newest_unique_runs(runs: impl DoubleEndedIterator<Item = Run>) -> Vec<Run> {
+    let mut seen = std::collections::HashSet::new();
+    runs.rev().filter(|(_, command, dir)| seen.insert((command.clone(), dir.clone()))).collect()
+}
+
 /// Each command once, at its latest run, newest first.
 fn newest_unique(runs: impl DoubleEndedIterator<Item = (u64, String)>) -> Vec<(u64, String)> {
     let mut seen = std::collections::HashSet::new();
     runs.rev().filter(|(_, command)| seen.insert(command.clone())).collect()
 }
 
-fn line(time: u64, command: &str) -> String {
-    format!("{time}\t{}\n", command.replace('\\', "\\\\").replace('\n', "\\n"))
+/// A folder that fits in a line's first field (no tab, no newline).
+fn storable(dir: &str) -> bool {
+    !dir.is_empty() && !dir.contains(['\t', '\n'])
 }
 
-fn parse_line(line: &str) -> Option<(u64, String)> {
-    let (time, command) = line.split_once('\t')?;
+fn line(time: u64, command: &str, dir: Option<&str>) -> String {
+    let at = dir.filter(|d| storable(d)).map(|d| format!("@{d}")).unwrap_or_default();
+    format!("{time}{at}\t{}\n", command.replace('\\', "\\\\").replace('\n', "\\n"))
+}
+
+fn parse_line(line: &str) -> Option<Run> {
+    let (when, command) = line.split_once('\t')?;
+    let (time, dir) = when.split_once('@').map_or((when, None), |(t, d)| (t, Some(d.to_string())));
     let out = unescape(command);
     // lig's own hooks, which nu used to record as lines that ran (see shell/post.nu).
     (!out.trim().is_empty() && !matches!(out.as_str(), "__lig_insert" | "_lig_insert"))
-        .then(|| (time.parse().unwrap_or(0), out))
+        .then(|| (time.parse().unwrap_or(0), out, dir))
 }
 
 /// `\n` is a newline and `\x` is `x`, read left to right (lig's file and fish's history).
@@ -338,13 +376,13 @@ mod tests {
     #[test]
     fn a_hosts_history_is_its_session_then_its_files() {
         let mut h = HostHistory::default();
-        assert!(h.search("", false).is_empty());
+        assert!(h.search("", false, None).is_empty());
         h.read_files(b": 100:0;make deploy\n: 200:0;git pull\n", b"ls\nmake deploy\n");
-        h.record("git pull");
-        h.record("echo new");
-        let found: Vec<String> = h.search("", false).into_iter().map(|(_, c)| c).collect();
+        h.record("git pull", None);
+        h.record("echo new", None);
+        let found: Vec<String> = h.search("", false, None).into_iter().map(|(_, c)| c).collect();
         assert_eq!(found, ["echo new", "git pull", "make deploy", "ls"]);
-        let found: Vec<String> = h.search("ma", false).into_iter().map(|(_, c)| c).collect();
+        let found: Vec<String> = h.search("ma", false, None).into_iter().map(|(_, c)| c).collect();
         assert_eq!(found, ["make deploy"]);
     }
 
@@ -365,11 +403,11 @@ mod tests {
         std::fs::write(&path, "1\tgit status\n2\tls\n3\tgit status\n").unwrap();
         let mut one = History::at(path.clone());
         let mut two = History::at(path.clone());
-        assert_eq!(commands(one.search("", false)), ["git status", "ls"]);
-        two.record("cargo test");
-        one.record("multi\\line\ncommand");
-        assert_eq!(commands(one.search("", false)), ["multi\\line\ncommand", "cargo test", "git status", "ls"]);
-        assert_eq!(commands(two.search("", false))[0], "multi\\line\ncommand");
+        assert_eq!(commands(one.search("", false, None)), ["git status", "ls"]);
+        two.record("cargo test", None);
+        one.record("multi\\line\ncommand", None);
+        assert_eq!(commands(one.search("", false, None)), ["multi\\line\ncommand", "cargo test", "git status", "ls"]);
+        assert_eq!(commands(two.search("", false, None))[0], "multi\\line\ncommand");
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -378,10 +416,10 @@ mod tests {
         let path = temp("search");
         std::fs::write(&path, "1\tgit commit -m wip\n2\tcargo build\n3\tgit checkout main\n4\techo git\n").unwrap();
         let mut h = History::at(path.clone());
-        assert_eq!(commands(h.search("git", false)), ["git checkout main", "git commit -m wip", "echo git"]);
-        assert_eq!(commands(h.search("gcm", false)), [] as [&str; 0]);
-        assert_eq!(commands(h.search("gcm", true)), ["git checkout main", "git commit -m wip"]);
-        assert_eq!(commands(h.search("CARGO", false)), ["cargo build"]);
+        assert_eq!(commands(h.search("git", false, None)), ["git checkout main", "git commit -m wip", "echo git"]);
+        assert_eq!(commands(h.search("gcm", false, None)), [] as [&str; 0]);
+        assert_eq!(commands(h.search("gcm", true, None)), ["git checkout main", "git commit -m wip"]);
+        assert_eq!(commands(h.search("CARGO", false, None)), ["cargo build"]);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -390,10 +428,10 @@ mod tests {
         let path = temp("private");
         let mut h = History::at(path.clone());
         assert!(!path.exists(), "nothing read or written until needed");
-        h.record("echo one");
-        assert_eq!(commands(h.search("", false))[0], "echo one");
-        h.record("echo two");
-        assert_eq!(commands(h.search("", false))[..2], ["echo two", "echo one"]);
+        h.record("echo one", None);
+        assert_eq!(commands(h.search("", false, None))[0], "echo one");
+        h.record("echo two", None);
+        assert_eq!(commands(h.search("", false, None))[..2], ["echo two", "echo one"]);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -405,10 +443,10 @@ mod tests {
     #[test]
     fn many_repeats_are_compacted() {
         let path = temp("compact");
-        let text: String = (0..3000).map(|i| line(i, if i % 2 == 0 { "a" } else { "b" })).collect();
+        let text: String = (0..3000).map(|i| line(i, if i % 2 == 0 { "a" } else { "b" }, None)).collect();
         std::fs::write(&path, text).unwrap();
         let mut h = History::at(path.clone());
-        assert_eq!(commands(h.search("", false)), ["b", "a"]);
+        assert_eq!(commands(h.search("", false, None)), ["b", "a"]);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "2998\ta\n2999\tb\n");
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -431,9 +469,32 @@ mod tests {
     }
 
     #[test]
+    fn each_folder_has_its_own_history() {
+        let path = temp("folders");
+        let mut h = History::at(path.clone());
+        h.record("make", Some("/src/a"));
+        h.record("ls", Some("/src/b"));
+        h.record("make", Some("/src/b"));
+        h.record("cargo test", None);
+        assert_eq!(commands(h.search("", false, None)), ["cargo test", "make", "ls"]);
+        assert_eq!(commands(h.search("", false, Some("/src/a"))), ["make"]);
+        assert_eq!(commands(h.search("", false, Some("/src/b"))), ["make", "ls"]);
+        // Read back by another session, folders included; a tab can't go in the line's first field.
+        let mut other = History::at(path);
+        assert_eq!(commands(other.search("", false, Some("/src/a"))), ["make"]);
+        assert_eq!(line(7, "x", Some("/a\tb")), "7\tx\n");
+        assert_eq!(parse_line("7@/home/me@work\tls -la"), Some((7, "ls -la".into(), Some("/home/me@work".into()))));
+        let mut host = HostHistory::default();
+        host.record("git pull", Some("/srv"));
+        host.read_files(b"", b"uptime\n");
+        assert_eq!(commands(host.search("", false, Some("/srv"))), ["git pull"]);
+        assert_eq!(commands(host.search("", false, None)), ["git pull", "uptime"]);
+    }
+
+    #[test]
     fn ligs_own_hooks_are_not_listed() {
         assert_eq!(parse_line("5\t__lig_insert"), None);
-        assert_eq!(parse_line("5\techo __lig_insert"), Some((5, "echo __lig_insert".into())));
+        assert_eq!(parse_line("5\techo __lig_insert"), Some((5, "echo __lig_insert".into(), None)));
     }
 
     #[test]

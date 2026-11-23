@@ -34,7 +34,8 @@ itself.
   scripts, processes…, and **package search** on npm, crates.io, Docker Hub, PyPI, Snap and Flathub.
 - Knows your **aliases, functions and variables** (`gco ` completes like `git checkout `,
   `$HO` → `$HOME`).
-- **History** on `Ctrl+R`: the commands you ran, from every session, fuzzy-searched.
+- **History** on `Ctrl+R`: the commands you ran, from every session, fuzzy-searched; `Alt+R`
+  shows those you ran in the current folder.
 - Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
@@ -223,6 +224,7 @@ Type as usual; the popup shows what fits.
 | `Esc` | close the popup |
 | `Ctrl+Space` | open or close the popup on demand |
 | `Ctrl+R` | your history: past commands matching what's typed |
+| `Alt+R` | your history in this folder |
 
 - **`Enter`** completes the word you're typing (`go bui` → `go build`) or picks the first
   suggestion after a space. On a word that's already complete (`git status`) it runs the
@@ -234,8 +236,9 @@ Type as usual; the popup shows what fits.
 - **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
   you type `-` (`options_after_dash`).
 - **History** (`Ctrl+R`) lists the commands you ran, in every Lig session, newest first
-  and each once; typing narrows it (fuzzy), and `Enter` puts one on the line. It starts with
-  what zsh, bash, fish and nu remember. A command typed with a leading space isn't kept;
+  and each once; typing narrows it (fuzzy), and `Enter` puts one on the line. `Alt+R` lists
+  only those you ran in the current folder (and `Ctrl+R` switches back). It starts with what
+  zsh, bash, fish and nu remember. A command typed with a leading space isn't kept;
   `history_success_only = true` keeps only those that ran without error, and
   `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
@@ -258,6 +261,7 @@ accept = ["enter"]
 next = ["tab", "down", "ctrl-n"]
 toggle = ["ctrl-space"]
 history = ["ctrl-r"]
+folder_history = ["alt-r"]
 
 [behavior]
 enter_accepts = "auto"     # "always", "after-space", "never"
@@ -367,7 +371,7 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 | A key does nothing | `lig keys` shows whether the key reaches Lig, and its name. |
 | Outdated options for a command | `lig specs clear-cache` re-reads its `--help`. |
 | No `scp host:` paths | The host needs a login without a password prompt. |
-| `Ctrl+R` no longer opens my plugin (fzf, atuin…) | Lig's history has it: move it (`keys.history = ["alt-r"]`) or turn it off (`history = false`). |
+| `Ctrl+R` no longer opens my plugin (fzf, atuin…) | Lig's history has it: move it (`keys.history = ["ctrl-alt-r"]`) or turn it off (`history = false`). |
 | Something else | Start a shell with `LIG_LOG=1` and read `lig.log` in `~/.local/state/lig/` (Linux) or `~/Library/Application Support/lig/` (macOS). |
 
 ## How it works

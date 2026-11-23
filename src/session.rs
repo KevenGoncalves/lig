@@ -434,6 +434,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         shell_asked: None,
         history: cfg.behavior.history.then(crate::history::History::open),
         history_mode: false,
+        history_folder: false,
         cfg,
         pty: writer,
         shell_pty: pty_handle,
@@ -829,6 +830,8 @@ struct Session {
     /// The commands that ran (`behavior.history`), and whether the popup shows them now.
     history: Option<crate::history::History>,
     history_mode: bool,
+    /// The history popup lists only what ran in the shell's folder (`keys.folder_history`).
+    history_folder: bool,
     insert_file: PathBuf,
     /// Set by the prompt marker of bash, nu or cmd: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
@@ -1533,10 +1536,12 @@ impl Session {
                     && !command.starts_with(' ')
                     && let Some(history) = self.history.as_mut()
                 {
+                    // Where it was typed: each shell says it ran before it says where it now is.
+                    let dir = Some(self.env.cwd.to_string_lossy().into_owned()).filter(|d| !d.is_empty());
                     // A `lig ssh` host's commands are its own.
                     match &mut self.remote {
-                        Some(r) => r.history.record(&command),
-                        None => history.record(&command),
+                        Some(r) => r.history.record(&command, dir.as_deref()),
+                        None => history.record(&command, dir.as_deref()),
                     }
                 }
             }
@@ -1772,8 +1777,9 @@ impl Session {
                 self.deferred = data[data.len() - rest..].to_vec();
                 break;
             }
-            if self.bindings.action(&key) == Some(Action::History) && self.history.is_some() && self.can_show() {
-                self.toggle_history();
+            let history_key = matches!(self.bindings.action(&key), Some(Action::History | Action::FolderHistory));
+            if history_key && self.history.is_some() && self.can_show() {
+                self.toggle_history(self.bindings.action(&key) == Some(Action::FolderHistory));
                 redraw = true;
                 continue;
             }
@@ -1840,7 +1846,7 @@ impl Session {
                     self.selected -= 1;
                     redraw = true;
                 }
-                Some(Action::History) => {
+                Some(Action::History | Action::FolderHistory) => {
                     // No history (`behavior.history` off): the key is the shell's.
                     passthrough = true;
                     fwd.extend_from_slice(raw);
@@ -2019,8 +2025,10 @@ impl Session {
     }
 
     /// Show the commands that ran before, or leave them for the usual suggestions.
-    fn toggle_history(&mut self) {
-        self.history_mode = !self.history_mode;
+    /// Open the history (all of it, or this folder's), switch between the two, or close it.
+    fn toggle_history(&mut self, folder: bool) {
+        self.history_mode = !(self.history_mode && self.history_folder == folder);
+        self.history_folder = folder;
         self.manual = self.history_mode;
         self.shell_nav = false;
         self.dismissed = None;
@@ -2069,18 +2077,20 @@ impl Session {
     /// The history matching the line, newest first; picking one replaces the line.
     fn show_history(&mut self) {
         let fuzzy = self.cfg.behavior.fuzzy;
+        // `keys.folder_history`: only what ran in the shell's folder.
+        let dir = self.history_folder.then(|| self.env.cwd.to_string_lossy().into_owned());
         let Some(history) = self.history.as_mut() else { return };
         // On a `lig ssh` host, its history: what ran there now, then its shells' files.
         let found = match &mut self.remote {
             Some(r) => {
                 let fetch = !std::mem::replace(&mut r.history.asked, true);
-                let found = r.history.search(&self.line, fuzzy);
+                let found = r.history.search(&self.line, fuzzy, dir.as_deref());
                 if fetch {
                     self.fetch_host_history();
                 }
                 found
             }
-            None => history.search(&self.line, fuzzy),
+            None => history.search(&self.line, fuzzy, dir.as_deref()),
         };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let delete = self.line.chars().count();
