@@ -386,7 +386,7 @@ impl Engine {
         };
 
         if let Some((name, braced)) = var_prefix(&cl.current) {
-            variables(&mut cx, name, braced);
+            variables(&mut cx, name, braced, &self.cfg.hide_variable_values);
         } else if cl.current.redirect {
             self.files(&mut cx, false);
         } else if cl.tokens.is_empty() {
@@ -1313,13 +1313,15 @@ fn var_prefix(cur: &Token) -> Option<(&str, bool)> {
     bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_').then_some((name, braced))
 }
 
-/// Exported variables, with their value as the description (hidden for secret-looking names).
-fn variables(cx: &mut Cx<'_>, name: &str, braced: bool) {
+/// Exported variables, with their value as the description: hidden for secret-looking names
+/// and those matching `hide` (`hide_variable_values`).
+fn variables(cx: &mut Cx<'_>, name: &str, braced: bool, hide: &[String]) {
     let close = if braced { "}" } else { "" };
     for (k, v) in cx.env.vars.iter() {
+        let hidden = secret(k) || hide.iter().any(|p| glob(p, k));
         let meta = spec::Meta {
             names: vec![k.clone()],
-            description: Some(if secret(k) { "••••••".into() } else { v.clone() }),
+            description: Some(if hidden { "••••••".into() } else { v.clone() }),
             insert_value: Some(format!("{k}{close}")),
             icon: Some(Icon::Variable),
             ..Default::default()
@@ -1330,7 +1332,35 @@ fn variables(cx: &mut Cx<'_>, name: &str, braced: bool) {
 
 fn secret(name: &str) -> bool {
     let n = name.to_ascii_uppercase();
+    // Short words only as a whole part of the name: `GITHUB_PAT`, not `PATH`; `DB_PWD`, not `OLDPWD`.
+    let part = |w: &str| n != "PWD" && n.split('_').any(|p| p == w);
     ["TOKEN", "SECRET", "PASS", "KEY", "CREDENTIAL", "PRIVATE", "COOKIE"].iter().any(|w| n.contains(w))
+        || ["PAT", "AUTH", "DSN", "JWT", "PWD"].iter().any(|w| part(w))
+        || n.ends_with("_SESSION")
+}
+
+/// `*` and `?` wildcards, ignoring case: `GH_*` matches `GH_TOKEN`.
+fn glob(pattern: &str, name: &str) -> bool {
+    let (p, n): (Vec<char>, Vec<char>) =
+        (pattern.to_ascii_uppercase().chars().collect(), name.to_ascii_uppercase().chars().collect());
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while j < n.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == n[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some(i);
+            mark = j;
+            i += 1;
+        } else if let Some(s) = star {
+            i = s + 1;
+            mark += 1;
+            j = mark;
+        } else {
+            return false;
+        }
+    }
+    p[i..].iter().all(|&c| c == '*')
 }
 
 /// The folder `dir_part` as typed: `src/`, `~/x/`, `/etc/`, or empty for `cwd`.
@@ -1758,6 +1788,34 @@ mod tests {
         assert!(labels(&mut e, &env, "echo \\$HO").is_empty());
         let c = e.complete("echo $GIT", &env, true, false);
         assert_eq!(c.items[0].description, "••••••");
+    }
+
+    #[test]
+    fn secret_looking_values_stay_hidden() {
+        for name in
+            ["GH_TOKEN", "GITHUB_PAT", "DB_PWD", "SENTRY_DSN", "NPM_AUTH", "API_JWT", "AWS_SESSION", "DB_PASSWORD"]
+        {
+            assert!(secret(name), "{name}");
+        }
+        for name in ["PATH", "PWD", "OLDPWD", "GIT_AUTHOR_NAME", "XDG_SESSION_TYPE", "HOME", "EDITOR"] {
+            assert!(!secret(name), "{name}");
+        }
+        let (mut e, mut env) = engine();
+        env.vars =
+            Arc::new(vec![("DATABASE_URL".into(), "postgres://a:pw@db".into()), ("EDITOR".into(), "vim".into())]);
+        assert_eq!(e.complete("echo $DATA", &env, true, false).items[0].description, "postgres://a:pw@db");
+        e.cfg.hide_variable_values = vec!["database_*".into()];
+        assert_eq!(e.complete("echo $DATA", &env, true, false).items[0].description, "••••••");
+        assert_eq!(e.complete("echo $EDI", &env, true, false).items[0].description, "vim");
+        e.cfg.hide_variable_values = vec!["*".into()];
+        assert_eq!(e.complete("echo $EDI", &env, true, false).items[0].description, "••••••");
+    }
+
+    #[test]
+    fn globs() {
+        assert!(glob("GH_*", "GH_TOKEN") && glob("*_url", "DATABASE_URL") && glob("*", "X") && glob("A?C", "abc"));
+        assert!(glob("*_KEY_*", "MY_KEY_ID") && glob("**", ""));
+        assert!(!glob("GH_*", "GITHUB_TOKEN") && !glob("*_URL", "URLS") && !glob("A?C", "AC"));
     }
 
     // POSIX paths and quoting; Windows has its own tests.

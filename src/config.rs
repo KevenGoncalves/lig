@@ -222,6 +222,9 @@ pub struct Behavior {
     pub files_first_commands: Vec<String>,
     /// List hidden files and folders (dot files) even without a dot typed.
     pub show_hidden_files: bool,
+    /// Variables whose value `$NAME` completion masks, as name patterns (`"GH_*"`, `"*"` for all),
+    /// besides the secret-looking names (`*TOKEN*`, `*_PAT`…) it always masks.
+    pub hide_variable_values: Vec<String>,
     /// Commands whose options show only once you type `-`, so their files and other
     /// suggestions get the room. `"*"` for every command.
     pub options_after_dash: Vec<String>,
@@ -318,6 +321,7 @@ impl Default for Behavior {
             files_first: false,
             files_first_commands: FILES_FIRST_COMMANDS.iter().map(|c| c.to_string()).collect(),
             show_hidden_files: false,
+            hide_variable_values: Vec::new(),
             options_after_dash: OPTIONS_AFTER_DASH.iter().map(|c| c.to_string()).collect(),
             show_on_empty_token: true,
             complete_commands: false,

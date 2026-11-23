@@ -264,6 +264,8 @@ enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 show_hidden_files = false  # list dot files without typing a dot first
+hide_variable_values = []  # also mask these $VARS' values: ["GH_*", "*_URL"], "*" for all
+                           # (names with TOKEN, KEY, PASS, SECRET, PAT, PWD… always are)
 online = true              # search package registries as you type
 history = true             # keep the commands that ran, for Ctrl+R
 completers = []            # for commands with no spec: ["shell", "argc"], see below
