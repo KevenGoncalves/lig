@@ -39,6 +39,12 @@ mod imp {
     use super::*;
     use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+    /// The terminal's pixel size goes along: programs size images by it (kitty's `icat`).
+    fn size(rows: u16, cols: u16) -> PtySize {
+        let (pixel_width, pixel_height) = crate::term::pixels();
+        PtySize { rows, cols, pixel_width, pixel_height }
+    }
+
     pub struct Pty {
         master: Box<dyn MasterPty + Send>,
         child: Box<dyn Child + Send + Sync>,
@@ -46,7 +52,7 @@ mod imp {
 
     impl Pty {
         pub fn spawn(cmd: &Command, rows: u16, cols: u16) -> Result<Spawned> {
-            let pair = native_pty_system().openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+            let pair = native_pty_system().openpty(size(rows, cols))?;
             let mut b = CommandBuilder::new(&cmd.program);
             b.args(&cmd.args);
             for (k, v) in &cmd.env {
@@ -75,7 +81,7 @@ mod imp {
         }
 
         pub fn resize(&self, rows: u16, cols: u16) {
-            let _ = self.master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+            let _ = self.master.resize(size(rows, cols));
         }
 
         /// The output reaches end of file when the shell exits: nothing to watch.

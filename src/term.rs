@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+#[cfg(unix)]
+pub use imp::pixels;
 pub use imp::{RawMode, is_terminal, read, read_timeout, size, watch_resize, write};
 
 #[cfg(unix)]
@@ -17,12 +19,21 @@ mod imp {
         unsafe { libc::isatty(0) == 1 && libc::isatty(1) == 1 }
     }
 
-    /// Rows and columns.
-    pub fn size() -> Option<(u16, u16)> {
+    fn winsize() -> Option<libc::winsize> {
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
         let ok = unsafe { libc::ioctl(0, libc::TIOCGWINSZ, &mut ws) } == 0
             || unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0;
-        (ok && ws.ws_row > 0 && ws.ws_col > 0).then_some((ws.ws_row, ws.ws_col))
+        ok.then_some(ws)
+    }
+
+    /// Rows and columns.
+    pub fn size() -> Option<(u16, u16)> {
+        winsize().filter(|ws| ws.ws_row > 0 && ws.ws_col > 0).map(|ws| (ws.ws_row, ws.ws_col))
+    }
+
+    /// Width and height in pixels, 0 when the terminal doesn't say (kitty's image tools need them).
+    pub fn pixels() -> (u16, u16) {
+        winsize().map_or((0, 0), |ws| (ws.ws_xpixel, ws.ws_ypixel))
     }
 
     pub struct RawMode(Termios);

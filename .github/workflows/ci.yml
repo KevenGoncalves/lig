@@ -32,6 +32,7 @@ jobs:
           python3 tests/fish_pty.py
           python3 tests/nu_tmux.py
           python3 tests/interrupt_tmux.py
+          python3 tests/winsize_pty.py
           python3 tests/zellij_macos.py
           python3 tests/pane_mirror.py
       - name: Install Linux test shell
@@ -42,6 +43,7 @@ jobs:
         run: |
           python3 tests/shell_smoke.py
           python3 tests/interrupt_tmux.py
+          python3 tests/winsize_pty.py
           python3 tests/zellij_mirror.py
           python3 tests/pane_mirror.py
 
