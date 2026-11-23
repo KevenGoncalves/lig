@@ -42,6 +42,10 @@ const ZSH_COMPLETE_KEY: &[u8] = b"\x1b[9148~";
 const SNAPSHOT_INSERT_KEY: &str = "\x1b[24;8~";
 /// Ctrl+Alt+Shift+F11: asks PowerShell for its line (fish gets `SIGUSR1`).
 const REPORT_KEY: &str = "\x1b[23;8~";
+/// Asks bash over `lig mosh` for its line, the request's id after it (see shell/post.bash).
+const HOST_REPORT_KEY: &str = "\x1b[9149~";
+/// How long a host's answer to that may take: it crosses mosh, then ssh.
+const HOST_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(1500);
 /// cmd's prompt marker arrives ahead of the prompt it marks (ConPTY passes it through
 /// before drawing), so the input starts where the cursor rests once output pauses this long.
 const PROMPT_SETTLE: Duration = Duration::from_millis(30);
@@ -327,7 +331,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     }
     cmd.env("LIG_INSERT_FILE", &insert_file);
     cmd.env("LIG_QUERY_FILE", &query_file);
-    let (pty_handle, reader, writer) = match Pty::spawn(&cmd, rows, cols) {
+    let (pty_handle, reader, writer) = match Pty::spawn(&cmd, rows, cols, term::pixels()) {
         Ok(spawned) => spawned,
         Err(e) => {
             eprintln!("lig: starting {} failed: {e:#}", shell.display());
@@ -716,6 +720,8 @@ struct FishRefresh {
     in_flight: Option<PendingSnapshot>,
     attempts: u8,
     stale: bool,
+    /// [`SNAPSHOT_TIMEOUT`] unless set.
+    timeout: Option<Duration>,
 }
 
 impl FishRefresh {
@@ -742,7 +748,8 @@ impl FishRefresh {
             return false;
         }
         self.attempts += 1;
-        self.in_flight = Some(PendingSnapshot { id, deadline: Instant::now() + SNAPSHOT_TIMEOUT, changed: false });
+        let deadline = Instant::now() + self.timeout.unwrap_or(SNAPSHOT_TIMEOUT);
+        self.in_flight = Some(PendingSnapshot { id, deadline, changed: false });
         true
     }
 
@@ -891,8 +898,13 @@ impl Session {
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
-                    let sent =
-                        std::fs::write(&self.query_file, self.fish_sequence.to_string()).is_ok() && self.ask_for_line();
+                    let sent = if self.remote.is_some() {
+                        // The host can't read the query file: the id follows the key.
+                        self.write_pty(format!("{HOST_REPORT_KEY}{}\x07", self.fish_sequence).as_bytes());
+                        true
+                    } else {
+                        std::fs::write(&self.query_file, self.fish_sequence.to_string()).is_ok() && self.ask_for_line()
+                    };
                     if !sent {
                         crate::log("fish snapshot request failed");
                         self.fish_refresh = None;
@@ -1392,9 +1404,16 @@ impl Session {
                 if !self.fish_shell && pid.is_some() && pid == self.shell_pid {
                     self.switch_shell(ShellKind::Fish);
                 }
+                // A host's bash over `lig mosh` answers when asked too: mosh drops what would
+                // mark its line on the screen.
+                let mosh = self.remote.as_ref().is_some_and(|r| r.mosh);
+                if mosh {
+                    self.fish_shell = true;
+                }
                 if self.fish_shell {
                     self.editing = true;
-                    let mut refresh = FishRefresh::default();
+                    let mut refresh =
+                        FishRefresh { timeout: mosh.then_some(HOST_SNAPSHOT_TIMEOUT), ..Default::default() };
                     refresh.changed();
                     self.fish_refresh = Some(refresh);
                 }
@@ -2056,7 +2075,7 @@ impl Session {
     /// its content went (see [`Resync`]).
     fn on_resize(&mut self) {
         let Some((rows, cols)) = term::size() else { return };
-        self.shell_pty.resize(rows, cols);
+        self.shell_pty.resize(rows, cols, term::pixels());
         let ask_at = Instant::now() + RESIZE_SETTLE;
         match &mut self.resync {
             Some(r) => {

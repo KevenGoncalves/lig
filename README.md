@@ -341,10 +341,10 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
   connection). `lig ssh admin@pi` logs in like `ssh` and brings the popup to the host's zsh
   or bash, installing nothing there; with a remote command it's plain `ssh`, so
   `alias ssh='lig ssh'` is safe.
-- **mosh**: `lig mosh admin@pi` does the same over mosh, for the host's zsh. mosh passes on
-  the screen, not the shell's messages, so Lig also opens an ssh connection of its own for
-  them: it needs a login without a password (a key or ssh-agent), or the popup stays off.
-  `--ssh=…` is followed; with a remote command it's plain `mosh`.
+- **mosh**: `lig mosh admin@pi` does the same over mosh, for the host's zsh or bash. mosh
+  passes on the screen, not the shell's messages, so Lig also opens an ssh connection of its
+  own for them: it needs a login without a password (a key or ssh-agent), or the popup stays
+  off. `--ssh=…` is followed; with a remote command it's plain `mosh`.
 
 ## Update and remove
 

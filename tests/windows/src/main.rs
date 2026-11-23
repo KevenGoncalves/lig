@@ -30,7 +30,7 @@ struct Term {
 
 impl Term {
     fn spawn(cmd: &pty::Command) -> anyhow::Result<Term> {
-        let (pty, mut reader, w) = pty::Pty::spawn(cmd, ROWS, COLS)?;
+        let (pty, mut reader, w) = pty::Pty::spawn(cmd, ROWS, COLS, (0, 0))?;
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let mut buf = [0u8; 16384];

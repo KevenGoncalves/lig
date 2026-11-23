@@ -117,7 +117,7 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         args: Vec<String>,
     },
-    /// mosh with lig's popup on the host (zsh there; nothing is installed)
+    /// mosh with lig's popup on the host (zsh or bash there; nothing is installed)
     Mosh {
         /// Arguments for mosh: options and the destination
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]

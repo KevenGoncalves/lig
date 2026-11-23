@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-#[cfg(unix)]
-pub use imp::pixels;
-pub use imp::{RawMode, is_terminal, read, read_timeout, size, watch_resize, write};
+pub use imp::{RawMode, is_terminal, pixels, read, read_timeout, size, watch_resize, write};
 
 #[cfg(unix)]
 mod imp {
@@ -122,6 +120,11 @@ mod imp {
 
     pub fn is_terminal() -> bool {
         mode(stdin()).is_some() && mode(stdout()).is_some()
+    }
+
+    /// A console window has no size in pixels.
+    pub fn pixels() -> (u16, u16) {
+        (0, 0)
     }
 
     /// Rows and columns of the visible window.

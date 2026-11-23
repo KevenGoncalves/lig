@@ -39,9 +39,8 @@ mod imp {
     use super::*;
     use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-    /// The terminal's pixel size goes along: programs size images by it (kitty's `icat`).
-    fn size(rows: u16, cols: u16) -> PtySize {
-        let (pixel_width, pixel_height) = crate::term::pixels();
+    /// With the terminal's size in pixels: programs size images by it (kitty's `icat`).
+    fn size(rows: u16, cols: u16, (pixel_width, pixel_height): (u16, u16)) -> PtySize {
         PtySize { rows, cols, pixel_width, pixel_height }
     }
 
@@ -51,8 +50,8 @@ mod imp {
     }
 
     impl Pty {
-        pub fn spawn(cmd: &Command, rows: u16, cols: u16) -> Result<Spawned> {
-            let pair = native_pty_system().openpty(size(rows, cols))?;
+        pub fn spawn(cmd: &Command, rows: u16, cols: u16, pixels: (u16, u16)) -> Result<Spawned> {
+            let pair = native_pty_system().openpty(size(rows, cols, pixels))?;
             let mut b = CommandBuilder::new(&cmd.program);
             b.args(&cmd.args);
             for (k, v) in &cmd.env {
@@ -80,8 +79,8 @@ mod imp {
             self.master.tty_name()
         }
 
-        pub fn resize(&self, rows: u16, cols: u16) {
-            let _ = self.master.resize(size(rows, cols));
+        pub fn resize(&self, rows: u16, cols: u16, pixels: (u16, u16)) {
+            let _ = self.master.resize(size(rows, cols, pixels));
         }
 
         /// The output reaches end of file when the shell exits: nothing to watch.
@@ -166,7 +165,8 @@ mod imp {
     }
 
     impl Pty {
-        pub fn spawn(cmd: &Command, rows: u16, cols: u16) -> Result<Spawned> {
+        /// A pseudo console has no size in pixels.
+        pub fn spawn(cmd: &Command, rows: u16, cols: u16, _pixels: (u16, u16)) -> Result<Spawned> {
             unsafe {
                 let (mut in_read, mut in_write, mut out_read, mut out_write) =
                     (null_mut(), null_mut(), null_mut(), null_mut());
@@ -263,7 +263,7 @@ mod imp {
             None
         }
 
-        pub fn resize(&self, rows: u16, cols: u16) {
+        pub fn resize(&self, rows: u16, cols: u16, _pixels: (u16, u16)) {
             unsafe { ResizePseudoConsole(self.hpc, COORD { X: cols as i16, Y: rows as i16 }) };
         }
 

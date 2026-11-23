@@ -4,6 +4,9 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   __lig_loaded=1
   # Where messages go: the terminal, or under lig mosh a file lig reads over ssh (mosh drops them).
   __lig_out=${LIG_OUT:-/dev/tty}
+  # Over lig mosh lig can't read the line off the screen (mosh drops the prompt's marker):
+  # bash says when it's at a prompt, and lig asks for the line (see __lig_query).
+  __lig_asked=${LIG_OUT:+1}
   unset LIG_OUT
   __lig_aliases=
   __lig_vars=
@@ -62,8 +65,10 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
       local IFS=$'\x1e'
       printf '\e]6973;K;%s\a\e]6973;N;%s\a' "${b[*]}" "${f[*]}" >>"$__lig_out"
     fi
+    if [[ -n $__lig_asked ]]; then
+      printf '\e]6973;R;%s\a' "$$" >>"$__lig_out"
     # Re-append the marker when another tool (starship, …) rebuilds PS1.
-    if [[ $PS1 != *'6973;S'* ]]; then
+    elif [[ $PS1 != *'6973;S'* ]]; then
       # A prompt ending in an odd backslash would swallow ours: complete it.
       local t=${PS1##*[!\\]}
       (( ${#t} % 2 )) && PS1+='\'
@@ -77,8 +82,14 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
   else
     PROMPT_COMMAND="__lig_status"$'\n'"${PROMPT_COMMAND:+$PROMPT_COMMAND$'\n'}__lig_prompt"
   fi
-  # Prepended: vte.sh (GNOME Terminal) ends PS0 with `ESC \`, which would swallow our `\e`.
-  [[ $PS0 == *'6973;F'* ]] || PS0='\e]6973;F\a'"${PS0:-}"
+  if [[ -n $__lig_asked ]]; then
+    # The line runs: said with the messages, where mosh can't drop it.
+    __lig_run() { printf '\e]6973;F\a' >>"$__lig_out"; }
+    [[ $PS0 == *__lig_run* ]] || PS0='$(__lig_run)'"${PS0:-}"
+  else
+    # Prepended: vte.sh (GNOME Terminal) ends PS0 with `ESC \`, which would swallow our `\e`.
+    [[ $PS0 == *'6973;F'* ]] || PS0='\e]6973;F\a'"${PS0:-}"
+  fi
 
   # lig writes `<delete>;<back>;<text>` to $LIG_INSERT_FILE, then sends ESC [9147~;
   # over `lig ssh` the payload follows the key instead, ending in BEL.
@@ -96,6 +107,16 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     local back=${p%%;*}
     local text=${p#*;}
     local left=${READLINE_LINE:0:READLINE_POINT} right=${READLINE_LINE:READLINE_POINT}
+    # Asked for its line, bash gets it checked: <length>;<the line left of the cursor><text>.
+    if [[ -n $__lig_asked ]]; then
+      local n=${text%%;*}
+      text=${text#*;}
+      if [[ ${text:0:n} != "$left" ]]; then
+        printf '\e]6973;J\a' >>"$__lig_out"
+        return
+      fi
+      text=${text:n}
+    fi
     if (( del >= ${#left} )); then
       left=
     elif (( del > 0 )); then
@@ -105,6 +126,14 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     READLINE_POINT=$(( ${#left} + ${#text} - back ))
   }
   bind -x '"\e[9147~": __lig_insert'
+
+  # lig mosh: lig asks for the line with ESC [9149~ <id> BEL; the answer goes with the messages.
+  __lig_query() {
+    local id
+    IFS= read -r -s -d $'\a' id || return
+    printf '\e]6973;Q;%s;B;%s;%s\a' "$id" "$READLINE_POINT" "${READLINE_LINE//[$'\a\e']/ }" >>"$__lig_out"
+  }
+  [[ -n $__lig_asked ]] && bind -x '"\e[9149~": __lig_query'
 
   # lig asks with ESC [9148~ what Tab would offer (behavior.completers = ["shell"]): the
   # command's completion (bash-completion's function, `complete -W` words) runs as Tab
