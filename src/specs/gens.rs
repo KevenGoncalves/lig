@@ -470,7 +470,8 @@ pub fn ssh_host_list() -> Vec<SuggestionDef> {
         while i < configs.len() && i < 32 {
             let text = std::fs::read_to_string(&configs[i]).unwrap_or_default();
             for line in text.lines() {
-                let mut p = line.split_whitespace();
+                let words = ssh_config_words(line);
+                let mut p = words.iter().map(String::as_str);
                 match p.next().map(str::to_ascii_lowercase).as_deref() {
                     Some("host") => p.for_each(|h| add(h, "ssh config")),
                     Some("include") => {
@@ -501,6 +502,43 @@ pub fn ssh_host_list() -> Vec<SuggestionDef> {
 }
 
 /// Host names in a `known_hosts` file: `[host]:port` as `host`; hashed (`|1|…`) ones skipped.
+/// A line of ssh_config as ssh reads it: `Keyword value…` or `Keyword=value`, `"quoted words"`,
+/// and a `#` that starts a word comments out the rest.
+fn ssh_config_words(line: &str) -> Vec<String> {
+    let mut words = vec![];
+    let mut word = String::new();
+    let (mut in_word, mut quoted) = (false, false);
+    for c in line.chars() {
+        if quoted {
+            if c == '"' {
+                quoted = false;
+            } else {
+                word.push(c);
+            }
+            continue;
+        }
+        match c {
+            '"' => (quoted, in_word) = (true, true),
+            '#' if !in_word => break,
+            // `=` only between the keyword and its first value.
+            c if c.is_whitespace() || (c == '=' && words.len() + usize::from(in_word) <= 1) => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            c => {
+                word.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    words
+}
+
 fn known_host_names(text: &str) -> Vec<&str> {
     let mut out = vec![];
     for line in text.lines() {
@@ -844,7 +882,19 @@ pub fn kube_namespaces() -> Generator {
 
 #[cfg(test)]
 mod tests {
-    use super::{known_host_names, relative_to, remote_target};
+    use super::{known_host_names, relative_to, remote_target, ssh_config_words};
+
+    #[test]
+    fn ssh_config_lines_as_ssh_reads_them() {
+        let words = |l: &str| ssh_config_words(l);
+        // Issue #48: a trailing comment isn't more hosts.
+        assert_eq!(words("Host nas nas-ts  # Can't have two consecutive Host entries"), ["Host", "nas", "nas-ts"]);
+        assert_eq!(words("Host=pi"), ["Host", "pi"]);
+        assert_eq!(words("  Host = pi box"), ["Host", "pi", "box"]);
+        assert_eq!(words("Host \"my box\" x#y"), ["Host", "my box", "x#y"]);
+        assert_eq!(words("# Host commented"), Vec::<String>::new());
+        assert_eq!(words("Include ~/.ssh/conf.d/* # more"), ["Include", "~/.ssh/conf.d/*"]);
+    }
 
     #[test]
     fn known_hosts_skip_comments_and_markers() {
@@ -977,6 +1027,7 @@ pub fn sys_users() -> Generator {
         std::fs::read_to_string("/etc/passwd")
             .unwrap_or_default()
             .lines()
+            .filter(|l| !l.starts_with('#'))
             .filter_map(|l| l.split(':').next())
             .map(sug)
             .collect()
