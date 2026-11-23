@@ -1037,7 +1037,7 @@ impl Engine {
     /// Filter the candidates by what's typed, rank them and build the suggestions.
     fn finish(&self, cx: Cx<'_>) -> Vec<Suggestion> {
         struct Scored {
-            /// From [`match_tier`]: 0 exact, 1 prefix, 2 fuzzy.
+            /// From [`match_tier`]: 0 exact, 1 prefix, 2 and up fuzzy.
             tier: u8,
             priority: f64,
             /// Index in `cx.cands` (spec order breaks ties).
@@ -1065,7 +1065,7 @@ impl Engine {
             let pick = if tier <= 1 {
                 tiers.iter().position(|t| matches!(t, Some(0 | 1)))
             } else {
-                tiers.iter().position(Option::is_some)
+                tiers.iter().position(|t| *t == Some(tier))
             };
             let pick = pick.unwrap_or(0);
             let name = &c.names[pick];
@@ -1086,7 +1086,8 @@ impl Engine {
             Kind::File | Kind::Folder if !files_first => 2,
             _ => 0,
         };
-        let fuzzy = |s: &Scored| s.tier == 2;
+        // Fuzzy matches (shown only when nothing matches by prefix) best match first.
+        let fuzzy = |s: &Scored| s.tier.max(1) - 1;
         scored.sort_by(|a, b| {
             fuzzy(a)
                 .cmp(&fuzzy(b))
@@ -1449,7 +1450,8 @@ fn match_option(node: &Subcommand, persistent: &[Arc<Opt>], t: &str, d: &spec::D
     None
 }
 
-/// 0 = exact, 1 = prefix, 2 = fuzzy (subsequence); smart-case.
+/// 0 = exact, 1 = prefix; fuzzy, best first: 2 = a subsequence from the first character,
+/// 3 = contained (`top` in `btop`), 4 = a subsequence anywhere. Smart-case.
 pub fn match_tier(name: &str, query: &str, fuzzy: bool) -> Option<u8> {
     if query.is_empty() {
         return Some(1);
@@ -1463,15 +1465,22 @@ pub fn match_tier(name: &str, query: &str, fuzzy: bool) -> Option<u8> {
     if n.starts_with(&q) {
         return Some(1);
     }
-    // Fuzzy: subsequence, anchored on the first significant character.
+    // Fuzzy, after any leading dashes: `-v` doesn't make every option a match.
     let (n, q) = (n.trim_start_matches('-'), q.trim_start_matches('-'));
-    if fuzzy && q.chars().count() >= 2 && n.chars().next() == q.chars().next() {
-        let mut it = n.chars();
-        if q.chars().all(|qc| it.by_ref().any(|nc| nc == qc)) {
-            return Some(2);
-        }
+    if !fuzzy || q.chars().count() < 2 {
+        return None;
     }
-    None
+    let mut it = n.chars();
+    if !q.chars().all(|qc| it.by_ref().any(|nc| nc == qc)) {
+        return None;
+    }
+    Some(if n.chars().next() == q.chars().next() {
+        2
+    } else if n.contains(q) {
+        3
+    } else {
+        4
+    })
 }
 
 impl Engine {
@@ -1770,6 +1779,28 @@ mod tests {
         assert_eq!(e.complete("t ", &env, false, false).command, "tool");
         // A command name being typed belongs to no command yet.
         assert_eq!(e.complete("to", &env, false, true).command, "");
+    }
+
+    #[test]
+    fn fuzzy_matches_anywhere_best_first() {
+        assert_eq!(match_tier("git-checkout", "gco", true), Some(2));
+        assert_eq!(match_tier("btop", "top", true), Some(3));
+        assert_eq!(match_tier("xtxoxp", "top", true), Some(4));
+        assert_eq!(match_tier("--no-verify", "-ver", true), Some(3));
+        assert_eq!(match_tier("btop", "top", false), None);
+        assert_eq!(match_tier("btop", "t", true), None);
+        assert_eq!(match_tier("btop", "pot", true), None);
+        let (mut e, env) = engine();
+        e.insert_spec(cmd("pick", "").arg(arg("x").suggest(&["xtxoxp", "btop", "taxoxp", "other"])));
+        let r: Vec<String> = labels(&mut e, &env, "pick top").into_iter().map(|s| s.0).collect();
+        assert_eq!(r, ["taxoxp", "btop", "xtxoxp"]);
+        // Fuzzy only when nothing starts with what's typed.
+        let r: Vec<String> = labels(&mut e, &env, "pick ot").into_iter().map(|s| s.0).collect();
+        assert_eq!(r, ["other"]);
+        e.insert_spec(cmd("edit", "").arg(arg("path").files()));
+        std::fs::create_dir_all(env.cwd.join("conf/btop")).unwrap();
+        let r: Vec<String> = labels(&mut e, &env, "edit conf/top").into_iter().map(|s| s.0).collect();
+        assert_eq!(r, ["btop/"]);
     }
 
     #[test]

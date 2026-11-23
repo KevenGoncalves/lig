@@ -197,7 +197,8 @@ pub struct Keys {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Behavior {
-    /// Also match suggestions by subsequence (`gco` → `git-checkout`).
+    /// When nothing starts with what's typed, match its letters in order anywhere, as fzf does
+    /// (`gco` → `git-checkout`, `top` → `btop`).
     pub fuzzy: bool,
     /// When Enter picks the selected suggestion instead of running the line:
     /// `"auto"` (unless the typed word is already complete), `"after-space"` (only
