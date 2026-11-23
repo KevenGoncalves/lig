@@ -2107,12 +2107,21 @@ impl Session {
         };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let delete = self.line.chars().count();
+        let local = self.history_folder;
         let items = found
             .into_iter()
             .take(500)
             .map(|(time, command)| Suggestion {
                 label: command.replace('\n', " ⏎ "),
-                description: if time == 0 { String::new() } else { ago(now.saturating_sub(time)) },
+                description: {
+                    let when = if time == 0 { String::new() } else { ago(now.saturating_sub(time)) };
+                    // Alt+R's list says it's this folder's.
+                    match (local, when.is_empty()) {
+                        (false, _) => when,
+                        (true, true) => "local".into(),
+                        (true, false) => format!("local · {when}"),
+                    }
+                },
                 kind: Kind::Command,
                 icon: Some(crate::spec::Icon::History),
                 insert: command,
