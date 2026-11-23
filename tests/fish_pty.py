@@ -475,9 +475,9 @@ end
         finally:
             fish.close()
 
-    def test_enter_runs_commands_only_picks(self):
-        # fish can turn down an insertion, so an Enter queued behind it could run the
-        # half-typed line: `enter_runs_commands` keeps to picking here.
+    def test_enter_runs_commands_picks_and_runs(self):
+        # fish can turn down an insertion, so lig's Enter waits for the line the insertion
+        # makes before it runs it.
         spec = '{"name": "jump", "args": {"name": "place", "suggestions": ["alpha", "beta"]}}'
         fish = Fish(wrapped=True, after_config='function jump; echo "JUMPED:$argv[1]"; end\n',
                     lig_config='[behavior]\nenter_runs_commands = ["jump"]\n', specs={'jump': spec})
@@ -487,8 +487,7 @@ end
             fish.wait_popup('alpha', start)
             start = len(fish.output)
             fish.send(b'\r')
-            fish.assert_buffer('jump alpha')
-            self.assertNotIn(b'JUMPED', fish.plain(start))
+            fish.wait_for(lambda: b'JUMPED:alpha' in fish.plain(start))
         finally:
             fish.close()
 

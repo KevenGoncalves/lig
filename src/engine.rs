@@ -1598,7 +1598,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("work/src")).unwrap();
         let r: Vec<String> =
             labels(&mut e, &env, "edit ").into_iter().map(|s| s.0).filter(|l| l != "." && l != "..").collect();
-        let at = |l: &str| r.iter().position(|x| x == l).unwrap();
+        let at = |l: &str| r.iter().position(|x| *x == l.replace('/', &SEP.to_string())).unwrap();
         assert!(
             at("src/") < at(".config/") && at(".config/") < at("visible.txt") && at("visible.txt") < at(".secret"),
             "{r:?}"
@@ -1813,7 +1813,7 @@ mod tests {
         e.insert_spec(cmd("edit", "").arg(arg("path").files()));
         std::fs::create_dir_all(env.cwd.join("conf/btop")).unwrap();
         let r: Vec<String> = labels(&mut e, &env, "edit conf/top").into_iter().map(|s| s.0).collect();
-        assert_eq!(r, ["btop/"]);
+        assert_eq!(r, [format!("btop{SEP}")]);
     }
 
     #[test]
