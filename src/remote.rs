@@ -60,30 +60,26 @@ impl Remote {
             "RemoteCommand=none",
             "-T",
             &self.dest,
-            // Run by the user's login shell, whichever it is.
-            &format!("sh -c {}", quote(&script)),
+            &login_command(&script),
         ]
         .map(str::to_string)
         .to_vec()
     }
 }
 
-/// Single-quoted for a POSIX shell or fish; empty stays empty. Backslashes go in double
-/// quotes: inside single quotes fish reads `\\` and `\'` as escapes.
+/// `script` for `sh`, as a line any login shell runs the same way (sh, bash, zsh, fish, nu):
+/// base64 has nothing to quote. `eval "$(cat)"` reads the whole script before running it, so
+/// a command that reads its input can't take the rest of the script.
+fn login_command(script: &str) -> String {
+    format!("echo {} | base64 -d | sh -c 'eval \"$(cat)\" </dev/null'", base64(script.as_bytes()))
+}
+
+/// Single-quoted for `sh`; empty stays empty.
 pub fn quote(s: &str) -> String {
     if s.is_empty() {
         return String::new();
     }
-    let mut out = String::from('\'');
-    for c in s.chars() {
-        match c {
-            '\'' => out.push_str(r"'\''"),
-            '\\' => out.push_str(r#"'"\\"'"#),
-            c => out.push(c),
-        }
-    }
-    out.push('\'');
-    out
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// `ls` of the folder in `path` (a typed path: `src/`, `~/x/`, `/etc/`), folders marked with `/`.
@@ -223,10 +219,10 @@ mod tests {
         assert_eq!(a[a.len() - 2], "pi");
         let script =
             "cd '/home/me/a b' 2>/dev/null; export LIG_GENERATOR=1 PATH='/usr/bin'; exec 'git' 'branch' 'it'\\''s'";
-        assert_eq!(a[a.len() - 1], format!("sh -c {}", quote(script)));
+        assert_eq!(a[a.len() - 1], login_command(script));
         let argv: Vec<String> = ["printf", "%s|", "", "x"].map(str::to_string).to_vec();
         let a = r.argv(Cmd::Argv(&argv), Path::new(""), &[]);
-        assert_eq!(a[a.len() - 1], format!("sh -c {}", quote("export LIG_GENERATOR=1; exec 'printf' '%s|' '' 'x'")));
+        assert_eq!(a[a.len() - 1], login_command("export LIG_GENERATOR=1; exec 'printf' '%s|' '' 'x'"));
         assert_eq!(ls_command("~/Doc"), "ls -1Ap -- ~/");
         assert_eq!(ls_command("/etc/ss"), "ls -1Ap -- '/etc/'");
         assert_eq!(ls_command("x"), "ls -1Ap -- ");
@@ -236,15 +232,19 @@ mod tests {
     // Windows' `bash` may be WSL's, which runs the script in another system.
     #[cfg(unix)]
     #[test]
-    fn quoting_survives_a_posix_or_fish_login_shell() {
-        let script = format!("printf '%s|' {} {}", quote(r"it's"), quote(r"a\\b\'c"));
-        for (sh, no_rc) in [("sh", None), ("bash", Some("--norc")), ("zsh", Some("-f")), ("fish", Some("-N"))] {
+    fn commands_survive_any_login_shell() {
+        let nu = std::env::var("LIG_TEST_NU").unwrap_or_else(|_| "nu".into());
+        // A command that reads its input gets nothing, not the rest of the script.
+        let script = format!("printf '%s|' {} {}; cat\nread x; echo \"got$x\"", quote(r"it's"), quote(r"a\\b\'c"));
+        for (sh, no_rc) in
+            [("sh", None), ("bash", Some("--norc")), ("zsh", Some("-f")), ("fish", Some("-N")), (&*nu, Some("-n"))]
+        {
             let mut cmd = std::process::Command::new(sh);
-            cmd.args(no_rc).arg("-c").arg(format!("sh -c {}", quote(&script)));
+            cmd.args(no_rc).arg("-c").arg(login_command(&script));
             let Ok(out) = cmd.output() else {
                 continue;
             };
-            assert_eq!(String::from_utf8_lossy(&out.stdout), r"it's|a\\b\'c|", "{sh}");
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "it's|a\\\\b\\'c|got\n", "{sh}");
         }
     }
 }

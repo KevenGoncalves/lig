@@ -275,7 +275,7 @@ fn file_icon(name: &str) -> (&'static str, &'static str) {
         "json" | "jsonc" => ("\u{e60b}", "38;5;185"),
         "md" | "markdown" => ("\u{e73e}", "38;5;250"),
         "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "env" => ("\u{e615}", "38;5;250"),
-        "sh" | "bash" | "zsh" | "fish" => ("\u{e795}", "38;5;114"),
+        "sh" | "bash" | "zsh" | "fish" | "nu" => ("\u{e795}", "38;5;114"),
         "html" | "htm" => ("\u{e736}", "38;5;208"),
         "css" | "scss" | "sass" => ("\u{e749}", "38;5;75"),
         "go" => ("\u{e724}", "38;5;81"),

@@ -12,8 +12,8 @@ pub enum Rule {
 }
 
 const SHELLS: &[&[u8]] = &[
-    b"sh", b"bash", b"zsh", b"fish", b"dash", b"env", b"nice", b"ionice", b"nohup", b"timeout", b"time", b"stdbuf",
-    b"xargs", b"watch",
+    b"sh", b"bash", b"zsh", b"fish", b"nu", b"dash", b"env", b"nice", b"ionice", b"nohup", b"timeout", b"time",
+    b"stdbuf", b"xargs", b"watch",
 ];
 
 const DENY: &[&[u8]] = &[
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn rules_shells_and_wrappers_are_none() {
-        for x in "sh bash zsh fish dash env nice ionice nohup timeout time stdbuf xargs watch".split(' ') {
+        for x in "sh bash zsh fish nu dash env nice ionice nohup timeout time stdbuf xargs watch".split(' ') {
             for name in [x.to_string(), format!("/usr/bin/{x}")] {
                 assert_eq!(rules(&os(&[&name, "a"])), (None, Rule::Shell), "{name}");
             }

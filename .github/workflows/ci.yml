@@ -24,12 +24,13 @@ jobs:
       - run: cargo build --release --locked
       - name: Install macOS test shells
         if: runner.os == 'macOS'
-        run: brew install fish bash tmux
+        run: brew install fish bash tmux nushell
       - name: macOS shell and mirror regressions
         if: runner.os == 'macOS'
         run: |
           python3 tests/shell_smoke.py
           python3 tests/fish_pty.py
+          python3 tests/nu_tmux.py
           python3 tests/zellij_macos.py
           python3 tests/pane_mirror.py
       - name: Install Linux test shell
