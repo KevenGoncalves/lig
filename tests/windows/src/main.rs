@@ -233,6 +233,31 @@ fn run_shell(r: &mut Report, lig: &Path, shell: &str) -> anyhow::Result<()> {
         t.settle(500);
     }
 
+    // Up browses PowerShell's history with text on the line, though lig asks for the line
+    // after each key (#43: that used to send PSReadLine back to the newest entry).
+    if matches!(shell, "pwsh" | "powershell") {
+        for line in ["echo lig-one", "echo lig-two"] {
+            t.type_text(line);
+            t.settle(500);
+            t.send("\r");
+            t.wait(10_000, |t| t.at_prompt());
+            t.settle(500);
+        }
+        t.type_text("x");
+        t.settle(800);
+        t.send("\x1b[A");
+        let newest = t.wait(5_000, |t| t.cursor_line().ends_with("echo lig-two"));
+        // Time for lig to ask for the line in between.
+        t.settle(1_000);
+        t.send("\x1b[A");
+        let older = t.wait(5_000, |t| t.cursor_line().ends_with("echo lig-one"));
+        ok &= r.check(format!("{shell}: Up browses history with text on the line"), newest && older, t.cursor_line());
+        t.send("\x1b");
+        t.settle(800);
+        t.send("\x1b");
+        t.wait(3_000, |t| t.at_prompt());
+    }
+
     if !ok {
         println!("--- {shell} screen\n{}--- lig.log\n{}", t.dump(), log_tail());
     }

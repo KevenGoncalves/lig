@@ -73,8 +73,28 @@ if ($env:LIG_PID -and -not $env:LIG_DISABLE -and -not $global:__lig_loaded -and
         [Microsoft.PowerShell.PSConsoleReadLine]::$name($key, $arg)
     }
 
+    # PSReadLine forgets where Up/Down are in the history (and Tab's cycle, the kill ring…) when
+    # another key's handler runs in between: it resets each `_<what>CommandCount` that a key left
+    # as it was. lig asking for the line isn't a key of the user's, so it bumps those counts.
+    $flags = [Reflection.BindingFlags]'NonPublic,Static'
+    $global:__lig_readline = [Microsoft.PowerShell.PSConsoleReadLine].GetField('_singleton', $flags)
+    $flags = [Reflection.BindingFlags]'NonPublic,Instance'
+    $global:__lig_counts = @([Microsoft.PowerShell.PSConsoleReadLine].GetFields($flags) |
+        Where-Object { $_.Name -like '_*CommandCount' -and $_.FieldType -eq [int] })
+    Remove-Variable flags -ErrorAction SilentlyContinue
+    function global:__lig_keep_state {
+        try {
+            $readline = $global:__lig_readline.GetValue($null)
+            foreach ($count in $global:__lig_counts) {
+                $n = $count.GetValue($readline)
+                if ($n -gt 0) { $count.SetValue($readline, $n + 1) }
+            }
+        } catch {}
+    }
+
     # lig wrote a request id to $env:LIG_QUERY_FILE: reply with the line and the cursor.
     Set-PSReadLineKeyHandler -Chord 'Ctrl+Alt+Shift+F11' -ScriptBlock {
+        __lig_keep_state
         if (-not $global:__lig_editing) { return }
         try { $id = [IO.File]::ReadAllText($env:LIG_QUERY_FILE).Trim() } catch { return }
         if ($id -notmatch '^[0-9]+$') { return }
