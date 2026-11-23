@@ -426,6 +426,7 @@ pub enum Action {
     Toggle,
     History,
     FolderHistory,
+    AcceptAndRun,
 }
 
 /// The `[keys]` config, resolved.
@@ -443,6 +444,7 @@ impl Bindings {
             (&k.toggle, Action::Toggle),
             (&k.history, Action::History),
             (&k.folder_history, Action::FolderHistory),
+            (&k.accept_and_run, Action::AcceptAndRun),
         ] {
             for n in names {
                 match Key::parse_name(n) {

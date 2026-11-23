@@ -194,6 +194,8 @@ pub struct Keys {
     pub history: Vec<String>,
     /// Show the commands you ran before in this folder.
     pub folder_history: Vec<String>,
+    /// Accept the suggestion and run the line in one press.
+    pub accept_and_run: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,8 +215,6 @@ pub struct Behavior {
     /// zoxide's `z` and `zi`. Where Enter wouldn't pick it runs the line as typed, as usual;
     /// with `"always"`, Enter on a complete word runs it instead of only closing the popup.
     /// The command is the one the cursor is in (after `&&`, `|`, `;`), aliases expanded.
-    /// bash and zsh only: fish and PowerShell can turn down an insertion, so there Enter
-    /// only picks.
     pub enter_runs_commands: Vec<String>,
     /// Add a space after an accepted suggestion (`checkout ` vs `checkout`).
     pub insert_space: bool,
@@ -295,6 +295,7 @@ impl Default for Keys {
             toggle: v(&["ctrl-space"]),
             history: v(&["ctrl-r"]),
             folder_history: v(&["alt-r"]),
+            accept_and_run: v(&["shift-enter"]),
         }
     }
 }

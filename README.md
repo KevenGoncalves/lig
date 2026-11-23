@@ -221,6 +221,7 @@ Type as usual; the popup shows what fits.
 | `Tab` / `↓` | next suggestion |
 | `Shift-Tab` / `↑` | previous suggestion (on the first one: close the popup) |
 | `Enter` | accept the suggestion |
+| `Shift+Enter` | accept the suggestion and run the line |
 | `Esc` | close the popup |
 | `Ctrl+Space` | open or close the popup on demand |
 | `Ctrl+R` | your history: past commands matching what's typed |
@@ -228,7 +229,10 @@ Type as usual; the popup shows what fits.
 
 - **`Enter`** completes the word you're typing (`go bui` → `go build`) or picks the first
   suggestion after a space. On a word that's already complete (`git status`) it runs the
-  line, so `Enter` `Enter` means "pick, then run".
+  line, so `Enter` `Enter` means "pick, then run". **`Shift+Enter`** does both in one
+  press. Many terminals send Shift+Enter as a plain Enter: it's told apart only where they
+  report it (kitty, WezTerm or iTerm2 with CSI u, xterm's `modifyOtherKeys`); elsewhere,
+  bind `accept_and_run = ["alt-enter"]`.
 - **Command names** don't pop up by themselves, so simple commands run with one `Enter`.
   `Ctrl+Space` shows them; `complete_commands = true` always does.
 - **Folders** (`cd`, `mkdir`…) keep the popup open with the subfolders, with **↵ Enter** to
@@ -262,10 +266,11 @@ next = ["tab", "down", "ctrl-n"]
 toggle = ["ctrl-space"]
 history = ["ctrl-r"]
 folder_history = ["alt-r"]
+accept_and_run = ["shift-enter"]  # or ["alt-enter"] where Shift+Enter sends a plain Enter
 
 [behavior]
 enter_accepts = "auto"     # "always", "after-space", "never"
-enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"] (zsh, bash)
+enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 show_hidden_files = false  # list dot files without typing a dot first

@@ -435,6 +435,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         history: cfg.behavior.history.then(crate::history::History::open),
         history_mode: false,
         history_folder: false,
+        run_after_insert: None,
         cfg,
         pty: writer,
         shell_pty: pty_handle,
@@ -832,6 +833,9 @@ struct Session {
     history_mode: bool,
     /// The history popup lists only what ran in the shell's folder (`keys.folder_history`).
     history_folder: bool,
+    /// An accept-and-run waits for the shell to show this line (left of the cursor) before
+    /// its Enter: fish and PowerShell can turn an insertion down (see `accept_selected`).
+    run_after_insert: Option<String>,
     insert_file: PathBuf,
     /// Set by the prompt marker of bash, nu or cmd: the line is read off the screen.
     prompt_end: Option<PromptEnd>,
@@ -1396,6 +1400,11 @@ impl Session {
     }
 
     fn set_line(&mut self, line: String) {
+        // The insertion an accept-and-run waits for is on the line: run it.
+        if self.run_after_insert.as_deref() == Some(line.as_str()) {
+            self.run_after_insert = None;
+            self.write_pty(b"\r");
+        }
         if line != self.line {
             // The typed text the new line shows is confirmed; any other change starts over.
             self.unconfirmed = match line.strip_prefix(self.line.as_str()) {
@@ -1454,6 +1463,7 @@ impl Session {
     fn on_msg(&mut self, m: Msg) {
         match m {
             Msg::InsertRejected => {
+                self.run_after_insert = None;
                 self.just_accepted = false;
                 self.close_after_insert = false;
                 self.dismissed = None;
@@ -1651,9 +1661,7 @@ impl Session {
         if self.history_mode {
             return Enter::Pick;
         }
-        // Fish and PowerShell drop an insertion made for a line they no longer have; an
-        // Enter queued behind it would then run the half-typed line, so there a pick only picks.
-        let runs = !self.fish_shell && self.cfg.behavior.enter_runs_commands.contains(&self.items_command);
+        let runs = self.cfg.behavior.enter_runs_commands.contains(&self.items_command);
         enter_action(
             &self.cfg.behavior.enter_accepts,
             runs,
@@ -1737,6 +1745,8 @@ impl Session {
             self.deferred.extend_from_slice(data);
             return;
         }
+        // A key typed before the shell showed an accept-and-run's insertion: it no longer runs.
+        self.run_after_insert = None;
         // Until cmd's prompt is drawn, typed text would be taken for part of it.
         if self.prompt_pending {
             self.held.extend_from_slice(data);
@@ -1858,12 +1868,12 @@ impl Session {
                     }
                     redraw = true;
                 }
-                Some(Action::Accept) => {
+                Some(Action::Accept | Action::AcceptAndRun) => {
                     self.just_accepted = true;
                     passthrough = true;
                     // The insertion changes the line in ways not worth predicting.
                     typed = None;
-                    self.accept_selected(&mut fwd, run);
+                    self.accept_selected(&mut fwd, run || action == Some(Action::AcceptAndRun));
                     redraw = true;
                 }
                 None => {
@@ -1983,7 +1993,10 @@ impl Session {
             && self.shown.is_some()
             && self.drawable()
             && (self.fish_stale() || !self.unconfirmed().is_empty())
-            && matches!(self.bindings.action(key), Some(Action::Next | Action::Prev | Action::Accept))
+            && matches!(
+                self.bindings.action(key),
+                Some(Action::Next | Action::Prev | Action::Accept | Action::AcceptAndRun)
+            )
     }
 
     /// Text typed to fish that no report has shown yet, if typed recently.
@@ -2152,6 +2165,15 @@ impl Session {
             let result = format!("{kept}{}", s.insert);
             self.close_after_insert =
                 !(result.is_empty() || result.ends_with(|c: char| c.is_whitespace() || crate::engine::is_sep(c)));
+            // Fish (and PowerShell, and a host's shells that are asked) may turn the insertion down,
+            // and an Enter queued behind it would run the half-typed line: there the Enter waits
+            // for the line the insertion makes.
+            let confirm = run && self.fish_shell;
+            if confirm {
+                let left = result.chars().count().saturating_sub(s.back);
+                self.run_after_insert = Some(result.chars().take(left).collect());
+            }
+            let run = run && !confirm;
             // Fish and zsh check the line left of the cursor is the one lig saw before changing it
             // (over `lig ssh` the shell's reports come a round trip late).
             let payload = if self.fish_shell {
