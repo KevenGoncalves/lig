@@ -339,12 +339,13 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 - **ssh**: `scp` and `rsync` complete paths on the host (`scp notes.txt pi:Doc` →
   `pi:Documents/`) when the login needs no password (a key, ssh-agent or a `ControlMaster`
   connection). `lig ssh admin@pi` logs in like `ssh` and brings the popup to the host's zsh,
-  bash or fish (4.2.1 or newer), installing nothing there; with a remote command it's plain `ssh`, so
-  `alias ssh='lig ssh'` is safe.
-- **mosh**: `lig mosh admin@pi` does the same over mosh, for the host's zsh, bash or fish. mosh
-  passes on the screen, not the shell's messages, so Lig also opens an ssh connection of its
-  own for them: it needs a login without a password (a key or ssh-agent), or the popup stays
-  off. `--ssh=…` is followed; with a remote command it's plain `mosh`.
+  bash, fish (4.2.1 or newer) or nushell, installing nothing there; with a remote command
+  it's plain `ssh`, so `alias ssh='lig ssh'` is safe.
+- **mosh**: `lig mosh admin@pi` does the same over mosh, for the host's zsh, bash, fish or
+  nushell. mosh passes on the screen, not the shell's messages, so Lig also opens an ssh
+  connection of its own for them: it needs a login without a password (a key or
+  ssh-agent), or the popup stays off. `--ssh=…` is followed; with a remote command it's
+  plain `mosh`.
 
 ## Update and remove
 

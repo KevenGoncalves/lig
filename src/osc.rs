@@ -25,10 +25,12 @@ const MAX_PENDING: usize = 1 << 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Msg {
     /// Fish's signal handler is installed; `pid` is the fish process to signal. On a `lig ssh`
-    /// or `lig mosh` host it's asked with a key instead, and takes insertions from `insert_file`.
+    /// or `lig mosh` host it's asked with a key instead, and takes insertions from `insert_file`
+    /// (`nu`: the host's shell is nu, not fish).
     Ready {
         pid: Option<u32>,
         insert_file: Option<String>,
+        nu: bool,
     },
     InsertRejected,
     Snapshot {
@@ -138,8 +140,10 @@ fn parse(payload: &[u8]) -> Option<Msg> {
     let (kind, rest) = s.split_once(';').unwrap_or((&s, ""));
     match kind {
         "R" => {
-            let (pid, file) = rest.split_once(';').map_or((rest, None), |(p, f)| (p, Some(f.to_string())));
-            Some(Msg::Ready { pid: pid.parse().ok(), insert_file: file })
+            let mut f = rest.splitn(3, ';');
+            let pid = f.next()?.parse().ok();
+            let insert_file = f.next().map(str::to_string);
+            Some(Msg::Ready { pid, insert_file, nu: f.next() == Some("nu") })
         }
         "J" => Some(Msg::InsertRejected),
         "Q" => {
@@ -248,13 +252,15 @@ mod tests {
         assert_eq!(
             msgs.into_iter().map(|(_, m)| m).collect::<Vec<_>>(),
             vec![
-                Msg::Ready { pid: None, insert_file: None },
+                Msg::Ready { pid: None, insert_file: None, nu: false },
                 Msg::Buffer { cursor: 6, text: "café;🙂\n".into() },
                 Msg::Hide
             ]
         );
-        assert_eq!(parse(b"R;4242"), Some(Msg::Ready { pid: Some(4242), insert_file: None }));
-        assert_eq!(parse(b"R;7;/tmp/tmp.x"), Some(Msg::Ready { pid: Some(7), insert_file: Some("/tmp/tmp.x".into()) }));
+        let ready = |pid, file: Option<&str>, nu| Msg::Ready { pid, insert_file: file.map(str::to_string), nu };
+        assert_eq!(parse(b"R;4242"), Some(ready(Some(4242), None, false)));
+        assert_eq!(parse(b"R;7;/tmp/tmp.x"), Some(ready(Some(7), Some("/tmp/tmp.x"), false)));
+        assert_eq!(parse(b"R;7;/tmp/tmp.x;nu"), Some(ready(Some(7), Some("/tmp/tmp.x"), true)));
     }
 
     #[test]

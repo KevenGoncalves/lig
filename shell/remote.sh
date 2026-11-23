@@ -37,6 +37,13 @@ LIG_EOF
   # After the user's config, as an install puts it at its end.
   exec "$s" -l -C "source '$d/post.fish'; command rm -rf '$d'" <"$LIG_TTY"
   ;;
+nu)
+  cat >"$d/post.nu" <<'LIG_EOF'
+@POST_NU@
+LIG_EOF
+  # After the user's config, as an install puts it at its end.
+  exec "$s" --login --execute "source '$d/post.nu'; rm --recursive --permanent '$d'" <"$LIG_TTY"
+  ;;
 esac
 rm -rf "$d"
 t=$LIG_TTY

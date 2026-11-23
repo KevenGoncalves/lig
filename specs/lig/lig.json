@@ -391,7 +391,7 @@
     },
     {
       "name": "ssh",
-      "description": "ssh with lig's popup on the host (zsh, bash or fish there; nothing is installed)",
+      "description": "ssh with lig's popup on the host (zsh, bash, fish or nu there; nothing is installed)",
       "options": [
         {
           "name": [
@@ -413,7 +413,7 @@
     },
     {
       "name": "mosh",
-      "description": "mosh with lig's popup on the host (zsh, bash or fish there; nothing is installed)",
+      "description": "mosh with lig's popup on the host (zsh, bash, fish or nu there; nothing is installed)",
       "options": [
         {
           "name": [

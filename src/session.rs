@@ -46,6 +46,8 @@ const REPORT_KEY: &str = "\x1b[23;8~";
 const HOST_REPORT_KEY: &str = "\x1b[9149~";
 /// How long a host's answer to that may take: it crosses mosh, then ssh.
 const HOST_SNAPSHOT_TIMEOUT: Duration = Duration::from_millis(1500);
+/// How long after a host's shell says it's ready lig first asks it for its line.
+const HOST_FIRST_ASK: Duration = Duration::from_millis(100);
 /// cmd's prompt marker arrives ahead of the prompt it marks (ConPTY passes it through
 /// before drawing), so the input starts where the cursor rests once output pauses this long.
 const PROMPT_SETTLE: Duration = Duration::from_millis(30);
@@ -82,7 +84,9 @@ enum Event {
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
     ShellSpecs(crate::nushell::ShellSpecs),
-    /// An insertion for a host's fish is in its file (see `host_insert`): press its key.
+    /// The host's nu's own commands (see [`crate::nushell::host_specs`]).
+    HostShellSpecs(crate::nushell::ShellSpecs),
+    /// An insertion for a host's fish or nu is in its file (see `host_insert`): press its key.
     HostInsert {
         ok: bool,
         run: bool,
@@ -125,6 +129,16 @@ fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
 fn config_stamp() -> Option<(std::time::SystemTime, u64)> {
     let m = std::fs::metadata(crate::config::config_path()).ok()?;
     Some((m.modified().ok()?, m.len()))
+}
+
+/// `input` is cursor position reports and nothing else.
+fn only_cursor_reports(input: &[u8]) -> bool {
+    let mut rest = input.to_vec();
+    let mut any = false;
+    while take_cursor_report(&mut rest).is_some() {
+        any = true;
+    }
+    any && rest.is_empty()
 }
 
 /// How many cursor position reports `input` holds.
@@ -530,8 +544,10 @@ struct RemoteSession {
     history: crate::history::HostHistory,
     /// Over `lig mosh`: its client always has the alternate screen, which isn't a full-screen app's.
     mosh: bool,
-    /// Fish there takes insertions from this file, which lig writes over its ssh connection.
+    /// Fish or nu there takes insertions from this file, which lig writes over its ssh connection.
     insert_file: Option<String>,
+    /// The host's nu was asked for its commands' specs.
+    nu_specs_asked: bool,
 }
 
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
@@ -1016,6 +1032,12 @@ impl Session {
                             let tail = report_start(&data);
                             r.partial = data.split_off(data.len() - tail);
                         }
+                    } else if self.shell_cursor_queries > 0 && only_cursor_reports(&data) {
+                        // The terminal's answers to the shell's questions (nu asks at each redraw):
+                        // not keys, so they don't change the line or touch the popup.
+                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
+                        self.write_pty(&data);
+                        continue;
                     } else {
                         // Answers to the shell's questions, on their way to it.
                         self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
@@ -1040,6 +1062,13 @@ impl Session {
                         self.request();
                     }
                 },
+                Event::HostShellSpecs(specs) => {
+                    if self.remote.is_some() {
+                        self.env.shell_specs = Some(specs);
+                        self.items_line.clear();
+                        self.request();
+                    }
+                }
                 Event::HostInsert { ok, run } => {
                     if ok && self.remote.is_some() {
                         let mut keys = SNAPSHOT_INSERT_KEY.as_bytes().to_vec();
@@ -1047,6 +1076,9 @@ impl Session {
                             keys.push(b'\r');
                         }
                         self.write_pty(&keys);
+                        if let Some(refresh) = &mut self.fish_refresh {
+                            refresh.changed();
+                        }
                     }
                 }
                 Event::HostHistory { ok, zsh, bash } => {
@@ -1205,10 +1237,13 @@ impl Session {
         }
         let mut w = vec![];
         // ConPTY wraps PowerShell's replies in cursor and mode sequences: only a changed
-        // screen means a changed line there (else each reply would ask again).
-        let before = self.report_key.then(|| self.screen_state());
+        // screen means a changed line there (else each reply would ask again). On a host the
+        // line only changes by keys lig passes on (nu redraws it after each reply): output
+        // doesn't count.
+        let host = self.remote.is_some();
+        let before = (self.report_key && !host).then(|| self.screen_state());
         if !only_modes(&fwd) {
-            if let Some(refresh) = self.fish_refresh.as_mut().filter(|_| before.is_none()) {
+            if let Some(refresh) = self.fish_refresh.as_mut().filter(|_| before.is_none() && !host) {
                 refresh.changed();
             }
             // Erase the popup first so the screen matches what the shell and vt100 expect.
@@ -1326,6 +1361,7 @@ impl Session {
             history: Default::default(),
             mosh,
             insert_file: None,
+            nu_specs_asked: false,
         });
         self.fish_shell = false;
         self.zsh_shell = false;
@@ -1421,7 +1457,7 @@ impl Session {
                 self.items_line.clear();
                 self.request();
             }
-            Msg::Ready { pid, insert_file } => {
+            Msg::Ready { pid, insert_file, nu } => {
                 crate::log(&format!("reader ready fish={} pid={:?} from={pid:?}", self.fish_shell, self.shell_pid));
                 // Fish that replaced the shell lig started (`exec fish`): same process.
                 if !self.fish_shell && pid.is_some() && pid == self.shell_pid {
@@ -1433,12 +1469,21 @@ impl Session {
                 if let Some(r) = &mut self.remote {
                     self.fish_shell = true;
                     r.insert_file = insert_file;
+                    // nu's own commands, from the host's nu (they don't change during a session).
+                    if nu && !std::mem::replace(&mut r.nu_specs_asked, true) {
+                        self.fetch_host_nu_specs();
+                    }
                 }
                 if self.fish_shell {
                     self.editing = true;
                     let mut refresh =
                         FishRefresh { timeout: host.then_some(HOST_SNAPSHOT_TIMEOUT), ..Default::default() };
                     refresh.changed();
+                    // nu says it's ready before its line editor reads keys: a request sent at
+                    // once would be echoed and lost.
+                    if host {
+                        refresh.due = Some(Instant::now() + HOST_FIRST_ASK);
+                    }
                     self.fish_refresh = Some(refresh);
                 }
             }
@@ -1984,6 +2029,17 @@ impl Session {
         self.request();
     }
 
+    /// The host's nu's own commands, read in the background.
+    fn fetch_host_nu_specs(&self) {
+        let Some(remote) = self.env.remote.clone() else { return };
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            if let Some(specs) = crate::nushell::host_specs(&remote) {
+                let _ = events.send(Event::HostShellSpecs(specs));
+            }
+        });
+    }
+
     /// Fish on a host reads an insertion from its file: written there over the ssh connection, in
     /// the background, before the key that applies it. Fish checks the line is still the one lig saw.
     fn host_insert(&self, file: String, payload: String, run: bool) {
@@ -2500,6 +2556,15 @@ mod tests {
         assert_eq!(follow_terminal(&mut parser, 9, 20, (8, 2)), -3);
         assert_eq!(parser.screen().contents_between(3, 0, 3, 20), "line4");
         assert_eq!(parser.screen().cursor_position(), (8, 2));
+    }
+
+    #[test]
+    fn input_of_only_cursor_reports() {
+        assert!(only_cursor_reports(b"\x1b[3;17R"));
+        assert!(only_cursor_reports(b"\x1b[3;17R\x1b[1;1R"));
+        assert!(!only_cursor_reports(b"\x1b[3;17Rx"));
+        assert!(!only_cursor_reports(b"ls"));
+        assert!(!only_cursor_reports(b""));
     }
 
     #[test]

@@ -48,12 +48,25 @@ pub fn specs(nu: &Path) -> Option<ShellSpecs> {
             flat
         }
     };
+    Some(from_flat(flat))
+}
+
+fn from_flat(flat: Vec<Value>) -> ShellSpecs {
     let specs: HashMap<String, Arc<Subcommand>> = nest(flat)
         .iter()
         .map(|v| (v["name"].as_str().unwrap_or_default().to_string(), Arc::new(crate::spec::from_value(v))))
         .collect();
     crate::log(&format!("nu specs: {} commands", specs.len()));
-    Some(Arc::new(specs))
+    Arc::new(specs)
+}
+
+/// The specs of the nu on a `lig ssh` or `lig mosh` host, read over lig's connection.
+pub fn host_specs(remote: &crate::remote::Remote) -> Option<ShellSpecs> {
+    let argv = ["nu".to_string(), "--no-config-file".into(), "-c".into(), SCRIPT.into()];
+    let cmd = crate::exec::Cmd::Argv(&argv);
+    let out = crate::exec::run(cmd, Path::new(""), &[], Duration::from_secs(15), Some(remote));
+    let flat = serde_json::from_str::<Vec<Value>>(&out.stdout).ok()?;
+    Some(from_flat(flat))
 }
 
 /// `str replace` becomes the subcommand `replace` of `str` (made bare if nu has none).

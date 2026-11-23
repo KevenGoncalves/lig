@@ -1,4 +1,4 @@
-//! `lig ssh`: ssh with lig's shell integration for the remote zsh, bash or fish, and a
+//! `lig ssh`: ssh with lig's shell integration for the remote zsh, bash, fish or nu, and a
 //! multiplexed connection that lig runs completions over. Nothing is installed on the
 //! host: the hooks go in a temp dir that the remote shell removes at its first prompt.
 //!
@@ -17,6 +17,7 @@ use crate::exec::Cmd;
 const POST_ZSH: &str = include_str!("../shell/post.zsh");
 const POST_BASH: &str = include_str!("../shell/post.bash");
 const POST_FISH: &str = include_str!("../shell/post.fish");
+const POST_NU: &str = include_str!("../shell/post.nu");
 const BOOTSTRAP: &str = include_str!("../shell/remote.sh");
 const ZSHENV: &str = include_str!("../shell/remote.zshenv");
 const BASHRC: &str = include_str!("../shell/remote.bashrc");
@@ -132,7 +133,8 @@ fn remote_command(out: Option<&str>) -> String {
             .replace("@POST_ZSH@", POST_ZSH)
             .replace("@BASHRC@", BASHRC)
             .replace("@POST_BASH@", POST_BASH)
-            .replace("@POST_FISH@", POST_FISH);
+            .replace("@POST_FISH@", POST_FISH)
+            .replace("@POST_NU@", POST_NU);
     format!("echo {} | base64 -d | sh", base64(script.as_bytes()))
 }
 
