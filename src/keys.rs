@@ -213,6 +213,41 @@ fn unescape(s: &str) -> Vec<u8> {
     out
 }
 
+/// `input` with the keypad's unmodified keys as the plain keys they stand for, if it has any:
+/// `ESC O M` (application keypad mode) and kitty's `ESC [ 57414 u` are Enter, `ESC O p` and
+/// `ESC [ 57399 u` are `0`… Shells don't all read those (zsh doesn't), and lig's Enter is `\r`.
+pub fn plain_keypad(input: &[u8]) -> Option<Vec<u8>> {
+    let keys = split(input);
+    if !keys.iter().any(|(raw, _)| keypad(raw).is_some()) {
+        return None;
+    }
+    Some(keys.iter().flat_map(|(raw, _)| keypad(raw).map_or(raw.to_vec(), |b| vec![b])).collect())
+}
+
+/// The byte an unmodified keypad key types.
+fn keypad(raw: &[u8]) -> Option<u8> {
+    const SS3: &[u8] = b"jklmnopqrstuvwxy";
+    if let [0x1b, b'O', c] = raw {
+        return match c {
+            b'M' => Some(b'\r'),
+            b'X' => Some(b'='),
+            c => SS3.iter().position(|s| s == c).map(|i| b"*+,-./0123456789"[i]),
+        };
+    }
+    let params = std::str::from_utf8(raw.strip_prefix(b"\x1b[")?.strip_suffix(b"u")?).ok()?;
+    let mut fields = params.split(';');
+    let code: u32 = fields.next()?.parse().ok()?;
+    // Modifiers `1` is none; a key with any is left to the shell.
+    if fields.next().is_some_and(|m| m.split(':').next() != Some("1")) {
+        return None;
+    }
+    match code {
+        57399..=57408 => Some(b'0' + (code - 57399) as u8),
+        57409..=57416 => Some(b"./*-+\r=,"[(code - 57409) as usize]),
+        _ => None,
+    }
+}
+
 /// Split an input chunk into `(bytes, key)` pairs.
 pub fn split(input: &[u8]) -> Vec<(&[u8], Key)> {
     let mut out = vec![];
@@ -289,6 +324,8 @@ fn escape_sequence(s: &[u8]) -> (usize, Key) {
                 b'H' => Code::Home,
                 b'F' => Code::End,
                 c @ b'P'..=b'S' => Code::F(c - b'P' + 1),
+                // The keypad's Enter in application keypad mode.
+                b'M' => Code::Enter,
                 _ => Code::Raw(s[..3].to_vec()),
             };
             (3, Key::plain(code))
@@ -348,7 +385,8 @@ fn csi(params: &[u8], fin: u8) -> Option<Key> {
 fn codepoint(n: u32) -> Option<Code> {
     Some(match n {
         9 => Code::Tab,
-        13 => Code::Enter,
+        // 57414: the keypad's Enter.
+        13 | 57414 => Code::Enter,
         27 => Code::Esc,
         127 | 8 => Code::Backspace,
         _ => Code::Char(char::from_u32(n).filter(|c| !c.is_control())?),
@@ -454,6 +492,19 @@ mod tests {
 
     fn keys(input: &[u8]) -> Vec<String> {
         split(input).into_iter().map(|(_, k)| k.name()).collect()
+    }
+
+    #[test]
+    fn keypad_keys_are_the_plain_keys() {
+        assert_eq!(keys(b"\x1bOM\x1b[57414u\x1b[57414;5u"), ["enter", "enter", "ctrl-enter"]);
+        let plain = |s: &[u8]| plain_keypad(s).map(|v| String::from_utf8(v).unwrap());
+        assert_eq!(plain(b"ls\x1bOM").as_deref(), Some("ls\r"));
+        assert_eq!(plain(b"\x1b[57414u\x1b[57414;1u\x1b[57414;1:1u").as_deref(), Some("\r\r\r"));
+        assert_eq!(plain(b"\x1bOp\x1bOy\x1bOk\x1bOX\x1b[57399u\x1b[57408u\x1b[57413u").as_deref(), Some("09+=09+"));
+        // Modified keypad keys, other keys and pastes stay as they are.
+        assert_eq!(plain(b"\x1b[57414;5u"), None);
+        assert_eq!(plain(b"\x1bOA\r\x1b[13u"), None);
+        assert_eq!(plain(b"\x1b[200~a\x1bOMb\x1b[201~"), None);
     }
 
     #[test]

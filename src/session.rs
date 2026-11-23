@@ -1589,6 +1589,8 @@ impl Session {
     }
 
     fn on_input(&mut self, data: &[u8]) {
+        let plain = keys::plain_keypad(data);
+        let data = plain.as_deref().unwrap_or(data);
         // Keys typed while a deferred Enter waits go after it, in order.
         if self.pending_enter.is_some() {
             self.deferred.extend_from_slice(data);
