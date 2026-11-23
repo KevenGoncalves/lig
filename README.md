@@ -192,7 +192,7 @@ Invoke-Expression (& lig init pwsh pre | Out-String)
 ### Nix
 
 The flake has a [home-manager](https://github.com/nix-community/home-manager) module that
-installs Lig, writes its config and sets up your shells (no `lig install` needed):
+installs Lig, writes its config and sets up zsh, bash, fish and nushell (no `lig install` needed):
 
 ```nix
 # flake.nix

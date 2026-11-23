@@ -1,6 +1,6 @@
 # Written by the release workflow of KevenGoncalves/lig (packaging/homebrew); edits here are replaced.
 class Lig < Formula
-  desc "IDE-style autocomplete for your terminal (zsh, bash and fish)"
+  desc "IDE-style autocomplete for your terminal (zsh, bash, fish and nushell)"
   homepage "https://github.com/KevenGoncalves/lig"
   license "MIT"
 
@@ -32,7 +32,7 @@ class Lig < Formula
 
   def caveats
     <<~EOS
-      Run `lig install` to turn on the popup in your shell (zsh, bash or fish).
+      Run `lig install` to turn on the popup in your shell (zsh, bash, fish or nushell).
     EOS
   end
 

@@ -1348,6 +1348,23 @@ mod shell_tests {
     }
 
     #[test]
+    fn ligs_own_spec_offers_every_shell() {
+        let spec: serde_json::Value = serde_json::from_str(include_str!("../specs/lig/lig.json")).unwrap();
+        let offered = |sub: &str| -> Vec<String> {
+            let s = spec["subcommands"].as_array().unwrap().iter().find(|s| s["name"] == sub).unwrap();
+            let args = if s["args"].is_array() { s["args"][0].clone() } else { s["args"].clone() };
+            args["suggestions"].as_array().unwrap().iter().map(|v| v["name"].as_str().unwrap().to_string()).collect()
+        };
+        for shell in ShellKind::value_variants() {
+            let name = shell.to_possible_value().unwrap().get_name().to_string();
+            for sub in ["install", "uninstall"] {
+                assert!(offered(sub).contains(&name), "{sub} {name}");
+            }
+            assert!(*shell == ShellKind::Cmd || offered("init").contains(&name), "init {name}");
+        }
+    }
+
+    #[test]
     fn config_examples_are_valid_settings() {
         // Uncommented, the examples `lig config` prints are a config file lig reads.
         let toml: String = CONFIG_EXAMPLES

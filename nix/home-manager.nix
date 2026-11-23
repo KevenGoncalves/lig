@@ -17,6 +17,8 @@ let
   '';
   posix = shell: part: block part ''eval "$(${lig} init ${shell} ${part})"'';
   fish = part: block part "eval (${lig} init fish ${part} | string collect)";
+  # nu can't eval a command's output: the code is written to files when the config is built.
+  nu = part: block part "source ${pkgs.runCommand "lig-${part}.nu" { } "${lig} init nu ${part} > $out"}";
 in
 {
   options.programs.lig = {
@@ -36,6 +38,7 @@ in
 
     enableBashIntegration = lib.hm.shell.mkBashIntegrationOption { inherit config; };
     enableFishIntegration = lib.hm.shell.mkFishIntegrationOption { inherit config; };
+    enableNushellIntegration = lib.hm.shell.mkNushellIntegrationOption { inherit config; };
     enableZshIntegration = lib.hm.shell.mkZshIntegrationOption { inherit config; };
   };
 
@@ -57,5 +60,11 @@ in
     programs.bash.initExtra = lib.mkIf cfg.enableBashIntegration (lib.mkAfter (posix "bash" "post"));
     programs.fish.shellInit = lib.mkIf cfg.enableFishIntegration (lib.mkBefore (fish "pre"));
     programs.fish.shellInitLast = lib.mkIf cfg.enableFishIntegration (lib.mkAfter (fish "post"));
+    programs.nushell.extraConfig = lib.mkIf cfg.enableNushellIntegration (
+      lib.mkMerge [
+        (lib.mkBefore (nu "pre"))
+        (lib.mkAfter (nu "post"))
+      ]
+    );
   };
 }

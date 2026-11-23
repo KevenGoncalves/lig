@@ -16,8 +16,8 @@ BuildRequires:  gcc
 Recommends:     curl
 
 %description
-lig shows IDE-style autocomplete suggestions as you type in zsh, bash
-and fish: subcommands, options, files, git branches and more, from over
+lig shows IDE-style autocomplete suggestions as you type in zsh, bash,
+fish and nushell: subcommands, options, files, git branches and more, from over
 740 commands.
 
 %prep

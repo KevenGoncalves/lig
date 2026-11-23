@@ -30,7 +30,11 @@
             "suggestions": [
               "zsh",
               "bash",
-              "fish"
+              "fish",
+              "nu",
+              "pwsh",
+              "powershell",
+              "cmd.exe"
             ],
             "template": "filepaths"
           }
@@ -50,7 +54,7 @@
     },
     {
       "name": "init",
-      "description": "Print shell integration code for fish, zsh, or bash",
+      "description": "Print shell integration code for fish, zsh, bash, nu or PowerShell",
       "options": [
         {
           "name": [
@@ -75,6 +79,18 @@
             {
               "name": "bash",
               "description": "~/.bashrc"
+            },
+            {
+              "name": "nu",
+              "description": "nushell's config.nu"
+            },
+            {
+              "name": "pwsh",
+              "description": "PowerShell 7's profile"
+            },
+            {
+              "name": "powershell",
+              "description": "Windows PowerShell 5.1's profile"
             }
           ]
         },
@@ -100,7 +116,7 @@
     },
     {
       "name": "install",
-      "description": "Add lig to your fish, zsh, or bash configuration (default: your $SHELL)",
+      "description": "Add lig to your fish, zsh, bash, nu or PowerShell configuration (default: your shell); for cmd, a Windows Terminal profile",
       "options": [
         {
           "name": [
@@ -125,13 +141,29 @@
           {
             "name": "bash",
             "description": "~/.bashrc"
+          },
+          {
+            "name": "nu",
+            "description": "nushell's config.nu"
+          },
+          {
+            "name": "pwsh",
+            "description": "PowerShell 7's profile"
+          },
+          {
+            "name": "powershell",
+            "description": "Windows PowerShell 5.1's profile"
+          },
+          {
+            "name": "cmd",
+            "description": "A Windows Terminal profile (cmd has no config file)"
           }
         ]
       }
     },
     {
       "name": "uninstall",
-      "description": "Remove lig from your fish, zsh, or bash configuration (default: your $SHELL)",
+      "description": "Remove lig from your fish, zsh, bash, nu or PowerShell configuration, or cmd's profile",
       "options": [
         {
           "name": [
@@ -156,6 +188,22 @@
           {
             "name": "bash",
             "description": "~/.bashrc"
+          },
+          {
+            "name": "nu",
+            "description": "nushell's config.nu"
+          },
+          {
+            "name": "pwsh",
+            "description": "PowerShell 7's profile"
+          },
+          {
+            "name": "powershell",
+            "description": "Windows PowerShell 5.1's profile"
+          },
+          {
+            "name": "cmd",
+            "description": "A Windows Terminal profile (cmd has no config file)"
           }
         ]
       }
