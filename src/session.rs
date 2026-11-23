@@ -76,6 +76,12 @@ enum Event {
     },
     /// nu's own commands, read from the nu lig runs (see [`crate::nushell`]).
     ShellSpecs(crate::nushell::ShellSpecs),
+    /// A `lig ssh` host's `.zsh_history` and `.bash_history`; `ok` if they could be read.
+    HostHistory {
+        ok: bool,
+        zsh: Vec<u8>,
+        bash: Vec<u8>,
+    },
 }
 
 struct Request {
@@ -374,10 +380,12 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     });
     let (req_tx, req_rx) = unbounded::<Request>();
     let behavior = cfg.behavior.clone();
+    let events = tx.clone();
     std::thread::spawn(move || worker(req_rx, tx, behavior));
     std::thread::spawn(crate::help::prune_cache);
 
     let mut s = Session {
+        events,
         insert_file,
         query_file,
         fish_sequence: 0,
@@ -505,6 +513,8 @@ struct RemoteSession {
     local_env: ShellEnv,
     fish_shell: bool,
     insertion_transport: InsertionTransport,
+    /// Its commands, for Ctrl+R there; the local history keeps none of them.
+    history: crate::history::HostHistory,
 }
 
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
@@ -810,6 +820,8 @@ struct Session {
     remote: Option<RemoteSession>,
     cwd_fallback: PathBuf,
     req_tx: Sender<Request>,
+    /// For the session's own background work (a `lig ssh` host's history).
+    events: Sender<Event>,
 
     // Popup state.
     items: Vec<Suggestion>,
@@ -995,6 +1007,20 @@ impl Session {
                         self.request();
                     }
                 },
+                Event::HostHistory { ok, zsh, bash } => {
+                    if let Some(r) = &mut self.remote {
+                        if ok {
+                            r.history.read_files(&zsh, &bash);
+                        } else {
+                            // Ask again at the next Ctrl+R.
+                            r.history.asked = false;
+                        }
+                        if self.history_mode {
+                            self.items_line.clear();
+                            self.request();
+                        }
+                    }
+                }
                 Event::Exit => return,
             }
         }
@@ -1253,6 +1279,7 @@ impl Session {
             local_env,
             fish_shell: self.fish_shell,
             insertion_transport: self.insertion_transport,
+            history: Default::default(),
         });
         self.fish_shell = false;
         self.fish_refresh = None;
@@ -1402,7 +1429,11 @@ impl Session {
                     && !command.starts_with(' ')
                     && let Some(history) = self.history.as_mut()
                 {
-                    history.record(&command);
+                    // A `lig ssh` host's commands are its own.
+                    match &mut self.remote {
+                        Some(r) => r.history.record(&command),
+                        None => history.record(&command),
+                    }
                 }
             }
             Msg::Finish => {
@@ -1880,14 +1911,38 @@ impl Session {
         self.request();
     }
 
+    /// Reads the `lig ssh` host's history files, in the background.
+    fn fetch_host_history(&self) {
+        let Some(remote) = self.env.remote.clone() else { return };
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            let cmd = crate::exec::Cmd::Shell(crate::history::HOST_FILES);
+            let out = crate::exec::run(cmd, Path::new(""), &[], Duration::from_secs(10), Some(&remote));
+            let mut files = out.stdout.lines().map(crate::remote::base64_decode);
+            let (zsh, bash) = (files.next().unwrap_or_default(), files.next().unwrap_or_default());
+            let _ = events.send(Event::HostHistory { ok: out.status == 0, zsh, bash });
+        });
+    }
+
     /// The history matching the line, newest first; picking one replaces the line.
     fn show_history(&mut self) {
         let fuzzy = self.cfg.behavior.fuzzy;
         let Some(history) = self.history.as_mut() else { return };
+        // On a `lig ssh` host, its history: what ran there now, then its shells' files.
+        let found = match &mut self.remote {
+            Some(r) => {
+                let fetch = !std::mem::replace(&mut r.history.asked, true);
+                let found = r.history.search(&self.line, fuzzy);
+                if fetch {
+                    self.fetch_host_history();
+                }
+                found
+            }
+            None => history.search(&self.line, fuzzy),
+        };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let delete = self.line.chars().count();
-        let items = history
-            .search(&self.line, fuzzy)
+        let items = found
             .into_iter()
             .take(500)
             .map(|(time, command)| Suggestion {

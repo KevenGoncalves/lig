@@ -128,6 +128,22 @@ fn remote_command() -> String {
     format!("echo {} | base64 -d | sh", base64(script.as_bytes()))
 }
 
+/// [`base64`] back to bytes; whatever isn't base64 is skipped.
+pub(crate) fn base64_decode(text: &str) -> Vec<u8> {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = vec![];
+    let (mut acc, mut bits) = (0u32, 0);
+    for six in text.bytes().filter_map(|b| ABC.iter().position(|&c| c == b)) {
+        acc = acc << 6 | six as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
+}
+
 pub(crate) fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
@@ -197,6 +213,9 @@ mod tests {
         assert_eq!(base64(b"f"), "Zg==");
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        for s in [&b""[..], b"f", b"fo", b"foo", b"\x83\xff\x00 zsh"] {
+            assert_eq!(base64_decode(&base64(s)), s);
+        }
     }
 
     #[test]

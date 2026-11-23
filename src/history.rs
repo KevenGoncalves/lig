@@ -116,27 +116,74 @@ impl History {
         self.entries.insert(0, (time, command.to_string()));
     }
 
-    /// The commands matching `query`, newest first: those starting with it, then those
-    /// containing it, then (with `fuzzy`) those with its letters in order.
+    /// The commands matching `query`, newest first (see [`matching`]).
     pub fn search(&mut self, query: &str, fuzzy: bool) -> Vec<(u64, String)> {
         self.reload();
-        let query = query.trim_start().to_lowercase();
-        let mut tiers: [Vec<(u64, String)>; 3] = Default::default();
-        for (time, command) in &self.entries {
-            let lower = command.to_lowercase();
-            let tier = if lower.starts_with(&query) {
-                0
-            } else if lower.contains(&query) {
-                1
-            } else if fuzzy && in_order(&query, &lower) {
-                2
-            } else {
-                continue;
-            };
-            tiers[tier].push((*time, command.clone()));
-        }
-        tiers.into_iter().flatten().collect()
+        matching(&self.entries, query, fuzzy)
     }
+}
+
+/// What a `lig ssh` host remembers: the commands run on it in this session, then its zsh and
+/// bash history files. In memory only: the host's history is its shells' to keep.
+#[derive(Default)]
+pub struct HostHistory {
+    /// Run in this session, newest first.
+    session: Vec<(u64, String)>,
+    /// From the host's files, newest first.
+    files: Vec<(u64, String)>,
+    /// The files were asked for.
+    pub asked: bool,
+}
+
+/// Prints a host's `.zsh_history` and `.bash_history`, one base64 line each (empty if missing).
+pub const HOST_FILES: &str =
+    r#"for f in "${ZDOTDIR:-$HOME}/.zsh_history" "$HOME/.bash_history"; do base64 <"$f" | tr -d '\n'; echo; done"#;
+
+impl HostHistory {
+    pub fn record(&mut self, command: &str) {
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        let time = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        self.session.retain(|(_, c)| c != command);
+        self.session.insert(0, (time, command.to_string()));
+    }
+
+    /// The host's files, as [`HOST_FILES`] sent them.
+    pub fn read_files(&mut self, zsh_history: &[u8], bash_history: &[u8]) {
+        let mut runs = zsh(zsh_history);
+        runs.extend(bash(&String::from_utf8_lossy(bash_history)));
+        runs.sort_by_key(|(time, _)| *time);
+        self.files = newest_unique(runs.into_iter());
+    }
+
+    pub fn search(&self, query: &str, fuzzy: bool) -> Vec<(u64, String)> {
+        let mut all = self.session.clone();
+        all.extend(self.files.iter().filter(|(_, c)| !self.session.iter().any(|(_, s)| s == c)).cloned());
+        matching(&all, query, fuzzy)
+    }
+}
+
+/// The commands in `entries` (newest first) matching `query`, newest first: those starting
+/// with it, then those containing it, then (with `fuzzy`) those with its letters in order.
+fn matching(entries: &[(u64, String)], query: &str, fuzzy: bool) -> Vec<(u64, String)> {
+    let query = query.trim_start().to_lowercase();
+    let mut tiers: [Vec<(u64, String)>; 3] = Default::default();
+    for (time, command) in entries {
+        let lower = command.to_lowercase();
+        let tier = if lower.starts_with(&query) {
+            0
+        } else if lower.contains(&query) {
+            1
+        } else if fuzzy && in_order(&query, &lower) {
+            2
+        } else {
+            continue;
+        };
+        tiers[tier].push((*time, command.clone()));
+    }
+    tiers.into_iter().flatten().collect()
 }
 
 fn in_order(query: &str, text: &str) -> bool {
@@ -264,6 +311,19 @@ fn fish(text: &str) -> Vec<(u64, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosts_history_is_its_session_then_its_files() {
+        let mut h = HostHistory::default();
+        assert!(h.search("", false).is_empty());
+        h.read_files(b": 100:0;make deploy\n: 200:0;git pull\n", b"ls\nmake deploy\n");
+        h.record("git pull");
+        h.record("echo new");
+        let found: Vec<String> = h.search("", false).into_iter().map(|(_, c)| c).collect();
+        assert_eq!(found, ["echo new", "git pull", "make deploy", "ls"]);
+        let found: Vec<String> = h.search("ma", false).into_iter().map(|(_, c)| c).collect();
+        assert_eq!(found, ["make deploy"]);
+    }
 
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("lig-history-{}-{name}", std::process::id()));
