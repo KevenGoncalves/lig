@@ -25,6 +25,8 @@ const DEBOUNCE: Duration = Duration::from_millis(4);
 const MAX_DELAY: Duration = Duration::from_millis(40);
 /// How long Enter waits for suggestions that are still loading.
 const ENTER_WAIT: Duration = Duration::from_millis(1500);
+/// [`ENTER_WAIT`] on a `lig ssh` host.
+const REMOTE_ENTER_WAIT: Duration = Duration::from_millis(300);
 /// Show "Searching…" only when results take longer than this.
 const LOADING_DELAY: Duration = Duration::from_millis(150);
 const DOUBLE_TAP: Duration = Duration::from_millis(500);
@@ -395,6 +397,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         report_key: is_powershell(&shell),
         cmd_shell: shell_name(&shell) == "cmd",
         nu_shell: shell_name(&shell) == "nu",
+        zsh_shell: false,
         nu_tail: vec![],
         prompt_pending: false,
         held: vec![],
@@ -512,6 +515,7 @@ struct RemoteSession {
     pid: u32,
     local_env: ShellEnv,
     fish_shell: bool,
+    zsh_shell: bool,
     insertion_transport: InsertionTransport,
     /// Its commands, for Ctrl+R there; the local history keeps none of them.
     history: crate::history::HostHistory,
@@ -773,6 +777,8 @@ struct Session {
     /// nu: the line is read off the screen like bash's, between nu's own prompt-end mark
     /// and the cursor (see [`nu_marks`]); insertions take fish's key.
     nu_shell: bool,
+    /// zsh reports its exact line: an insertion can check it (see shell/post.zsh).
+    zsh_shell: bool,
     /// A nu mark cut short at the end of the last output, finished by the next.
     nu_tail: Vec<u8>,
     /// cmd's prompt marker arrived and output hasn't paused yet.
@@ -914,7 +920,7 @@ impl Session {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             if let Some(t) = self.pending_enter {
-                let w = t + ENTER_WAIT;
+                let w = t + self.enter_wait();
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             if self.foreign {
@@ -955,7 +961,7 @@ impl Session {
                         {
                             continue;
                         }
-                        if self.pending_enter.is_some_and(|t| t.elapsed() >= ENTER_WAIT) {
+                        if self.pending_enter.is_some_and(|t| t.elapsed() >= self.enter_wait()) {
                             self.resolve_pending_enter();
                         }
                         self.render();
@@ -1250,6 +1256,7 @@ impl Session {
             crate::log(&format!("shell is now {kind:?}"));
         }
         self.fish_shell = fish;
+        self.zsh_shell = kind == ShellKind::Zsh;
         if !fish {
             self.fish_refresh = None;
         }
@@ -1278,10 +1285,12 @@ impl Session {
             pid,
             local_env,
             fish_shell: self.fish_shell,
+            zsh_shell: self.zsh_shell,
             insertion_transport: self.insertion_transport,
             history: Default::default(),
         });
         self.fish_shell = false;
+        self.zsh_shell = false;
         self.fish_refresh = None;
         self.prompt_end = None;
         self.insertion_transport = InsertionTransport::Inline;
@@ -1293,6 +1302,7 @@ impl Session {
         crate::log("remote ended");
         self.env = r.local_env;
         self.fish_shell = r.fish_shell;
+        self.zsh_shell = r.zsh_shell;
         self.insertion_transport = r.insertion_transport;
         self.prompt_end = None;
         self.reset_line();
@@ -1563,8 +1573,9 @@ impl Session {
         self.enter_after = None;
         self.loading = None;
         let data = std::mem::take(&mut self.deferred);
-        if self.fish_stale() {
-            // Fish didn't acknowledge in time: send Enter as is rather than accept for an old buffer.
+        if self.fish_stale() || (self.remote.is_some() && !self.unconfirmed().is_empty()) {
+            // The shell didn't report the line in time: send Enter as is rather than accept for
+            // an old line.
             self.write_pty(&data);
         } else {
             self.on_input(&data);
@@ -1769,8 +1780,10 @@ impl Session {
             }
         }
         // Only fish's reports can overtake keys (zsh's and bash's come in the output, PowerShell's
-        // answer a key); after other keys the line can't be predicted.
-        if !fwd.is_empty() && self.fish_refresh.is_some() && !self.report_key && self.pending_enter.is_none() {
+        // answer a key), and any shell's over `lig ssh`, a round trip behind; after other keys
+        // the line can't be predicted.
+        let reports_lag = (self.fish_refresh.is_some() && !self.report_key) || self.remote.is_some();
+        if !fwd.is_empty() && reports_lag && self.pending_enter.is_none() {
             match &typed {
                 Some(t) if !t.is_empty() => {
                     self.unconfirmed.push_str(t);
@@ -1835,6 +1848,12 @@ impl Session {
             Some((_, Some(expected))) => self.line == *expected,
             Some((before, None)) => self.line != *before,
         }
+    }
+
+    /// How long Enter waits for the line's suggestions: briefly on a `lig ssh` host, where
+    /// they come over the network, so a slow link doesn't hold the keys typed after it.
+    fn enter_wait(&self) -> Duration {
+        if self.remote.is_some() { REMOTE_ENTER_WAIT } else { ENTER_WAIT }
     }
 
     /// Enter waits briefly for this line's loading suggestions, to act on the final list.
@@ -2000,9 +2019,12 @@ impl Session {
             let result = format!("{kept}{}", s.insert);
             self.close_after_insert =
                 !(result.is_empty() || result.ends_with(|c: char| c.is_whitespace() || crate::engine::is_sep(c)));
-            // Fish checks the expected prefix before changing the buffer.
+            // Fish and zsh check the line left of the cursor is the one lig saw before changing it
+            // (over `lig ssh` the shell's reports come a round trip late).
             let payload = if self.fish_shell {
                 format!("{};{};{};{}{}", s.delete, s.back, self.line.chars().count(), self.line, s.insert)
+            } else if self.zsh_shell {
+                format!("{};{};{}\x1f{}", s.delete, s.back, s.insert, self.line)
             } else {
                 format!("{};{};{}", s.delete, s.back, s.insert)
             };

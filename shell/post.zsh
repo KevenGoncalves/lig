@@ -24,7 +24,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     builtin print -rn -- $'\e]6973;F\a' >$TTY
   }
 
-  # lig sends: ESC [9147~ <delete>;<back>;<text> BEL
+  # lig sends: ESC [9147~ <delete>;<back>;<text> US <the line left of the cursor, as lig saw it> BEL
   _lig_insert() {
     builtin emulate -L zsh
     local c payload=
@@ -36,6 +36,13 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     payload=${payload#*;}
     local back=${payload%%;*}
     local text=${payload#*;}
+    local seen=${text#*$'\x1f'}
+    text=${text%%$'\x1f'*}
+    # The line changed since lig saw it (over lig ssh, a report can come late): say so, change nothing.
+    if [[ $LBUFFER != "$seen" ]]; then
+      builtin print -rn -- $'\e]6973;J\a' >$TTY
+      return
+    fi
     (( del > 0 )) && LBUFFER=${LBUFFER[1,-del-1]}
     LBUFFER+=$text
     (( back > 0 )) && (( CURSOR -= back ))

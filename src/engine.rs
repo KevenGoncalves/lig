@@ -868,7 +868,7 @@ impl Engine {
             None => cur.raw.chars().count(),
         };
         let listed = match cx.env.remote.clone() {
-            Some(r) => self.remote_dir(&r, cx.env, dir_part),
+            Some(r) => self.remote_dir(&r, cx, dir_part),
             None => local_dir(&cx.env.cwd, dir_part),
         };
         let mut entries: Vec<(bool, String)> = listed
@@ -895,16 +895,22 @@ impl Engine {
         }
     }
 
-    /// [`local_dir`] on a `lig ssh` host, cached briefly.
-    fn remote_dir(&mut self, r: &Remote, env: &ShellEnv, dir_part: &str) -> Listing {
-        let key = format!("{}\0{}\0{dir_part}", r.dest, env.cwd.display());
-        if let Some((t, v)) = self.remote_dirs.get(&key)
+    /// [`local_dir`] on a `lig ssh` host, cached briefly. The first, quick pass doesn't wait on
+    /// the network: it shows the last listing, if any, and the second one lists the folder.
+    fn remote_dir(&mut self, r: &Remote, cx: &mut Cx<'_>, dir_part: &str) -> Listing {
+        let key = format!("{}\0{}\0{dir_part}", r.dest, cx.env.cwd.display());
+        let cached = self.remote_dirs.get(&key);
+        if let Some((t, v)) = cached
             && t.elapsed() < REMOTE_DIR_TTL
         {
             return v.clone();
         }
+        if !cx.run_generators {
+            cx.wait("Listing the folder on the host".into());
+            return cached.map(|(_, v)| v.clone()).unwrap_or_default();
+        }
         let ls = remote::ls_command(dir_part);
-        let out = exec::run(Cmd::Shell(&ls), &env.cwd, &[], REMOTE_TIMEOUT, Some(r));
+        let out = exec::run(Cmd::Shell(&ls), &cx.env.cwd, &[], REMOTE_TIMEOUT, Some(r));
         let v: Listing = Arc::new(
             out.stdout
                 .lines()
@@ -961,7 +967,7 @@ impl Engine {
 
     /// Aliases, shell functions, builtins and executables on PATH; those with a spec first.
     fn commands(&mut self, cx: &mut Cx<'_>) {
-        let path = self.path_commands(cx.env);
+        let path = self.path_commands(cx);
         let with_spec = self.spec_names();
         let described = self.user_descriptions();
         let (q, d) = cx.default_query();
@@ -1002,14 +1008,21 @@ impl Engine {
         }
     }
 
-    fn path_commands(&mut self, env: &ShellEnv) -> Arc<BTreeSet<String>> {
+    fn path_commands(&mut self, cx: &mut Cx<'_>) -> Arc<BTreeSet<String>> {
+        let env = cx.env;
         let path = env.path.clone().or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
         let key = format!("{}\0{path}", env.remote.as_ref().map_or("", |r| r.dest.as_str()));
-        if let Some((t, p, set)) = &self.path_cmds
-            && *p == key
+        let cached = self.path_cmds.as_ref().filter(|(_, p, _)| *p == key);
+        if let Some((t, _, set)) = cached
             && t.elapsed() < Duration::from_secs(30)
         {
             return set.clone();
+        }
+        // A host's commands, like its folders: listed in the second pass.
+        if env.remote.is_some() && !cx.run_generators {
+            let stale = cached.map(|(_, _, set)| set.clone()).unwrap_or_default();
+            cx.wait("Listing the host's commands".into());
+            return stale;
         }
         let mut set = BTreeSet::new();
         if let Some(r) = &env.remote {

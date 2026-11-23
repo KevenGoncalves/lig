@@ -54,6 +54,10 @@ impl Remote {
             &control,
             "-o",
             "ControlMaster=no",
+            // Over the open connection only: without it ssh would log in afresh for each
+            // suggestion, which is slow, and ProxyCommand runs only for a new connection.
+            "-o",
+            "ProxyCommand=false",
             "-o",
             "BatchMode=yes",
             "-o",
