@@ -36,7 +36,8 @@ itself.
   `$HO` → `$HOME`).
 - **History** on `Ctrl+R`: the commands you ran, from every session, fuzzy-searched; `Alt+R`
   shows those you ran in the current folder.
-- Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`**.
+- Works in **any terminal**, in **tmux** and **zellij**, and on a server with **`lig ssh`** or
+  **`lig mosh`** (zsh, bash, fish or nushell there, nothing installed).
 - Themes, Nerd Font icons, any keys. Runs locally: no daemon, no account, no telemetry.
 
 ## Try it in Docker
@@ -75,7 +76,8 @@ lig doctor             # check the setup
 
 **Requirements**: Linux or macOS 11+ with zsh ≥ 5.3, bash ≥ 4.4 (on macOS, not Apple's 3.2),
 fish ≥ 4.2.1 or nushell (tested with 0.117); Windows 10 1809+ with PowerShell or cmd.
-Optional: `curl` for package search, a [Nerd Font](https://www.nerdfonts.com) for icons.
+Optional: `curl` for package search, a [Nerd Font](https://www.nerdfonts.com) for icons,
+`mosh` for `lig mosh`.
 
 `lig install` adds a few lines to your shell's config file (`~/.zshrc`, `~/.bashrc`,
 `config.fish`, `config.nu` or the PowerShell profile), backing it up first; to add them
@@ -239,10 +241,14 @@ Type as usual; the popup shows what fits.
   run the line and **Back** to go up.
 - **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
   you type `-` (`options_after_dash`).
+- **Matching**: what starts with the typed word comes first; when nothing does, its letters
+  in order anywhere match, as in fzf (`top` → `btop`), best matches first (`fuzzy = false`
+  turns that off).
 - **History** (`Ctrl+R`) lists the commands you ran, in every Lig session, newest first
   and each once; typing narrows it (fuzzy), and `Enter` puts one on the line. `Alt+R` lists
-  only those you ran in the current folder (and `Ctrl+R` switches back). It starts with what
-  zsh, bash, fish and nu remember. A command typed with a leading space isn't kept;
+  only those you ran in the current folder, marked `local` (and `Ctrl+R` switches back). It
+  starts with what zsh, bash, fish and nu remember; in `lig ssh` and `lig mosh` it's the
+  server's history instead. A command typed with a leading space isn't kept;
   `history_success_only = true` keeps only those that ran without error, and
   `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
@@ -337,7 +343,7 @@ its own: with `alias ls=eza`, an `ls.toml` makes `ls` complete from it and `eza`
 `lig specs check` reports mistakes, `lig complete "deploy -e "` shows the suggestions, and
 `lig specs generators` lists the built-in live values (`generators = [{ builtin = "git:branches" }]`).
 
-## tmux, zellij and ssh
+## tmux, zellij, ssh and mosh
 
 - Lig shows the program running in a pane, and its folder, as its own: tmux, WezTerm and
   `ps -t` see `nvim` or `claude` where you work, not `lig shell` (editor plugins that find
@@ -385,8 +391,11 @@ Lig runs your shell in a pseudo-terminal and passes everything through. It keeps
 the screen, draws the popup under the cursor, and restores what was underneath when it
 closes, which is why it works in any terminal (and on Wayland, where apps can't place
 floating windows). Small shell hooks tell Lig the line: zsh reports it, bash's, nu's and
-cmd's are read off the screen, fish and PowerShell answer when Lig asks. At each prompt they
-also report the command that just ran and its exit status, for the history. Accepting sends
+cmd's are read off the screen, fish and PowerShell answer when Lig asks. On a `lig ssh` or
+`lig mosh` server, zsh still reports its line and the others answer when asked; over mosh, which
+passes on the screen and not the hooks' messages, those come through a file Lig reads over ssh.
+At each prompt the hooks also report the command that just ran and its exit status, for the
+history. Accepting sends
 a private key that a shell function binds to edit the line. nu's own commands (`ls`, `open`,
 `str replace`…) complete from nu's signatures, not from the coreutils of those names. Slow
 sources run in the background, so typing never waits.
@@ -425,10 +434,16 @@ Thanks to the contributors:
 - [@HaleTom](https://github.com/HaleTom)
 - [@jeremiasadriano](https://github.com/jeremiasadriano)
 - [@JoelDeAriovaldo](https://github.com/JoelDeAriovaldo)
+- [@m-kat](https://github.com/m-kat)
 - [@mawkler](https://github.com/mawkler)
 - [@mjsteinbaugh](https://github.com/mjsteinbaugh)
 - [@nadelacruz-00](https://github.com/nadelacruz-00)
+- [@oldmanniko-dev](https://github.com/oldmanniko-dev)
+- [@romainharlaut](https://github.com/romainharlaut)
 - [@techwizrd](https://github.com/techwizrd)
+- [@thomasaarholt](https://github.com/thomasaarholt)
+- [@vishudhshah](https://github.com/vishudhshah)
+- [@WWW4R4E](https://github.com/WWW4R4E)
 - [@xnmp](https://github.com/xnmp)
 
 The specs in `specs/fig/` come from [withfig/autocomplete](https://github.com/withfig/autocomplete),
