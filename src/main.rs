@@ -117,6 +117,12 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         args: Vec<String>,
     },
+    /// mosh with lig's popup on the host (zsh there; nothing is installed)
+    Mosh {
+        /// Arguments for mosh: options and the destination
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        args: Vec<String>,
+    },
     /// Update lig to the latest release on GitHub
     Update {
         /// Only check whether a newer release is available
@@ -1309,6 +1315,7 @@ fn main() -> Result<()> {
         Cmd::Complete { cwd, aliases, line } => complete(&line, cwd, aliases)?,
         Cmd::Doctor => doctor()?,
         Cmd::Ssh { args } => std::process::exit(remote::ssh(&args)?),
+        Cmd::Mosh { args } => std::process::exit(remote::mosh(&args)?),
         Cmd::Update { check, force } => update(check, force)?,
         Cmd::Icons => list_icons(),
         Cmd::Keys => keys::show(&keys::Bindings::new(&config::Config::load().keys))?,

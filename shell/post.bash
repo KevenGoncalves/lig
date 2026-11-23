@@ -2,6 +2,9 @@
 # between the prompt marker and the cursor.
 if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" && -z "$__lig_loaded" ]]; then
   __lig_loaded=1
+  # Where messages go: the terminal, or under lig mosh a file lig reads over ssh (mosh drops them).
+  __lig_out=${LIG_OUT:-/dev/tty}
+  unset LIG_OUT
   __lig_aliases=
   __lig_vars=
   __lig_once=
@@ -26,21 +29,21 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
       # `history 1` prints the number, `*` if edited, a space, then the line as typed.
       if [[ $h =~ ^\ *([0-9]+)[*\ ]\ (.*)$ ]]; then
         [[ -n $__lig_hist && ${BASH_REMATCH[1]} != "$__lig_hist" ]] &&
-          printf '\e]6973;E;%s;%s\a' "$__lig_ran_status" "${BASH_REMATCH[2]//[$'\a\e']/ }" >/dev/tty
+          printf '\e]6973;E;%s;%s\a' "$__lig_ran_status" "${BASH_REMATCH[2]//[$'\a\e']/ }" >>"$__lig_out"
         __lig_hist=${BASH_REMATCH[1]}
       else
         # No history yet: the next line is entry 1.
         __lig_hist=${__lig_hist:-0}
       fi
     fi
-    printf '\e]6973;C;%s\a\e]6973;P;%s\a' "${PWD//[$'\a\e']/}" "${PATH//[$'\a\e']/}" >/dev/tty
+    printf '\e]6973;C;%s\a\e]6973;P;%s\a' "${PWD//[$'\a\e']/}" "${PATH//[$'\a\e']/}" >>"$__lig_out"
     local k a=
     for k in "${!BASH_ALIASES[@]}"; do a+="$k=${BASH_ALIASES[$k]}"$'\x1e'; done
     a=${a%$'\x1e'}
     a=${a//[$'\a\e']/}
     if [[ $a != "$__lig_aliases" ]]; then
       __lig_aliases=$a
-      printf '\e]6973;A;%s\a' "$a" >/dev/tty
+      printf '\e]6973;A;%s\a' "$a" >>"$__lig_out"
     fi
     local e=
     for k in $(compgen -e); do [[ $k == _ ]] || e+="$k=${!k}"$'\x1e'; done
@@ -48,7 +51,7 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     e=${e//[$'\a\e']/}
     if [[ $e != "$__lig_vars" ]]; then
       __lig_vars=$e
-      printf '\e]6973;V;%s\a' "$e" >/dev/tty
+      printf '\e]6973;V;%s\a' "$e" >>"$__lig_out"
     fi
     if [[ -z $__lig_once ]]; then
       __lig_once=1
@@ -57,7 +60,7 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
       while IFS= read -r x; do b+=("$x"); done < <(compgen -b)
       while IFS= read -r x; do f+=("$x"); done < <(compgen -A function -X '_*')
       local IFS=$'\x1e'
-      printf '\e]6973;K;%s\a\e]6973;N;%s\a' "${b[*]}" "${f[*]}" >/dev/tty
+      printf '\e]6973;K;%s\a\e]6973;N;%s\a' "${b[*]}" "${f[*]}" >>"$__lig_out"
     fi
     # Re-append the marker when another tool (starship, …) rebuilds PS1.
     if [[ $PS1 != *'6973;S'* ]]; then
@@ -132,7 +135,7 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
     fi
     local IFS=$'\x1e'
     local m="${COMPREPLY[*]}"
-    printf '\e]6973;Z;%s\x1d%s\a' "${line//[$'\a\e\x1d']/ }" "${m//[$'\a\e']/ }" >/dev/tty
+    printf '\e]6973;Z;%s\x1d%s\a' "${line//[$'\a\e\x1d']/ }" "${m//[$'\a\e']/ }" >>"$__lig_out"
   }
   bind -x '"\e[9148~": __lig_complete'
 

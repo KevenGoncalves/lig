@@ -519,6 +519,8 @@ struct RemoteSession {
     insertion_transport: InsertionTransport,
     /// Its commands, for Ctrl+R there; the local history keeps none of them.
     history: crate::history::HostHistory,
+    /// Over `lig mosh`: its client always has the alternate screen, which isn't a full-screen app's.
+    mosh: bool,
 }
 
 /// `X` must come from a running `lig ssh`: anything printed to the terminal could claim to be one.
@@ -1273,7 +1275,7 @@ impl Session {
     }
 
     /// `lig ssh` started: until it ends, the remote shell drives the popup.
-    fn start_remote(&mut self, pid: u32, control: String, dest: String) {
+    fn start_remote(&mut self, pid: u32, control: String, dest: String, mosh: bool) {
         if self.remote.is_some() || !is_lig_ssh(pid, &control) {
             crate::log(&format!("ignored remote start from pid {pid}"));
             return;
@@ -1288,6 +1290,7 @@ impl Session {
             zsh_shell: self.zsh_shell,
             insertion_transport: self.insertion_transport,
             history: Default::default(),
+            mosh,
         });
         self.fish_shell = false;
         self.zsh_shell = false;
@@ -1480,7 +1483,7 @@ impl Session {
             Msg::Functions(f) => self.env.functions = std::sync::Arc::new(f),
             Msg::Builtins(b) => self.env.builtins = std::sync::Arc::new(b),
             Msg::Vars(v) => self.env.vars = std::sync::Arc::new(v),
-            Msg::Remote { pid, control, dest } => self.start_remote(pid, control, dest),
+            Msg::Remote { pid, control, dest, mosh } => self.start_remote(pid, control, dest, mosh),
             Msg::RemoteEnd => self.end_remote(),
         }
         self.mark_dirty();
@@ -1495,7 +1498,7 @@ impl Session {
             && !self.hidden
             && !self.visible()
             && self.dismissed.as_deref() != Some(self.line.as_str())
-            && !self.parser.screen().alternate_screen()
+            && !self.full_screen_app()
             && !self.foreign;
         show.then_some(label.as_str())
     }
@@ -1829,7 +1832,12 @@ impl Session {
 
     /// The popup may be shown now (the shell is editing a line, nothing hides it).
     fn can_show(&self) -> bool {
-        self.editing && !self.hidden && !self.parser.screen().alternate_screen() && !self.foreign
+        self.editing && !self.hidden && !self.full_screen_app() && !self.foreign
+    }
+
+    /// A full-screen app (vim, less…) has the screen: the alternate one, except mosh's client's.
+    fn full_screen_app(&self) -> bool {
+        self.parser.screen().alternate_screen() && !self.remote.as_ref().is_some_and(|r| r.mosh)
     }
 
     /// Enter may be held back to act on up-to-date suggestions.

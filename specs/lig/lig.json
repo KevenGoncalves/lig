@@ -412,6 +412,28 @@
       }
     },
     {
+      "name": "mosh",
+      "description": "mosh with lig's popup on the host (zsh there; nothing is installed)",
+      "options": [
+        {
+          "name": [
+            "-h",
+            "--help"
+          ],
+          "description": "Print help"
+        }
+      ],
+      "args": {
+        "name": "args",
+        "isVariadic": true,
+        "generators": [
+          {
+            "builtin": "ssh:hosts"
+          }
+        ]
+      }
+    },
+    {
       "name": "update",
       "description": "Update lig to the latest release on GitHub",
       "options": [

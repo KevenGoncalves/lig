@@ -56,11 +56,13 @@ pub enum Msg {
     Functions(Vec<String>),
     Builtins(Vec<String>),
     Vars(Vec<(String, String)>),
-    /// `lig ssh` (process `pid`) logs in to `dest` with its connection at `control`.
+    /// `lig ssh` (process `pid`) logs in to `dest` with its connection at `control`; `mosh`:
+    /// `lig mosh`, whose client draws the host's screen in the alternate screen.
     Remote {
         pid: u32,
         control: String,
         dest: String,
+        mosh: bool,
     },
     RemoteEnd,
 }
@@ -177,9 +179,10 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         "K" => Some(Msg::Builtins(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
         "V" => Some(Msg::Vars(pairs(rest))),
         "X" => {
-            let mut f = rest.splitn(3, ';');
+            let mut f = rest.splitn(4, ';');
             let pid = f.next()?.parse().ok()?;
-            Some(Msg::Remote { pid, control: f.next()?.to_string(), dest: f.next()?.to_string() })
+            let (control, dest) = (f.next()?.to_string(), f.next()?.to_string());
+            Some(Msg::Remote { pid, control, dest, mosh: f.next() == Some("mosh") })
         }
         "Y" => Some(Msg::RemoteEnd),
         _ => None,
@@ -288,6 +291,13 @@ mod tests {
                 Msg::Vars(vec![("HOME".into(), "/home/me".into()), ("X".into(), "a=b".into())]),
             ]
         );
+    }
+
+    #[test]
+    fn remote_sessions_say_their_transport() {
+        let remote = |dest: &str, mosh| Msg::Remote { pid: 7, control: "/run/s".into(), dest: dest.into(), mosh };
+        assert_eq!(parse(b"X;7;/run/s;admin@pi"), Some(remote("admin@pi", false)));
+        assert_eq!(parse(b"X;7;/run/s;pi;mosh"), Some(remote("pi", true)));
     }
 
     #[test]

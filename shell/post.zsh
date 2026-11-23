@@ -1,6 +1,9 @@
 # lig: report the ZLE edit buffer to the lig PTY and accept insertions from it.
 if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TTY" ]] && (( ! ${+_lig_loaded} )); then
   typeset -g _lig_loaded=1 _lig_last=
+  # Where messages go: the terminal, or under lig mosh a file lig reads over ssh (mosh drops them).
+  typeset -g _lig_out=${LIG_OUT:-$TTY}
+  unset LIG_OUT
 
   _lig_report() {
     builtin emulate -L zsh
@@ -15,13 +18,13 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     fi
     [[ $msg == $_lig_last ]] && return
     _lig_last=$msg
-    builtin print -rn -- "$msg" >$TTY
+    builtin print -rn -- "$msg" >>$_lig_out
   }
   _lig_line_init() { _lig_last=; _lig_report }
   _lig_line_finish() {
     _lig_last=
     _lig_ran=$BUFFER
-    builtin print -rn -- $'\e]6973;F\a' >$TTY
+    builtin print -rn -- $'\e]6973;F\a' >>$_lig_out
   }
 
   # lig sends: ESC [9147~ <delete>;<back>;<text> US <the line left of the cursor, as lig saw it> BEL
@@ -40,7 +43,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     text=${text%%$'\x1f'*}
     # The line changed since lig saw it (over lig ssh, a report can come late): say so, change nothing.
     if [[ $LBUFFER != "$seen" ]]; then
-      builtin print -rn -- $'\e]6973;J\a' >$TTY
+      builtin print -rn -- $'\e]6973;J\a' >>$_lig_out
       return
     fi
     (( del > 0 )) && LBUFFER=${LBUFFER[1,-del-1]}
@@ -63,10 +66,10 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     builtin emulate -L zsh
     # The line that just ran, and how it ended (for lig's history).
     if [[ -n $_lig_ran ]]; then
-      builtin print -rn -- $'\e]6973;E;'"$ret;${_lig_ran//[$'\a\e']/ }"$'\a' >$TTY
+      builtin print -rn -- $'\e]6973;E;'"$ret;${_lig_ran//[$'\a\e']/ }"$'\a' >>$_lig_out
       _lig_ran=
     fi
-    builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >$TTY
+    builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >>$_lig_out
     local k
     local -a pairs
     for k in ${(k)aliases}; do pairs+=("$k=${aliases[$k]}"); done
@@ -74,16 +77,16 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     a=${a//[$'\a\e']/}
     if [[ $a != $_lig_aliases ]]; then
       _lig_aliases=$a
-      builtin print -rn -- $'\e]6973;A;'"$a"$'\a' >$TTY
+      builtin print -rn -- $'\e]6973;A;'"$a"$'\a' >>$_lig_out
     fi
     if [[ -z $_lig_builtins_sent ]]; then
       _lig_builtins_sent=1
-      builtin print -rn -- $'\e]6973;K;'"${(pj:\x1e:)${(@k)builtins:#[^a-z]*}}"$'\a' >$TTY
+      builtin print -rn -- $'\e]6973;K;'"${(pj:\x1e:)${(@k)builtins:#[^a-z]*}}"$'\a' >>$_lig_out
     fi
     local f=${(pj:\x1e:)${(k)functions:#[_+.-]*}}
     if [[ $f != $_lig_functions ]]; then
       _lig_functions=$f
-      builtin print -rn -- $'\e]6973;N;'"${f//[$'\a\e']/}"$'\a' >$TTY
+      builtin print -rn -- $'\e]6973;N;'"${f//[$'\a\e']/}"$'\a' >>$_lig_out
     fi
     local -a vars
     for k in ${(k)parameters[(R)*export*]}; do [[ $k == _ ]] || vars+=("$k=${(P)k}"); done
@@ -91,7 +94,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
     v=${v//[$'\a\e']/}
     if [[ $v != $_lig_vars ]]; then
       _lig_vars=$v
-      builtin print -rn -- $'\e]6973;V;'"$v"$'\a' >$TTY
+      builtin print -rn -- $'\e]6973;V;'"$v"$'\a' >>$_lig_out
     fi
     # Prompts after this hook (starship…) still see the command's status.
     return ret
@@ -149,7 +152,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
       builtin unfunction compadd
     fi
     local m=${(pj:\x1e:)_lig_matches}
-    builtin print -rn -- $'\e]6973;Z;'"${LBUFFER//[$'\a\e\x1d']/ }"$'\x1d'"${m//[$'\a\e']/ }"$'\a' >$TTY
+    builtin print -rn -- $'\e]6973;Z;'"${LBUFFER//[$'\a\e\x1d']/ }"$'\x1d'"${m//[$'\a\e']/ }"$'\a' >>$_lig_out
   }
   # Not named *complete*: _lig_report would take the next prompt for zsh's own menu.
   builtin zle -C _lig_ask complete-word _lig_complete

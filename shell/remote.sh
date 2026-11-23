@@ -7,6 +7,10 @@ s=${SHELL:-/bin/sh}
 LIG_TTY=$(tty <&2) || LIG_TTY=$(tty </dev/tty) || exec "$s" -l </dev/tty
 d=$(mktemp -d "${TMPDIR:-/tmp}/lig.XXXXXX") || exec "$s" -l <"$LIG_TTY"
 export LIG_TTY LIG_REMOTE=1 LIG_DIR="$d"
+# lig mosh: the hooks' messages go to this file, which lig reads over ssh.
+if [ -n "${LIG_OUT-}" ]; then
+  (umask 077 && : >>"$LIG_OUT") && export LIG_OUT || unset LIG_OUT
+fi
 case ${s##*/} in
 zsh)
   cat >"$d/.zshenv" <<'LIG_EOF'
