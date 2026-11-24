@@ -217,11 +217,6 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}apt/
     steps:
       - uses: actions/checkout@v4
         with:
@@ -238,5 +233,18 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
+  # Its own job, as GitHub's Pages setup has it: deployed in the job that uploaded it, the
+  # artifact can be missing from the run's list yet (v1.4.2's first release run failed so).
+  apt-deploy:
+    needs: apt
+    runs-on: ubuntu-22.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}apt/
+    steps:
       - id: deploy
         uses: actions/deploy-pages@v4
