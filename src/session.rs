@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded, unbounded};
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
@@ -59,6 +59,8 @@ const CONFIG_POLL: Duration = Duration::from_millis(250);
 const RESIZE_SETTLE: Duration = Duration::from_millis(40);
 /// How long the terminal has to answer where its cursor is.
 const CURSOR_REPORT_WAIT: Duration = Duration::from_millis(200);
+/// Bound output retained to rebuild the startup screen from its reported origin.
+const STARTUP_REPLAY_LIMIT: usize = 1024 * 1024;
 /// cmd's internal commands, for command names (cmd can't report them).
 const CMD_BUILTINS: &[&str] = &[
     "assoc", "break", "call", "cd", "chdir", "cls", "color", "copy", "date", "del", "dir", "echo", "endlocal", "erase",
@@ -69,7 +71,8 @@ const CMD_BUILTINS: &[&str] = &[
 
 enum Event {
     Input(Vec<u8>),
-    Output(Vec<u8>),
+    /// The startup reader waits for an acknowledgment before reading again.
+    Output(Vec<u8>, Option<Sender<bool>>),
     Exit,
     Resize,
     /// Suggestions for `line`; `loading` names what is still being fetched; `command` is the
@@ -106,45 +109,16 @@ struct Request {
     manual: bool,
 }
 
-/// Remove one complete ANSI cursor report, preserving typeahead and other replies.
-fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
-    for start in 0..input.len().saturating_sub(1) {
-        let Some(rest) = input[start..].strip_prefix(b"\x1b[") else { continue };
-        let Some(end) = rest.iter().position(|b| !b.is_ascii_digit() && *b != b';') else { continue };
-        if rest[end] != b'R' {
-            continue;
-        }
-        let Some((row, col)) = std::str::from_utf8(&rest[..end]).ok().and_then(|s| s.split_once(';')) else { continue };
-        let (Ok(row), Ok(col)) = (row.parse::<u16>(), col.parse::<u16>()) else { continue };
-        if row == 0 || col == 0 {
-            continue;
-        }
-        input.drain(start..start + 2 + end + 1);
-        return Some((row, col));
-    }
-    None
+fn cursor_position(params: &[u8]) -> Option<(u16, u16)> {
+    let (row, col) = std::str::from_utf8(params).ok()?.split_once(';')?;
+    let (row, col) = (row.parse().ok()?, col.parse().ok()?);
+    (row != 0 && col != 0).then_some((row, col))
 }
 
 /// `config.toml`'s modification time and size: the file is read again only when they change.
 fn config_stamp() -> Option<(std::time::SystemTime, u64)> {
     let m = std::fs::metadata(crate::config::config_path()).ok()?;
     Some((m.modified().ok()?, m.len()))
-}
-
-/// `input` is cursor position reports and nothing else.
-fn only_cursor_reports(input: &[u8]) -> bool {
-    let mut rest = input.to_vec();
-    let mut any = false;
-    while take_cursor_report(&mut rest).is_some() {
-        any = true;
-    }
-    any && rest.is_empty()
-}
-
-/// How many cursor position reports `input` holds.
-fn cursor_reports(input: &[u8]) -> usize {
-    let mut rest = input.to_vec();
-    std::iter::from_fn(|| take_cursor_report(&mut rest)).count()
 }
 
 /// `rect` moved up `by` rows (down if negative), clipped to a screen `rows` high.
@@ -184,44 +158,231 @@ struct Resync {
     asked: Option<Instant>,
     /// Resized again after asking: the answer is for an older size.
     stale: bool,
+    /// One extra wait for a child DSR split across output reads.
+    partial_waited: bool,
     /// Shell output that waits.
     held: Vec<u8>,
-    /// The start of the answer, when it came split between two reads.
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CursorInputPart {
+    Keys(Vec<u8>),
+    Report(Vec<u8>, (u16, u16)),
+}
+
+/// One input stream for startup, child and resize CPRs. Track paste delimiters
+/// even between queries so a deadline cannot turn pasted bytes into a reply.
+#[derive(Default)]
+struct CursorInput {
     partial: Vec<u8>,
+    partial_until: Option<Instant>,
+    paste: bool,
+    delimiter_prefix: usize,
 }
 
-/// The tail of `input` that may be the start of a cursor report (`ESC [ 12 ; 3`).
-fn report_start(input: &[u8]) -> usize {
-    match input.iter().rposition(|&b| b == 0x1b) {
-        Some(i)
-            if input[i + 1..]
-                .iter()
-                .enumerate()
-                .all(|(j, &b)| if j == 0 { b == b'[' } else { b.is_ascii_digit() || b == b';' }) =>
-        {
-            input.len() - i
+impl CursorInput {
+    fn track_paste(&mut self, byte: u8) {
+        let delimiter = if self.paste { b"\x1b[201~" } else { b"\x1b[200~" };
+        if byte == delimiter[self.delimiter_prefix] {
+            self.delimiter_prefix += 1;
+            if self.delimiter_prefix == delimiter.len() {
+                self.paste = !self.paste;
+                self.delimiter_prefix = 0;
+            }
+        } else {
+            self.delimiter_prefix = usize::from(byte == 0x1b);
         }
-        _ => 0,
+    }
+
+    fn flush_partial(&mut self) -> Vec<u8> {
+        self.partial_until = None;
+        let bytes = std::mem::take(&mut self.partial);
+        for &byte in &bytes {
+            self.track_paste(byte);
+        }
+        bytes
+    }
+
+    fn feed(&mut self, data: Vec<u8>, expecting_report: bool) -> Vec<CursorInputPart> {
+        if self.partial.is_empty() && self.delimiter_prefix == 0 && !data.contains(&0x1b) {
+            return vec![CursorInputPart::Keys(data)];
+        }
+        let mut bytes = std::mem::take(&mut self.partial);
+        bytes.extend(data);
+        let mut parts = vec![];
+        let mut keys = vec![];
+        let mut at = 0;
+        while at < bytes.len() {
+            let rest = &bytes[at..];
+            if expecting_report && !self.paste && rest[0] == 0x1b {
+                let mut incomplete = rest.len() == 1;
+                if let Some(params) = rest.strip_prefix(b"\x1b[") {
+                    // A u16 row and column take at most 11 parameter bytes.
+                    match params.iter().take(12).position(|b| !b.is_ascii_digit() && *b != b';') {
+                        Some(end) if params[end] == b'R' => {
+                            if let Some(position) = cursor_position(&params[..end]) {
+                                if !keys.is_empty() {
+                                    parts.push(CursorInputPart::Keys(std::mem::take(&mut keys)));
+                                }
+                                self.delimiter_prefix = 0;
+                                at += end + 3;
+                                parts.push(CursorInputPart::Report(rest[..end + 3].to_vec(), position));
+                                continue;
+                            }
+                        }
+                        None if params.len() < 12 => incomplete = true,
+                        _ => {}
+                    }
+                }
+                if incomplete {
+                    self.partial.extend_from_slice(rest);
+                    break;
+                }
+            }
+            self.track_paste(rest[0]);
+            keys.push(rest[0]);
+            at += 1;
+        }
+        if self.partial.is_empty() {
+            self.partial_until = None;
+        } else {
+            self.partial_until.get_or_insert_with(|| Instant::now() + CURSOR_REPORT_WAIT);
+        }
+        if !keys.is_empty() {
+            parts.push(CursorInputPart::Keys(keys));
+        }
+        parts
     }
 }
 
-/// The outer terminal can already contain output when lig starts. Establish its
-/// real origin before forwarding child output; a new vt100 screen assumes (1,1).
-fn terminal_origin() -> (Option<(u16, u16)>, Vec<u8>) {
-    let mut input = Vec::new();
-    if term::write(b"\x1b[6n").is_err() {
-        return (None, input);
+/// Count cursor-position queries in the child's output stream. PTY reads may
+/// split the four-byte sequence, so keep just enough tail to join the next
+/// chunk. The bytes themselves are still forwarded immediately.
+#[derive(Default)]
+struct CursorQueryCounter {
+    tail: Vec<u8>,
+}
+
+impl CursorQueryCounter {
+    fn observe(&mut self, output: &[u8]) -> usize {
+        const QUERY: &[u8] = b"\x1b[6n";
+        let mut joined = std::mem::take(&mut self.tail);
+        joined.extend_from_slice(output);
+        let count = joined.windows(QUERY.len()).filter(|w| *w == QUERY).count();
+        let keep = joined.len().min(QUERY.len() - 1);
+        self.tail.extend_from_slice(&joined[joined.len() - keep..]);
+        count
     }
-    let deadline = Instant::now() + Duration::from_millis(200);
-    while Instant::now() < deadline {
-        let mut bytes = [0; 4096];
-        let Some(n) = term::read_timeout(&mut bytes, deadline.saturating_duration_since(Instant::now())) else { break };
-        input.extend_from_slice(&bytes[..n]);
-        if let Some(position) = take_cursor_report(&mut input) {
-            return (Some(position), input);
+
+    fn incomplete(&self) -> bool {
+        let query = b"\x1b[6n";
+        (1..query.len()).any(|n| self.tail.ends_with(&query[..n]))
+    }
+}
+
+/// Child output held from its first cursor query until Lig's startup query no
+/// longer owns the next cursor report. Holding the rest too preserves the
+/// position the child asked about.
+#[derive(Default)]
+struct StartupOutput {
+    bytes: Vec<u8>,
+    msgs: Vec<(usize, Msg)>,
+    query: bool,
+}
+
+impl StartupOutput {
+    fn gate(&mut self, bytes: Vec<u8>, mut msgs: Vec<(usize, Msg)>) -> (Vec<u8>, Vec<(usize, Msg)>) {
+        let previous = self.bytes.len();
+        for (pos, _) in &mut msgs {
+            *pos += previous;
         }
+        self.bytes.extend_from_slice(&bytes);
+        self.msgs.extend(msgs);
+        if self.query {
+            return (vec![], vec![]);
+        }
+
+        const QUERY: &[u8] = b"\x1b[6n";
+        let split = if let Some(at) = self.bytes.windows(QUERY.len()).position(|w| w == QUERY) {
+            self.query = true;
+            at
+        } else {
+            let keep = (1..QUERY.len()).rev().find(|&n| self.bytes.ends_with(&QUERY[..n])).unwrap_or(0);
+            self.bytes.len() - keep
+        };
+
+        let held = self.bytes.split_off(split);
+        let forwarded = std::mem::replace(&mut self.bytes, held);
+        let mut forwarded_msgs = vec![];
+        let mut held_msgs = vec![];
+        for (pos, msg) in std::mem::take(&mut self.msgs) {
+            if pos <= split {
+                forwarded_msgs.push((pos, msg));
+            } else {
+                // Handle a private OSC inside a recognized DSR after the whole
+                // sequence, so handling the OSC cannot interrupt its write.
+                let pos = pos - split;
+                held_msgs.push((if self.query { pos.max(QUERY.len()) } else { pos }, msg));
+            }
+        }
+        self.msgs = held_msgs;
+        (forwarded, forwarded_msgs)
     }
-    (None, input)
+
+    fn into_parts(self) -> (Vec<u8>, Vec<(usize, Msg)>) {
+        (self.bytes, self.msgs)
+    }
+}
+
+/// Track the startup DSR without delaying child output or ordinary input.
+struct StartupCursor {
+    deadline: Instant,
+    replay: Option<OriginReplay>,
+    output: StartupOutput,
+    /// Once a DSR is held, the reader waits here instead of buffering more output.
+    reader_ack: Option<Sender<bool>>,
+}
+
+#[derive(Default)]
+struct OriginReplay {
+    bytes: Vec<u8>,
+    prompt: Option<usize>,
+}
+
+impl OriginReplay {
+    fn extend(&mut self, bytes: &[u8]) -> bool {
+        if self.bytes.len().saturating_add(bytes.len()) > STARTUP_REPLAY_LIMIT {
+            return false;
+        }
+        self.bytes.extend_from_slice(bytes);
+        true
+    }
+
+    fn rebase(self, rows: u16, cols: u16, (row, col): (u16, u16)) -> (vt100::Parser, Option<PromptEnd>) {
+        let mut parser = vt100::Parser::new(rows, cols, usize::from(rows));
+        parser.process(format!("\x1b[{};{}H", row.min(rows), col.min(cols)).as_bytes());
+        let at = self.prompt.unwrap_or(self.bytes.len());
+        parser.process(&self.bytes[..at]);
+        let anchor = self.prompt.map(|_| {
+            let screen = parser.screen();
+            let (row, col) = screen.cursor_position();
+            PromptEnd { row, col, prefix: screen.contents_between(row, 0, row, col) }
+        });
+        parser.process(&self.bytes[at..]);
+        (parser, anchor)
+    }
+}
+
+impl StartupCursor {
+    fn new() -> Option<Self> {
+        term::write(b"\x1b[6n").ok()?;
+        Some(Self {
+            deadline: Instant::now() + CURSOR_REPORT_WAIT,
+            replay: Some(OriginReplay::default()),
+            output: StartupOutput::default(),
+            reader_ack: None,
+        })
+    }
 }
 
 /// Replace this process with the plain shell (used when lig can't run).
@@ -370,25 +531,15 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
     });
 
     let raw = term::RawMode::enable()?;
-    let (origin, typeahead) = terminal_origin();
-    crate::log(&format!(
-        "startup shell={} size={rows}x{cols} origin={origin:?} typeahead={}",
-        shell.display(),
-        typeahead.len()
-    ));
-    let mut parser = vt100::Parser::new(rows, cols, usize::from(rows));
-    if let Some((row, col)) = origin {
-        parser.process(format!("\x1b[{};{}H", row.min(rows), col.min(cols)).as_bytes());
-    }
+    let startup_cursor = StartupCursor::new();
+    crate::log(&format!("startup shell={} size={rows}x{cols} origin=async", shell.display()));
+    let parser = vt100::Parser::new(rows, cols, usize::from(rows));
     let cfg = Config::load();
     crate::icons::set_overrides(&cfg.icons);
 
     let (tx, rx) = unbounded::<Event>();
-    if !typeahead.is_empty() {
-        let _ = tx.send(Event::Input(typeahead));
-    }
     spawn_stdin_reader(tx.clone());
-    spawn_pty_reader(reader, tx.clone());
+    spawn_pty_reader(reader, tx.clone(), startup_cursor.is_some());
     if shell_name(&shell) == "nu" {
         let (tx, nu) = (tx.clone(), shell.clone());
         std::thread::spawn(move || {
@@ -414,7 +565,9 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         insert_file,
         query_file,
         fish_sequence: 0,
-        unknown_rows: origin.map_or(0, |(row, _)| row.saturating_sub(1).min(rows)),
+        unknown_rows: 0,
+        startup_cursor,
+        cursor_input: CursorInput::default(),
         insertion_transport: InsertionTransport::for_shell(&shell),
         fish_shell: shell_name(&shell) == "fish" || is_powershell(&shell),
         report_key: is_powershell(&shell),
@@ -480,6 +633,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         resync: None,
         normal_unsynced: false,
         shell_cursor_queries: 0,
+        cursor_query_counter: CursorQueryCounter::default(),
         config_stamp: config_stamp(),
         config_checked: Instant::now(),
         sync_open: false,
@@ -515,7 +669,7 @@ fn spawn_stdin_reader(tx: Sender<Event>) {
     });
 }
 
-fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>) {
+fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>, mut startup: bool) {
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
@@ -525,7 +679,18 @@ fn spawn_pty_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Event>) {
                     break;
                 }
                 Ok(n) => {
-                    if tx.send(Event::Output(buf[..n].to_vec())).is_err() {
+                    let data = buf[..n].to_vec();
+                    if startup {
+                        // Only one chunk can be outstanding during startup.
+                        let (ack, next) = bounded(1);
+                        if tx.send(Event::Output(data, Some(ack))).is_err() {
+                            break;
+                        }
+                        match next.recv() {
+                            Ok(more_startup) => startup = more_startup,
+                            Err(_) => break,
+                        }
+                    } else if tx.send(Event::Output(data, None)).is_err() {
                         break;
                     }
                 }
@@ -799,6 +964,8 @@ struct Session {
     fish_sequence: u64,
     /// Rows above the startup cursor are absent from the screen model.
     unknown_rows: u16,
+    startup_cursor: Option<StartupCursor>,
+    cursor_input: CursorInput,
     insertion_transport: InsertionTransport,
     /// The shell reports its line when asked, as fish does; PowerShell speaks the same
     /// protocol (see shell/lig.ps1).
@@ -910,6 +1077,8 @@ struct Session {
     /// Cursor position questions the shell (or a program) sent the terminal, not answered yet:
     /// lig asks only when there are none, so it never takes their answer.
     shell_cursor_queries: usize,
+    /// Finds those questions even when a PTY read splits `ESC [ 6 n`.
+    cursor_query_counter: CursorQueryCounter,
     /// `config.toml` as last read (see [`config_stamp`]), and when it was last looked at.
     config_stamp: Option<(std::time::SystemTime, u64)>,
     config_checked: Instant,
@@ -924,6 +1093,7 @@ struct Session {
 impl Session {
     fn event_loop(&mut self, rx: &Receiver<Event>) {
         loop {
+            self.expire_cursor_input();
             self.resync_tick();
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
@@ -952,6 +1122,12 @@ impl Session {
             let mut deadline = (self.dirty && self.resync.is_none())
                 .then(|| (self.last_output + DEBOUNCE).min(self.dirty_since + MAX_DELAY));
             if let Some(w) = self.resync_wake() {
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
+            if let Some(p) = &self.startup_cursor {
+                deadline = Some(deadline.map_or(p.deadline, |d| d.min(p.deadline)));
+            }
+            if let Some(w) = self.cursor_input.partial_until {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             let woken_for_more = deadline;
@@ -985,6 +1161,7 @@ impl Session {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        self.expire_cursor_input();
                         if self.drawn.is_some()
                             && self.config_checked.elapsed() >= CONFIG_POLL
                             && !self.reload_theme()
@@ -1026,33 +1203,32 @@ impl Session {
                 }
             };
             match ev {
-                Event::Output(data) => match &mut self.resync {
-                    Some(r) => r.held.extend_from_slice(&data),
-                    None => self.on_output(&data),
-                },
-                Event::Input(mut data) => {
-                    if let Some(r) = self.resync.as_mut().filter(|r| r.asked.is_some()) {
-                        data.splice(0..0, std::mem::take(&mut r.partial));
-                        if let Some(report) = take_cursor_report(&mut data) {
-                            self.resynced(Some(report));
-                        } else {
-                            let tail = report_start(&data);
-                            r.partial = data.split_off(data.len() - tail);
-                        }
-                    } else if self.shell_cursor_queries > 0 && only_cursor_reports(&data) {
-                        // The terminal's answers to the shell's questions (nu asks at each redraw):
-                        // not keys, so they don't change the line or touch the popup.
-                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
-                        self.write_pty(&data);
-                        continue;
+                Event::Output(data, ack) => {
+                    // A resize can be pending during startup, but it cannot
+                    // query the terminal until the startup CPR is resolved.
+                    // Complete a child DSR whose prefix is already on the wire
+                    // before starting a resync of our own. Even if our resync
+                    // query has started, forwarding the remaining bytes lets
+                    // the child query reach the terminal and preserves CPR
+                    // ordering; the shell's reply is routed before ours.
+                    if let Some(r) = self
+                        .resync
+                        .as_mut()
+                        .filter(|_| self.startup_cursor.is_none() && !self.cursor_query_counter.incomplete())
+                    {
+                        r.held.extend_from_slice(&data);
                     } else {
-                        // Answers to the shell's questions, on their way to it.
-                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
+                        self.on_output(&data);
                     }
-                    if !data.is_empty() {
-                        self.on_input(&data);
+                    if let Some(ack) = ack {
+                        if let Some(probe) = self.startup_cursor.as_mut().filter(|p| p.output.query) {
+                            probe.reader_ack = Some(ack);
+                        } else {
+                            let _ = ack.send(self.startup_cursor.is_some());
+                        }
                     }
                 }
+                Event::Input(data) => self.on_terminal_input(data),
                 Event::Done { line, items, loading, command, ask_shell } => {
                     if let Some(asked) = ask_shell {
                         self.ask_shell(asked);
@@ -1104,6 +1280,125 @@ impl Session {
                 }
                 Event::Exit => return,
             }
+        }
+    }
+
+    fn expecting_cursor_report(&self) -> bool {
+        self.startup_cursor.is_some()
+            || self.shell_cursor_queries > 0
+            || self.resync.as_ref().is_some_and(|r| r.asked.is_some())
+    }
+
+    fn on_terminal_input(&mut self, data: Vec<u8>) {
+        for part in self.cursor_input.feed(data, self.expecting_cursor_report()) {
+            match part {
+                CursorInputPart::Keys(bytes) => self.on_input(&bytes),
+                CursorInputPart::Report(_, origin) if self.startup_cursor.is_some() => {
+                    self.finish_startup_cursor(Some(origin));
+                }
+                CursorInputPart::Report(bytes, _) if self.shell_cursor_queries > 0 => {
+                    // CPRs for the shell (nu asks at each redraw) are replies,
+                    // so pass them through without processing them as keys.
+                    self.shell_cursor_queries -= 1;
+                    self.write_pty(&bytes);
+                }
+                CursorInputPart::Report(_, position) if self.resync.as_ref().is_some_and(|r| r.asked.is_some()) => {
+                    self.resynced(Some(position));
+                }
+                CursorInputPart::Report(bytes, _) => self.on_input(&bytes),
+            }
+        }
+        if !self.expecting_cursor_report() {
+            self.flush_cursor_partial();
+        }
+    }
+
+    fn flush_cursor_partial(&mut self) {
+        let bytes = self.cursor_input.flush_partial();
+        if !bytes.is_empty() {
+            self.on_input(&bytes);
+        }
+    }
+
+    fn expire_cursor_input(&mut self) {
+        let now = Instant::now();
+        if self.startup_cursor.as_ref().is_some_and(|p| now >= p.deadline) {
+            self.flush_cursor_partial();
+            self.finish_startup_cursor(None);
+        } else if self.cursor_input.partial_until.is_some_and(|w| now >= w) {
+            self.flush_cursor_partial();
+        }
+    }
+
+    fn finish_startup_cursor(&mut self, origin: Option<(u16, u16)>) {
+        let Some(probe) = self.startup_cursor.take() else { return };
+        let StartupCursor { replay, output, reader_ack, .. } = probe;
+        let replay_missing = replay.is_none();
+        crate::log(&format!("startup origin={origin:?}"));
+        if let Some(origin) = origin {
+            if let Some(replay) = replay {
+                let (rows, cols) = self.parser.screen().size();
+                let (parser, prompt) = replay.rebase(rows, cols, origin);
+                self.parser = parser;
+                self.unknown_rows = origin.0.saturating_sub(1).min(rows);
+                if self.prompt_end.is_some() {
+                    self.prompt_end = prompt;
+                    self.read_line_from_screen();
+                }
+            }
+        }
+        // Release the child query at the original startup deadline if Lig got
+        // no answer. Standard CPRs carry no ID, so a reply after that deadline
+        // has the same ambiguity as with the old synchronous probe.
+        let (output, msgs) = output.into_parts();
+        if !output.is_empty() || !msgs.is_empty() {
+            self.on_filtered_output(output, msgs);
+        }
+        if replay_missing {
+            // A resize or replay overflow makes the origin insufficient.
+            // If only the CPR timed out, keep the provisional model as upstream
+            // did: asking the same terminal again would delay the first popup.
+            self.schedule_resync();
+        }
+        if self.waiting_for_shell_cursor_report()
+            && let Some(r) = &mut self.resync
+        {
+            r.ask_at = r.ask_at.max(Instant::now());
+        }
+        if let Some(ack) = reader_ack {
+            let _ = ack.send(false);
+        }
+        self.mark_dirty();
+    }
+
+    fn schedule_resync(&mut self) {
+        if self.resync.is_none()
+            && let Some((rows, cols)) = term::size()
+        {
+            self.resync = Some(Resync {
+                size: Some((rows, cols)),
+                ask_at: Instant::now(),
+                asked: None,
+                stale: false,
+                partial_waited: false,
+                held: vec![],
+            });
+        }
+    }
+
+    fn process_child_screen(&mut self, bytes: &[u8]) {
+        if let Some(probe) = &mut self.startup_cursor
+            && let Some(replay) = &mut probe.replay
+            && !replay.extend(bytes)
+        {
+            probe.replay = None;
+        }
+        self.parser.process(bytes);
+    }
+
+    fn record_startup_prompt(&mut self) {
+        if let Some(replay) = self.startup_cursor.as_mut().and_then(|p| p.replay.as_mut()) {
+            replay.prompt = Some(replay.bytes.len());
         }
     }
 
@@ -1218,6 +1513,15 @@ impl Session {
         let mut fwd = Vec::with_capacity(data.len());
         let mut msgs = vec![];
         self.osc.feed(data, &mut fwd, &mut msgs);
+        if let Some(probe) = &mut self.startup_cursor {
+            (fwd, msgs) = probe.output.gate(fwd, msgs);
+        }
+        self.on_filtered_output(fwd, msgs);
+    }
+
+    /// Child output after private shell messages have been removed and any
+    /// startup cursor-query conflict has been deferred.
+    fn on_filtered_output(&mut self, mut fwd: Vec<u8>, mut msgs: Vec<(usize, Msg)>) {
         // Another shell's own hooks speaking: nu was replaced (`exec bash`). Over `lig ssh` they
         // are the remote shell's, and nu is back when it ends.
         let local_nu = self.nu_shell && self.remote.is_none();
@@ -1236,7 +1540,18 @@ impl Session {
             self.nu_tail = unfinished_nu_mark(&joined).to_vec();
         }
         let pager = self.parser.screen().alternate_screen();
-        self.shell_cursor_queries += fwd.windows(4).filter(|w| *w == b"\x1b[6n").count();
+        // Count only queries about to go out, including those released from
+        // the startup buffer, so their CPRs can bypass key handling.
+        let shell_queries = self.cursor_query_counter.observe(&fwd);
+        self.shell_cursor_queries += shell_queries;
+        if shell_queries > 0
+            && let Some(resync) = &mut self.resync
+        {
+            // Give the shell its full response window before asking the terminal
+            // for our own cursor position.
+            resync.ask_at = Instant::now();
+            resync.partial_waited = false;
+        }
         // ConPTY asks its terminal for win32-input-mode; passed on, the terminal would send lig
         // keys it can't read. lig types plain VT, which ConPTY reads too.
         if cfg!(windows) {
@@ -1272,7 +1587,7 @@ impl Session {
             let next_msg = msgs.peek().map(|&(pos, _)| pos);
             let Some(pos) = next_msg.into_iter().chain(marks.peek().copied()).min() else { break };
             w.extend_from_slice(&fwd[at..pos]);
-            self.parser.process(&fwd[at..pos]);
+            self.process_child_screen(&fwd[at..pos]);
             at = pos;
             if next_msg == Some(pos) {
                 let (_, m) = msgs.next().unwrap();
@@ -1283,13 +1598,13 @@ impl Session {
                 // The terminal starts a new line at a prompt mark; do it here so vt100 does too.
                 if self.parser.screen().cursor_position().1 != 0 {
                     w.extend_from_slice(b"\r\n");
-                    self.parser.process(b"\r\n");
+                    self.process_child_screen(b"\r\n");
                 }
             }
         }
         w.extend_from_slice(&fwd[at..]);
         self.write_out(&w);
-        self.parser.process(&fwd[at..]);
+        self.process_child_screen(&fwd[at..]);
         if before.is_some_and(|b| b != self.screen_state())
             && let Some(refresh) = &mut self.fish_refresh
         {
@@ -1305,8 +1620,8 @@ impl Session {
                 ask_at: Instant::now(),
                 asked: None,
                 stale: false,
+                partial_waited: false,
                 held: vec![],
-                partial: vec![],
             });
         }
         self.update_foreign();
@@ -1532,6 +1847,7 @@ impl Session {
             }
             Msg::PromptEnd => {
                 self.switch_shell(ShellKind::Bash);
+                self.record_startup_prompt();
                 let screen = self.parser.screen();
                 let (row, col) = screen.cursor_position();
                 let prefix = screen.contents_between(row, 0, row, col);
@@ -1936,6 +2252,7 @@ impl Session {
     /// cmd's output paused after its prompt marker: the input starts at the cursor.
     fn prompt_settled(&mut self) {
         self.prompt_pending = false;
+        self.record_startup_prompt();
         let screen = self.parser.screen();
         let (row, col) = screen.cursor_position();
         let prefix = screen.contents_between(row, 0, row, col);
@@ -1953,7 +2270,7 @@ impl Session {
 
     /// The popup may be shown now (the shell is editing a line, nothing hides it).
     fn can_show(&self) -> bool {
-        self.editing && !self.hidden && !self.full_screen_app() && !self.foreign
+        self.startup_cursor.is_none() && self.editing && !self.hidden && !self.full_screen_app() && !self.foreign
     }
 
     /// A full-screen app (vim, less…) has the screen: the alternate one, except mosh's client's.
@@ -2233,12 +2550,18 @@ impl Session {
     fn on_resize(&mut self) {
         let Some((rows, cols)) = term::size() else { return };
         self.shell_pty.resize(rows, cols, term::pixels());
+        if let Some(probe) = &mut self.startup_cursor {
+            // Its reply is for the old geometry. Keep owning and consume it
+            // before resize asks again, but do not replay it into the model.
+            probe.replay = None;
+        }
         let ask_at = Instant::now() + RESIZE_SETTLE;
         match &mut self.resync {
             Some(r) => {
                 r.size = Some((rows, cols));
                 r.ask_at = ask_at;
                 r.stale |= r.asked.is_some();
+                r.partial_waited = false;
             }
             None => {
                 self.resync = Some(Resync {
@@ -2246,8 +2569,8 @@ impl Session {
                     ask_at,
                     asked: None,
                     stale: false,
+                    partial_waited: false,
                     held: vec![],
-                    partial: vec![],
                 });
             }
         }
@@ -2255,17 +2578,24 @@ impl Session {
 
     fn resync_wake(&self) -> Option<Instant> {
         let r = self.resync.as_ref()?;
+        if let Some(probe) = &self.startup_cursor {
+            return Some(probe.deadline);
+        }
         Some(match r.asked {
             Some(at) => at + CURSOR_REPORT_WAIT,
             // Waiting for the shell's own answers: look again shortly.
-            None if self.shell_cursor_queries > 0 && Instant::now() >= r.ask_at => Instant::now() + DEBOUNCE,
+            None if self.waiting_for_shell_cursor_report() && Instant::now() >= r.ask_at => Instant::now() + DEBOUNCE,
             None => r.ask_at,
         })
     }
 
     fn resync_tick(&mut self) {
+        if self.startup_cursor.is_some() {
+            return;
+        }
         let now = Instant::now();
         let pager = self.parser.screen().alternate_screen();
+        let shell_cursor_pending = self.waiting_for_shell_cursor_report();
         let Some(r) = &mut self.resync else { return };
         match r.asked {
             None if now >= r.ask_at => {
@@ -2281,30 +2611,40 @@ impl Session {
                     return;
                 }
                 // The shell's question goes first: its answer must reach it, not lig.
-                if self.shell_cursor_queries > 0 && now < r.ask_at + CURSOR_REPORT_WAIT {
+                if shell_cursor_pending && now < r.ask_at + CURSOR_REPORT_WAIT {
+                    return;
+                }
+                if self.cursor_query_counter.incomplete() && !r.partial_waited {
+                    // A DSR can be split across PTY reads. Let its tail through
+                    // before sending a competing query; retry once if the
+                    // fragment never completes so resize recovery stays bounded.
+                    r.ask_at = now;
+                    r.partial_waited = true;
                     return;
                 }
                 self.shell_cursor_queries = 0;
                 r.asked = Some(now);
                 self.write_out(b"\x1b[6n");
             }
-            Some(at) if now >= at + CURSOR_REPORT_WAIT => self.resynced(None),
+            Some(at) if now >= at + CURSOR_REPORT_WAIT => {
+                self.flush_cursor_partial();
+                self.resynced(None);
+            }
             _ => {}
         }
+    }
+
+    fn waiting_for_shell_cursor_report(&self) -> bool {
+        self.shell_cursor_queries > 0 || self.cursor_query_counter.incomplete()
     }
 
     /// The terminal said where its cursor is (1-based), or didn't in time: move the model, the
     /// popup on it and bash's prompt marker to match, then let the held output through.
     fn resynced(&mut self, report: Option<(u16, u16)>) {
         let Some(r) = self.resync.as_mut() else { return };
-        // No answer completed it: it was typed (a lone Esc), and goes on to the shell.
-        let typed = std::mem::take(&mut r.partial);
         if std::mem::take(&mut r.stale) {
             // For a size since replaced: ask again.
             r.asked = None;
-            if !typed.is_empty() {
-                self.on_input(&typed);
-            }
             return;
         }
         let r = self.resync.take().unwrap();
@@ -2328,9 +2668,6 @@ impl Session {
         self.mark_dirty();
         if !r.held.is_empty() {
             self.on_output(&r.held);
-        }
-        if !typed.is_empty() {
-            self.on_input(&typed);
         }
     }
 
@@ -2400,6 +2737,10 @@ impl Session {
     }
 
     fn render(&mut self) {
+        if self.startup_cursor.is_some() {
+            self.dirty = false;
+            return;
+        }
         // The model is about to move (see `Resync`): draw once it has.
         if self.resync.is_some() {
             self.mark_dirty();
@@ -2414,7 +2755,7 @@ impl Session {
         if !stuck.is_empty() {
             self.erase(&mut w);
             w.extend_from_slice(&stuck);
-            self.parser.process(&stuck);
+            self.process_child_screen(&stuck);
         }
         let fresh = self.visible();
         if fresh {
@@ -2555,20 +2896,85 @@ mod tests {
     }
 
     #[test]
-    fn startup_cursor_report_preserves_typeahead_and_other_replies() {
-        let mut input = b"git \x1b[?1;2c\x1b[12;24".to_vec();
-        assert_eq!(take_cursor_report(&mut input), None);
-        input.extend_from_slice(b"Rch");
-        assert_eq!(take_cursor_report(&mut input), Some((12, 24)));
-        assert_eq!(input, b"git \x1b[?1;2cch");
-        for invalid in [b"\x1b[0;1R".as_slice(), b"\x1b[1;2;3R", b"\x1b[999999;2R", b"\x1b[2;3H"] {
-            let mut input = invalid.to_vec();
-            assert_eq!(take_cursor_report(&mut input), None);
-            assert_eq!(input, invalid);
+    fn cursor_input_keeps_paste_state_across_timeouts_and_idle_reads() {
+        use CursorInputPart::{Keys, Report};
+        let mut cursor = CursorInput::default();
+        assert!(cursor.feed(b"\x1b[20".to_vec(), true).is_empty());
+        assert_eq!(cursor.flush_partial(), b"\x1b[20");
+        assert_eq!(cursor.feed(b"0~\x1b[9;9R".to_vec(), false), [Keys(b"0~\x1b[9;9R".to_vec())]);
+        assert_eq!(cursor.feed(b"\x1b[7;8R\x1b[20".to_vec(), true), [Keys(b"\x1b[7;8R\x1b[20".to_vec())]);
+        assert_eq!(
+            cursor.feed(b"1~\x1b[5;6R".to_vec(), true),
+            [Keys(b"1~".to_vec()), Report(b"\x1b[5;6R".to_vec(), (5, 6))]
+        );
+    }
+
+    #[test]
+    fn startup_replay_uses_only_emitted_bytes_at_prompt_marks() {
+        let mark = b"\x1b]133;A\x07$ ";
+        for (before, expected) in [(b"".as_slice(), (6, 9)), (b"\r\n".as_slice(), (7, 2))] {
+            let mut bytes = [before, mark].concat();
+            let anchor = bytes.len();
+            bytes.extend_from_slice(b"command");
+            let replay = OriginReplay { bytes, prompt: Some(anchor) };
+            let (parser, prompt) = replay.rebase(24, 80, (7, 8));
+            let prompt = prompt.unwrap();
+            assert_eq!((prompt.row, prompt.col), expected);
+            assert!(prompt.prefix.ends_with("$ "));
+            assert_eq!(parser.screen().cursor_position(), (expected.0, expected.1 + 7));
         }
-        let mut parser = vt100::Parser::new(30, 100, 0);
-        parser.process(b"\x1b[12;24Htest> git ch");
-        assert_eq!(parser.screen().cursor_position(), (11, 35));
+    }
+
+    #[test]
+    fn startup_replay_is_bounded() {
+        let mut replay = OriginReplay::default();
+        assert!(replay.extend(&vec![b'x'; STARTUP_REPLAY_LIMIT]));
+        assert!(!replay.extend(b"y"));
+        assert_eq!(replay.bytes.len(), STARTUP_REPLAY_LIMIT);
+    }
+
+    #[test]
+    fn cursor_input_preserves_typeahead_and_splits_consecutive_reports() {
+        use CursorInputPart::{Keys, Report};
+        let mut cursor = CursorInput::default();
+        assert_eq!(cursor.feed(b"git \x1b[?1;2c\x1b[12;24".to_vec(), true), [Keys(b"git \x1b[?1;2c".to_vec())]);
+        assert_eq!(
+            cursor.feed(b"R\x1b[9;10Rch".to_vec(), true),
+            [Report(b"\x1b[12;24R".to_vec(), (12, 24)), Report(b"\x1b[9;10R".to_vec(), (9, 10)), Keys(b"ch".to_vec())]
+        );
+        for invalid in [b"\x1b[0;1R".as_slice(), b"\x1b[1;2;3R", b"\x1b[999999;2R", b"\x1b[2;3H", b"\x1b[A"] {
+            assert_eq!(cursor.feed(invalid.to_vec(), true), [Keys(invalid.to_vec())]);
+        }
+        assert_eq!(cursor.feed(b"\x1b[1;1R".to_vec(), false), [Keys(b"\x1b[1;1R".to_vec())]);
+        assert!(cursor.feed(b"\x1b".to_vec(), true).is_empty());
+        assert_eq!(cursor.flush_partial(), b"\x1b");
+    }
+
+    #[test]
+    fn child_cursor_queries_are_counted_across_output_chunks() {
+        let mut queries = CursorQueryCounter::default();
+        assert_eq!(queries.observe(b"before\x1b["), 0);
+        assert!(queries.incomplete());
+        assert_eq!(queries.observe(b"6"), 0);
+        assert!(queries.incomplete());
+        assert_eq!(queries.observe(b"nafter\x1b[6n\x1b"), 2);
+        assert_eq!(queries.observe(b"[6n"), 1);
+        assert!(!queries.incomplete());
+        assert_eq!(queries.observe(b"not a query"), 0);
+    }
+
+    #[test]
+    fn startup_defers_a_split_child_query_and_the_output_after_it() {
+        let mut output = StartupOutput::default();
+        let (forwarded, msgs) = output.gate(b"before\x1b[6".to_vec(), vec![]);
+        assert_eq!(forwarded, b"before");
+        assert!(msgs.is_empty());
+        let (forwarded, msgs) = output.gate(b"nafter".to_vec(), vec![]);
+        assert!(forwarded.is_empty());
+        assert!(msgs.is_empty());
+        let (held, msgs) = output.into_parts();
+        assert_eq!(held, b"\x1b[6nafter");
+        assert!(msgs.is_empty());
     }
 
     #[test]
@@ -2613,25 +3019,6 @@ mod tests {
         assert_eq!(follow_terminal(&mut parser, 9, 20, (8, 2)), -3);
         assert_eq!(parser.screen().contents_between(3, 0, 3, 20), "line4");
         assert_eq!(parser.screen().cursor_position(), (8, 2));
-    }
-
-    #[test]
-    fn input_of_only_cursor_reports() {
-        assert!(only_cursor_reports(b"\x1b[3;17R"));
-        assert!(only_cursor_reports(b"\x1b[3;17R\x1b[1;1R"));
-        assert!(!only_cursor_reports(b"\x1b[3;17Rx"));
-        assert!(!only_cursor_reports(b"ls"));
-        assert!(!only_cursor_reports(b""));
-    }
-
-    #[test]
-    fn cursor_reports_split_between_reads() {
-        assert_eq!(cursor_reports(b"a\x1b[3;4Rb\x1b[1;1R"), 2);
-        assert_eq!(cursor_reports(b"\x1b[A"), 0);
-        assert_eq!(report_start(b"git\x1b[12;"), 5);
-        assert_eq!(report_start(b"git\x1b"), 1);
-        assert_eq!(report_start(b"git\x1b[A"), 0);
-        assert_eq!(report_start(b"git"), 0);
     }
 
     #[test]

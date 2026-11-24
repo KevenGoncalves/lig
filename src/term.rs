@@ -1,11 +1,9 @@
 //! The terminal lig runs in: its size, raw mode, reading keys and writing output.
 //! Unix uses the tty (termios, `SIGWINCH`); Windows uses the console in virtual terminal mode.
 
-use std::time::Duration;
-
 use anyhow::Result;
 
-pub use imp::{RawMode, is_terminal, pixels, read, read_timeout, size, watch_resize, write};
+pub use imp::{RawMode, is_terminal, pixels, read, size, watch_resize, write};
 
 #[cfg(unix)]
 mod imp {
@@ -66,16 +64,6 @@ mod imp {
         }
     }
 
-    /// Input that arrives within `timeout`, if any.
-    pub fn read_timeout(buf: &mut [u8], timeout: Duration) -> Option<usize> {
-        let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
-        let ready = unsafe { libc::poll(&mut fd, 1, timeout.as_millis().max(1) as i32) };
-        if ready <= 0 || fd.revents & libc::POLLIN == 0 {
-            return None;
-        }
-        read(buf).ok().filter(|&n| n > 0)
-    }
-
     /// Calls `f` after each resize until it returns false.
     pub fn watch_resize(f: impl Fn() -> bool + Send + 'static) -> Result<()> {
         let mut signals = signal_hook::iterator::Signals::new([libc::SIGWINCH])?;
@@ -100,10 +88,9 @@ mod imp {
 mod imp {
     use super::*;
     use std::sync::Mutex;
-    use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Storage::FileSystem::WriteFile;
     use windows_sys::Win32::System::Console::*;
-    use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
     fn stdin() -> HANDLE {
         unsafe { GetStdHandle(STD_INPUT_HANDLE) }
@@ -208,44 +195,12 @@ mod imp {
         Ok(len)
     }
 
-    /// Whether a key is waiting; other console events (focus, …) are dropped so `read` won't block.
-    fn key_waiting() -> bool {
-        let mut records: [INPUT_RECORD; 64] = unsafe { std::mem::zeroed() };
-        let mut n = 0u32;
-        if unsafe { PeekConsoleInputW(stdin(), records.as_mut_ptr(), records.len() as u32, &mut n) } == 0 {
-            return false;
-        }
-        let key = |r: &INPUT_RECORD| r.EventType == KEY_EVENT as u16 && unsafe { r.Event.KeyEvent.bKeyDown } != 0;
-        if records[..n as usize].iter().any(key) {
-            return true;
-        }
-        let mut read = 0u32;
-        unsafe { ReadConsoleInputW(stdin(), records.as_mut_ptr(), n, &mut read) };
-        false
-    }
-
-    /// Input that arrives within `timeout`, if any.
-    pub fn read_timeout(buf: &mut [u8], timeout: Duration) -> Option<usize> {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if left.is_zero()
-                || unsafe { WaitForSingleObject(stdin(), left.as_millis().max(1) as u32) } != WAIT_OBJECT_0
-            {
-                return None;
-            }
-            if key_waiting() {
-                return read(buf).ok().filter(|&n| n > 0);
-            }
-        }
-    }
-
     /// Calls `f` after each resize until it returns false (the console has no resize signal).
     pub fn watch_resize(f: impl Fn() -> bool + Send + 'static) -> Result<()> {
         std::thread::spawn(move || {
             let mut last = size();
             loop {
-                std::thread::sleep(Duration::from_millis(120));
+                std::thread::sleep(std::time::Duration::from_millis(120));
                 let now = size();
                 if now != last {
                     last = now;
