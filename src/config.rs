@@ -236,6 +236,8 @@ pub struct Behavior {
     /// Pop up automatically for the first word (command names). Off by default so short
     /// commands run with one Enter; the toggle key (Ctrl+Space) always shows them.
     pub complete_commands: bool,
+    /// Show completion suggestions only after the toggle key is pressed.
+    pub toggle_only: bool,
     /// Search package registries while you type (npm, crates.io, Docker Hub,
     /// PyPI versions, Snap Store, Flathub). What you type for the package name is sent
     /// to them.
@@ -332,6 +334,7 @@ impl Default for Behavior {
             options_after_dash: OPTIONS_AFTER_DASH.iter().map(|c| c.to_string()).collect(),
             show_on_empty_token: true,
             complete_commands: false,
+            toggle_only: false,
             online: true,
             history: true,
             history_success_only: false,
@@ -379,6 +382,13 @@ mod parse_tests {
         assert_eq!(c.ui.colors.fg.as_deref(), Some("15"));
         assert_eq!(c.ui.colors.bg.as_deref(), Some("0"));
         assert!(Config::parse("[colors\n").is_err());
+    }
+
+    #[test]
+    fn toggle_only_is_opt_in() {
+        assert!(!Config::default().behavior.toggle_only);
+        assert!(toml::to_string_pretty(&Config::default()).unwrap().contains("toggle_only = false"));
+        assert!(Config::parse("[behavior]\ntoggle_only = true\n").unwrap().behavior.toggle_only);
     }
 }
 
