@@ -252,7 +252,7 @@ Type as usual; the popup shows what fits.
   `history_success_only = true` keeps only those that ran without error, and
   `history = false` keeps nothing and leaves `Ctrl+R` to the shell.
 - **Your shell's own keys stay yours**: history with the arrows, `Tab` once the popup is
-  closed, fzf's `Ctrl+T`. Typing brings the popup back.
+  closed, fzf's `Ctrl+T`. Typing brings the popup back unless `toggle_only = true`.
 
 ## Configuration
 
@@ -278,6 +278,7 @@ accept_and_run = ["shift-enter"]  # or ["alt-enter"] where Shift+Enter sends a p
 enter_accepts = "auto"     # "always", "after-space", "never"
 enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
+toggle_only = false        # true: open completions only with keys.toggle
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 show_hidden_files = false  # list dot files without typing a dot first
 hide_variable_values = []  # also mask these $VARS' values: ["GH_*", "*_URL"], "*" for all
@@ -297,6 +298,10 @@ folder = "📁"              # a glyph,
 git-branch = { color = "208" }               # a color,
 "*.rs" = { glyph = "🦀", color = "#dea584" }  # or both; by extension or file name too
 ```
+
+With `toggle_only = true`, Lig keeps the popup closed while you type. Press the key in
+`keys.toggle` (`Ctrl+Space` by default) to open it; while open, suggestions continue to update
+with the command line. Toggle it again or press `Esc` to close it.
 
 Try styles without editing anything: `lig preview --all`, `lig preview --theme nord`,
 `lig icons`. A new `theme` or `[colors]` shows in open tabs too, so a light/dark switcher can

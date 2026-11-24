@@ -322,6 +322,64 @@ class FishTests(unittest.TestCase):
         self.assertRegex(out, rb'\x1b\]6973;R;[0-9]+\x07')
 
 class WrappedTests(unittest.TestCase):
+    def test_toggle_only_completion(self):
+        shell = FISH or shutil.which('zsh') or shutil.which('bash')
+        spec = '{"name":"dotpick","args":{"name":"path","template":"filepaths"}}'
+        fish = Fish(wrapped=True, shell=shell,
+                    lig_config='[behavior]\ntoggle_only = true\ncomplete_commands = true\n',
+                    after_config='cd "$HOME"\n', specs={'dotpick': spec})
+        try:
+            (fish.home / '.hidden-choice').write_text('')
+            (fish.home / '.ssh').mkdir()
+            start = len(fish.output)
+            fish.send('car')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+            fish.clear()
+
+            start = len(fish.output)
+            fish.send('dotpick .hid')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+            fish.send(b'\x00')
+            fish.wait_popup('.hidden-choice', start)
+            fish.clear()
+
+            start = len(fish.output)
+            fish.send('cd .ss')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+            fish.send(b'\x00')
+            fish.wait_popup('.ssh/', start)
+            fish.clear()
+
+            start = len(fish.output)
+            fish.send('git ch')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+
+            fish.send(b'\x00')
+            fish.wait_popup('checkout', start)
+
+            start = len(fish.output)
+            fish.send('e')
+            fish.wait_popup('checkout', start)
+
+            fish.send(b'\x00')
+            fish.read(.2)
+            start = len(fish.output)
+            fish.send('r')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+
+            fish.send(b'\x03')
+            start = len(fish.output)
+            fish.send('printf toggle-only-ok > "$HOME/result"\r')
+            fish.wait_for(lambda: (fish.home / 'result').exists())
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
+        finally:
+            fish.close()
+
     def test_missing_snapshot_reply_recovers_without_a_new_prompt(self):
         hook = r"""
 functions --erase __lig_report
