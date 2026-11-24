@@ -324,7 +324,7 @@ class FishTests(unittest.TestCase):
 class WrappedTests(unittest.TestCase):
     def test_toggle_only_completion(self):
         shell = FISH or shutil.which('zsh') or shutil.which('bash')
-        spec = '{"name":"dotpick","args":{"name":"path","template":"filepaths"}}'
+        spec = '{"name":"dotpick","args":{"name":"path","template":"filepaths","isVariadic":true}}'
         fish = Fish(wrapped=True, shell=shell,
                     lig_config='[behavior]\ntoggle_only = true\ncomplete_commands = true\n',
                     after_config='cd "$HOME"\n', specs={'dotpick': spec})
@@ -343,6 +343,16 @@ class WrappedTests(unittest.TestCase):
             self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
             fish.send(b'\x00')
             fish.wait_popup('.hidden-choice', start)
+            # Picking a file closes the popup, and that ends the toggle: the next word doesn't
+            # bring it back.
+            start = len(fish.output)
+            fish.send('\r')
+            fish.wait_for(lambda: b'hidden-choice' in fish.plain(start))
+            fish.read(.3)
+            start = len(fish.output)
+            fish.send(' ')
+            fish.read(.35)
+            self.assertNotIn(POPUP, fish.output[start:], fish.plain(start))
             fish.clear()
 
             start = len(fish.output)

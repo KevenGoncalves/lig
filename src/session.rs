@@ -1419,11 +1419,11 @@ impl Session {
                 Some(added) if self.unconfirmed.starts_with(added) => self.unconfirmed[added.len()..].to_string(),
                 _ => String::new(),
             };
-            if std::mem::take(&mut self.close_after_insert) {
+            // The popup closes after a finished word, or for the shell's own history: like Esc,
+            // that ends a toggled popup (with `toggle_only`, typing doesn't bring it back).
+            if std::mem::take(&mut self.close_after_insert) || self.shell_nav {
                 self.dismissed = Some(line.clone());
-            }
-            if self.shell_nav {
-                self.dismissed = Some(line.clone());
+                self.manual = false;
             }
             // A cleared line (Ctrl+C) ends a toggled popup as running it does.
             if line.is_empty() {
@@ -1633,6 +1633,11 @@ impl Session {
     fn request(&mut self) {
         if self.history_mode {
             self.show_history();
+            return;
+        }
+        // With `toggle_only`, nothing runs (generators, registry searches) until the toggle.
+        if !self.completion_requested() {
+            self.loading = None;
             return;
         }
         let mut env = self.env.clone();

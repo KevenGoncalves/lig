@@ -299,9 +299,10 @@ git-branch = { color = "208" }               # a color,
 "*.rs" = { glyph = "🦀", color = "#dea584" }  # or both; by extension or file name too
 ```
 
-With `toggle_only = true`, Lig keeps the popup closed while you type. Press the key in
+With `toggle_only = true`, lig keeps the popup closed while you type. Press the key in
 `keys.toggle` (`Ctrl+Space` by default) to open it; while open, suggestions continue to update
-with the command line. Toggle it again or press `Esc` to close it.
+with the command line. Toggle it again or press `Esc` to close it; it also closes after a
+finished word. Until you toggle, lig works out nothing for the line, so no registry is searched.
 
 Try styles without editing anything: `lig preview --all`, `lig preview --theme nord`,
 `lig icons`. A new `theme` or `[colors]` shows in open tabs too, so a light/dark switcher can
