@@ -237,6 +237,9 @@ Type as usual; the popup shows what fits.
   bind `accept_and_run = ["alt-enter"]`.
 - **Command names** don't pop up by themselves, so simple commands run with one `Enter`.
   `Ctrl+Space` shows them; `complete_commands = true` always does.
+- **Only on demand**: with `toggle_only = true` nothing pops up by itself; `Ctrl+Space`
+  opens the popup, which follows the line until you pick a finished word, press `Esc` or
+  `Ctrl+Space` again.
 - **Folders** (`cd`, `mkdir`…) keep the popup open with the subfolders, with **↵ Enter** to
   run the line and **Back** to go up.
 - **File commands** (`ls`, `cp`, `mv`, `rm`…) show their files first and their options once
@@ -299,10 +302,10 @@ git-branch = { color = "208" }               # a color,
 "*.rs" = { glyph = "🦀", color = "#dea584" }  # or both; by extension or file name too
 ```
 
-With `toggle_only = true`, lig keeps the popup closed while you type. Press the key in
+With `toggle_only = true`, Lig keeps the popup closed while you type. Press the key in
 `keys.toggle` (`Ctrl+Space` by default) to open it; while open, suggestions continue to update
 with the command line. Toggle it again or press `Esc` to close it; it also closes after a
-finished word. Until you toggle, lig works out nothing for the line, so no registry is searched.
+finished word. Until you toggle, Lig works out nothing for the line, so no registry is searched.
 
 Try styles without editing anything: `lig preview --all`, `lig preview --theme nord`,
 `lig icons`. A new `theme` or `[colors]` shows in open tabs too, so a light/dark switcher can
@@ -442,6 +445,7 @@ Thanks to the contributors:
 - [@JoelDeAriovaldo](https://github.com/JoelDeAriovaldo)
 - [@m-kat](https://github.com/m-kat)
 - [@mawkler](https://github.com/mawkler)
+- [@michelemadonna](https://github.com/michelemadonna)
 - [@mjsteinbaugh](https://github.com/mjsteinbaugh)
 - [@nadelacruz-00](https://github.com/nadelacruz-00)
 - [@oldmanniko-dev](https://github.com/oldmanniko-dev)
