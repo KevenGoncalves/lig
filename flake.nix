@@ -24,6 +24,10 @@
             version = (nixpkgs.lib.importTOML ./Cargo.toml).package.version;
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
+            # PTY tests need an existing HOME for their child process's working directory.
+            preCheck = ''
+              export HOME="$TMPDIR"
+            '';
             meta = {
               description = "IDE-style autocomplete for your terminal on macOS, Linux and Windows";
               homepage = "https://github.com/KevenGoncalves/lig";
