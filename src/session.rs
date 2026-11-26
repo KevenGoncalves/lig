@@ -1860,14 +1860,14 @@ impl Session {
                     self.selected = (self.selected + 1) % self.items.len();
                     redraw = true;
                 }
-                Some(Action::Prev) if self.selected == 0 => {
+                Some(Action::Prev) if self.selected == 0 && !self.cfg.behavior.wrap_around => {
                     // Up from the first item closes the popup; the next Up goes to shell history.
                     self.dismiss();
                     redraw = true;
                 }
                 Some(Action::Prev) => {
                     self.navigated = true;
-                    self.selected -= 1;
+                    self.selected = (self.selected + self.items.len() - 1) % self.items.len();
                     redraw = true;
                 }
                 Some(Action::History | Action::FolderHistory) => {

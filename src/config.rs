@@ -238,6 +238,9 @@ pub struct Behavior {
     pub complete_commands: bool,
     /// Show completion suggestions only after the toggle key is pressed.
     pub toggle_only: bool,
+    /// Up (`keys.prev`) on the first suggestion selects the last one, as Down on the last one
+    /// selects the first, instead of closing the popup (so the next Up goes to shell history).
+    pub wrap_around: bool,
     /// Search package registries while you type (npm, crates.io, Docker Hub,
     /// PyPI versions, Snap Store, Flathub). What you type for the package name is sent
     /// to them.
@@ -335,6 +338,7 @@ impl Default for Behavior {
             show_on_empty_token: true,
             complete_commands: false,
             toggle_only: false,
+            wrap_around: false,
             online: true,
             history: true,
             history_success_only: false,
