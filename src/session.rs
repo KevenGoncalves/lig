@@ -181,6 +181,18 @@ fn resync_query(now: Instant, ask_at: Instant, shell_reply_until: Option<Instant
     }
 }
 
+/// Whether the terminal may be sending a cursor report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reports {
+    /// None is awaited: all input is keys.
+    None,
+    /// One is awaited: complete reports come out, and a possible start waits for the rest.
+    Due,
+    /// Only for a question the shell asked longer ago than [`CURSOR_REPORT_WAIT`]: complete
+    /// reports still come out, but a possible start (a lone Esc) goes on at once.
+    Overdue,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum CursorInputPart {
     Keys(Vec<u8>),
@@ -220,7 +232,7 @@ impl CursorInput {
         bytes
     }
 
-    fn feed(&mut self, data: Vec<u8>, expecting_report: bool) -> Vec<CursorInputPart> {
+    fn feed(&mut self, data: Vec<u8>, reports: Reports) -> Vec<CursorInputPart> {
         if self.partial.is_empty() && self.delimiter_prefix == 0 && !data.contains(&0x1b) {
             return vec![CursorInputPart::Keys(data)];
         }
@@ -231,7 +243,7 @@ impl CursorInput {
         let mut at = 0;
         while at < bytes.len() {
             let rest = &bytes[at..];
-            if expecting_report && !self.paste && rest[0] == 0x1b {
+            if reports != Reports::None && !self.paste && rest[0] == 0x1b {
                 let mut incomplete = rest.len() == 1;
                 if let Some(params) = rest.strip_prefix(b"\x1b[") {
                     // A u16 row and column take at most 11 parameter bytes.
@@ -251,7 +263,7 @@ impl CursorInput {
                         _ => {}
                     }
                 }
-                if incomplete {
+                if incomplete && reports == Reports::Due {
                     self.partial.extend_from_slice(rest);
                     break;
                 }
@@ -687,6 +699,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         resync: None,
         normal_unsynced: false,
         shell_cursor_queries: 0,
+        shell_cursor_asked: None,
         cursor_query_counter: CursorQueryCounter::default(),
         config_stamp: config_stamp(),
         config_checked: Instant::now(),
@@ -1132,6 +1145,8 @@ struct Session {
     /// Cursor position questions the shell (or a program) sent the terminal, not answered yet:
     /// lig asks only when there are none, so it never takes their answer.
     shell_cursor_queries: usize,
+    /// When the shell last asked one.
+    shell_cursor_asked: Option<Instant>,
     /// Finds those questions even when a PTY read splits `ESC [ 6 n`.
     cursor_query_counter: CursorQueryCounter,
     /// `config.toml` as last read (see [`config_stamp`]), and when it was last looked at.
@@ -1350,14 +1365,20 @@ impl Session {
         }
     }
 
-    fn expecting_cursor_report(&self) -> bool {
-        self.startup_cursor.is_some()
-            || self.shell_cursor_queries > 0
-            || self.resync.as_ref().is_some_and(|r| r.asked.is_some())
+    fn awaited_reports(&self) -> Reports {
+        let lig_asked = self.startup_cursor.is_some() || self.resync.as_ref().is_some_and(|r| r.asked.is_some());
+        let shell_asked_lately = self.shell_cursor_asked.is_some_and(|at| at.elapsed() < CURSOR_REPORT_WAIT);
+        match self.shell_cursor_queries {
+            _ if lig_asked => Reports::Due,
+            0 => Reports::None,
+            // A question the terminal never answered would otherwise hold every later Esc.
+            _ if shell_asked_lately => Reports::Due,
+            _ => Reports::Overdue,
+        }
     }
 
     fn on_terminal_input(&mut self, data: Vec<u8>, read_at: Instant) {
-        for part in self.cursor_input.feed(data, self.expecting_cursor_report()) {
+        for part in self.cursor_input.feed(data, self.awaited_reports()) {
             match part {
                 CursorInputPart::Keys(bytes) => self.on_input(&bytes),
                 CursorInputPart::Report(_, position) if self.startup_cursor.is_some() => {
@@ -1378,7 +1399,7 @@ impl Session {
                 CursorInputPart::Report(bytes, _) => self.on_input(&bytes),
             }
         }
-        if !self.expecting_cursor_report() {
+        if self.awaited_reports() != Reports::Due {
             self.flush_cursor_partial();
         }
     }
@@ -1617,6 +1638,9 @@ impl Session {
         // the startup buffer, so their CPRs can bypass key handling.
         let shell_queries = self.cursor_query_counter.observe(&fwd);
         self.shell_cursor_queries += shell_queries;
+        if shell_queries > 0 {
+            self.shell_cursor_asked = Some(Instant::now());
+        }
         // ConPTY asks its terminal for win32-input-mode; passed on, the terminal would send lig
         // keys it can't read. lig types plain VT, which ConPTY reads too.
         if cfg!(windows) {
@@ -2967,12 +2991,12 @@ mod tests {
     fn cursor_input_keeps_paste_state_across_timeouts_and_idle_reads() {
         use CursorInputPart::{Keys, Report};
         let mut cursor = CursorInput::default();
-        assert!(cursor.feed(b"\x1b[20".to_vec(), true).is_empty());
+        assert!(cursor.feed(b"\x1b[20".to_vec(), Reports::Due).is_empty());
         assert_eq!(cursor.flush_partial(), b"\x1b[20");
-        assert_eq!(cursor.feed(b"0~\x1b[9;9R".to_vec(), false), [Keys(b"0~\x1b[9;9R".to_vec())]);
-        assert_eq!(cursor.feed(b"\x1b[7;8R\x1b[20".to_vec(), true), [Keys(b"\x1b[7;8R\x1b[20".to_vec())]);
+        assert_eq!(cursor.feed(b"0~\x1b[9;9R".to_vec(), Reports::None), [Keys(b"0~\x1b[9;9R".to_vec())]);
+        assert_eq!(cursor.feed(b"\x1b[7;8R\x1b[20".to_vec(), Reports::Due), [Keys(b"\x1b[7;8R\x1b[20".to_vec())]);
         assert_eq!(
-            cursor.feed(b"1~\x1b[5;6R".to_vec(), true),
+            cursor.feed(b"1~\x1b[5;6R".to_vec(), Reports::Due),
             [Keys(b"1~".to_vec()), Report(b"\x1b[5;6R".to_vec(), (5, 6))]
         );
     }
@@ -3034,17 +3058,30 @@ mod tests {
     fn cursor_input_preserves_typeahead_and_splits_consecutive_reports() {
         use CursorInputPart::{Keys, Report};
         let mut cursor = CursorInput::default();
-        assert_eq!(cursor.feed(b"git \x1b[?1;2c\x1b[12;24".to_vec(), true), [Keys(b"git \x1b[?1;2c".to_vec())]);
+        assert_eq!(cursor.feed(b"git \x1b[?1;2c\x1b[12;24".to_vec(), Reports::Due), [Keys(b"git \x1b[?1;2c".to_vec())]);
         assert_eq!(
-            cursor.feed(b"R\x1b[9;10Rch".to_vec(), true),
+            cursor.feed(b"R\x1b[9;10Rch".to_vec(), Reports::Due),
             [Report(b"\x1b[12;24R".to_vec(), (12, 24)), Report(b"\x1b[9;10R".to_vec(), (9, 10)), Keys(b"ch".to_vec())]
         );
         for invalid in [b"\x1b[0;1R".as_slice(), b"\x1b[1;2;3R", b"\x1b[999999;2R", b"\x1b[2;3H", b"\x1b[A"] {
-            assert_eq!(cursor.feed(invalid.to_vec(), true), [Keys(invalid.to_vec())]);
+            assert_eq!(cursor.feed(invalid.to_vec(), Reports::Due), [Keys(invalid.to_vec())]);
         }
-        assert_eq!(cursor.feed(b"\x1b[1;1R".to_vec(), false), [Keys(b"\x1b[1;1R".to_vec())]);
-        assert!(cursor.feed(b"\x1b".to_vec(), true).is_empty());
+        assert_eq!(cursor.feed(b"\x1b[1;1R".to_vec(), Reports::None), [Keys(b"\x1b[1;1R".to_vec())]);
+        assert!(cursor.feed(b"\x1b".to_vec(), Reports::Due).is_empty());
         assert_eq!(cursor.flush_partial(), b"\x1b");
+    }
+
+    #[test]
+    fn overdue_cursor_reports_still_come_out_but_never_hold_an_esc() {
+        use CursorInputPart::{Keys, Report};
+        let mut cursor = CursorInput::default();
+        assert_eq!(cursor.feed(b"\x1b".to_vec(), Reports::Overdue), [Keys(b"\x1b".to_vec())]);
+        assert_eq!(cursor.feed(b"\x1b[12;".to_vec(), Reports::Overdue), [Keys(b"\x1b[12;".to_vec())]);
+        assert_eq!(cursor.partial_until, None);
+        assert_eq!(
+            cursor.feed(b"x\x1b[3;4R".to_vec(), Reports::Overdue),
+            [Keys(b"x".to_vec()), Report(b"\x1b[3;4R".to_vec(), (3, 4))]
+        );
     }
 
     #[test]
