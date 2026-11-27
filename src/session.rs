@@ -114,37 +114,23 @@ fn take_cursor_report(input: &mut Vec<u8>) -> Option<(u16, u16)> {
         if rest[end] != b'R' {
             continue;
         }
-        let Some((row, col)) = std::str::from_utf8(&rest[..end]).ok().and_then(|s| s.split_once(';')) else { continue };
-        let (Ok(row), Ok(col)) = (row.parse::<u16>(), col.parse::<u16>()) else { continue };
-        if row == 0 || col == 0 {
-            continue;
-        }
+        let Some(position) = cursor_position(&rest[..end]) else { continue };
         input.drain(start..start + 2 + end + 1);
-        return Some((row, col));
+        return Some(position);
     }
     None
+}
+
+fn cursor_position(params: &[u8]) -> Option<(u16, u16)> {
+    let (row, col) = std::str::from_utf8(params).ok()?.split_once(';')?;
+    let (row, col) = (row.parse().ok()?, col.parse().ok()?);
+    (row != 0 && col != 0).then_some((row, col))
 }
 
 /// `config.toml`'s modification time and size: the file is read again only when they change.
 fn config_stamp() -> Option<(std::time::SystemTime, u64)> {
     let m = std::fs::metadata(crate::config::config_path()).ok()?;
     Some((m.modified().ok()?, m.len()))
-}
-
-/// `input` is cursor position reports and nothing else.
-fn only_cursor_reports(input: &[u8]) -> bool {
-    let mut rest = input.to_vec();
-    let mut any = false;
-    while take_cursor_report(&mut rest).is_some() {
-        any = true;
-    }
-    any && rest.is_empty()
-}
-
-/// How many cursor position reports `input` holds.
-fn cursor_reports(input: &[u8]) -> usize {
-    let mut rest = input.to_vec();
-    std::iter::from_fn(|| take_cursor_report(&mut rest)).count()
 }
 
 /// `rect` moved up `by` rows (down if negative), clipped to a screen `rows` high.
@@ -186,22 +172,96 @@ struct Resync {
     stale: bool,
     /// Shell output that waits.
     held: Vec<u8>,
-    /// The start of the answer, when it came split between two reads.
-    partial: Vec<u8>,
 }
 
-/// The tail of `input` that may be the start of a cursor report (`ESC [ 12 ; 3`).
-fn report_start(input: &[u8]) -> usize {
-    match input.iter().rposition(|&b| b == 0x1b) {
-        Some(i)
-            if input[i + 1..]
-                .iter()
-                .enumerate()
-                .all(|(j, &b)| if j == 0 { b == b'[' } else { b.is_ascii_digit() || b == b';' }) =>
-        {
-            input.len() - i
+#[derive(Debug, PartialEq, Eq)]
+enum CursorInputPart {
+    Keys(Vec<u8>),
+    Report(Vec<u8>, (u16, u16)),
+}
+
+/// One input stream for startup, child and resize CPRs. Track paste delimiters
+/// even between queries so a deadline cannot turn pasted bytes into a reply.
+#[derive(Default)]
+struct CursorInput {
+    partial: Vec<u8>,
+    partial_until: Option<Instant>,
+    paste: bool,
+    delimiter_prefix: usize,
+}
+
+impl CursorInput {
+    fn track_paste(&mut self, byte: u8) {
+        let delimiter = if self.paste { b"\x1b[201~" } else { b"\x1b[200~" };
+        if byte == delimiter[self.delimiter_prefix] {
+            self.delimiter_prefix += 1;
+            if self.delimiter_prefix == delimiter.len() {
+                self.paste = !self.paste;
+                self.delimiter_prefix = 0;
+            }
+        } else {
+            self.delimiter_prefix = usize::from(byte == 0x1b);
         }
-        _ => 0,
+    }
+
+    fn flush_partial(&mut self) -> Vec<u8> {
+        self.partial_until = None;
+        let bytes = std::mem::take(&mut self.partial);
+        for &byte in &bytes {
+            self.track_paste(byte);
+        }
+        bytes
+    }
+
+    fn feed(&mut self, data: Vec<u8>, expecting_report: bool) -> Vec<CursorInputPart> {
+        if self.partial.is_empty() && self.delimiter_prefix == 0 && !data.contains(&0x1b) {
+            return vec![CursorInputPart::Keys(data)];
+        }
+        let mut bytes = std::mem::take(&mut self.partial);
+        bytes.extend(data);
+        let mut parts = vec![];
+        let mut keys = vec![];
+        let mut at = 0;
+        while at < bytes.len() {
+            let rest = &bytes[at..];
+            if expecting_report && !self.paste && rest[0] == 0x1b {
+                let mut incomplete = rest.len() == 1;
+                if let Some(params) = rest.strip_prefix(b"\x1b[") {
+                    // A u16 row and column take at most 11 parameter bytes.
+                    match params.iter().take(12).position(|b| !b.is_ascii_digit() && *b != b';') {
+                        Some(end) if params[end] == b'R' => {
+                            if let Some(position) = cursor_position(&params[..end]) {
+                                if !keys.is_empty() {
+                                    parts.push(CursorInputPart::Keys(std::mem::take(&mut keys)));
+                                }
+                                self.delimiter_prefix = 0;
+                                at += end + 3;
+                                parts.push(CursorInputPart::Report(rest[..end + 3].to_vec(), position));
+                                continue;
+                            }
+                        }
+                        None if params.len() < 12 => incomplete = true,
+                        _ => {}
+                    }
+                }
+                if incomplete {
+                    self.partial.extend_from_slice(rest);
+                    break;
+                }
+            }
+            self.track_paste(rest[0]);
+            keys.push(rest[0]);
+            at += 1;
+        }
+        if self.partial.is_empty() {
+            self.partial_until = None;
+        } else {
+            self.partial_until.get_or_insert_with(|| Instant::now() + CURSOR_REPORT_WAIT);
+        }
+        if !keys.is_empty() {
+            parts.push(CursorInputPart::Keys(keys));
+        }
+        parts
     }
 }
 
@@ -415,6 +475,7 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         query_file,
         fish_sequence: 0,
         unknown_rows: origin.map_or(0, |(row, _)| row.saturating_sub(1).min(rows)),
+        cursor_input: CursorInput::default(),
         insertion_transport: InsertionTransport::for_shell(&shell),
         fish_shell: shell_name(&shell) == "fish" || is_powershell(&shell),
         report_key: is_powershell(&shell),
@@ -799,6 +860,7 @@ struct Session {
     fish_sequence: u64,
     /// Rows above the startup cursor are absent from the screen model.
     unknown_rows: u16,
+    cursor_input: CursorInput,
     insertion_transport: InsertionTransport,
     /// The shell reports its line when asked, as fish does; PowerShell speaks the same
     /// protocol (see shell/lig.ps1).
@@ -924,6 +986,7 @@ struct Session {
 impl Session {
     fn event_loop(&mut self, rx: &Receiver<Event>) {
         loop {
+            self.expire_cursor_input();
             self.resync_tick();
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
@@ -952,6 +1015,9 @@ impl Session {
             let mut deadline = (self.dirty && self.resync.is_none())
                 .then(|| (self.last_output + DEBOUNCE).min(self.dirty_since + MAX_DELAY));
             if let Some(w) = self.resync_wake() {
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
+            if let Some(w) = self.cursor_input.partial_until {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             let woken_for_more = deadline;
@@ -985,6 +1051,7 @@ impl Session {
                 match rx.recv_deadline(due) {
                     Ok(ev) => ev,
                     Err(RecvTimeoutError::Timeout) => {
+                        self.expire_cursor_input();
                         if self.drawn.is_some()
                             && self.config_checked.elapsed() >= CONFIG_POLL
                             && !self.reload_theme()
@@ -1030,29 +1097,7 @@ impl Session {
                     Some(r) => r.held.extend_from_slice(&data),
                     None => self.on_output(&data),
                 },
-                Event::Input(mut data) => {
-                    if let Some(r) = self.resync.as_mut().filter(|r| r.asked.is_some()) {
-                        data.splice(0..0, std::mem::take(&mut r.partial));
-                        if let Some(report) = take_cursor_report(&mut data) {
-                            self.resynced(Some(report));
-                        } else {
-                            let tail = report_start(&data);
-                            r.partial = data.split_off(data.len() - tail);
-                        }
-                    } else if self.shell_cursor_queries > 0 && only_cursor_reports(&data) {
-                        // The terminal's answers to the shell's questions (nu asks at each redraw):
-                        // not keys, so they don't change the line or touch the popup.
-                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
-                        self.write_pty(&data);
-                        continue;
-                    } else {
-                        // Answers to the shell's questions, on their way to it.
-                        self.shell_cursor_queries = self.shell_cursor_queries.saturating_sub(cursor_reports(&data));
-                    }
-                    if !data.is_empty() {
-                        self.on_input(&data);
-                    }
-                }
+                Event::Input(data) => self.on_terminal_input(data),
                 Event::Done { line, items, loading, command, ask_shell } => {
                     if let Some(asked) = ask_shell {
                         self.ask_shell(asked);
@@ -1132,6 +1177,44 @@ impl Session {
             && self.remote.is_none()
             && self.shell_pid.zip(tty.as_deref()).is_some_and(|(pid, tty)| crate::process::foreign_program(pid, tty));
         self.foreign_checked = Instant::now();
+    }
+
+    fn expecting_cursor_report(&self) -> bool {
+        self.shell_cursor_queries > 0 || self.resync.as_ref().is_some_and(|r| r.asked.is_some())
+    }
+
+    fn on_terminal_input(&mut self, data: Vec<u8>) {
+        for part in self.cursor_input.feed(data, self.expecting_cursor_report()) {
+            match part {
+                CursorInputPart::Keys(bytes) => self.on_input(&bytes),
+                CursorInputPart::Report(bytes, _) if self.shell_cursor_queries > 0 => {
+                    // CPRs for the shell (nu asks at each redraw) are replies,
+                    // so pass them through without processing them as keys.
+                    self.shell_cursor_queries -= 1;
+                    self.write_pty(&bytes);
+                }
+                CursorInputPart::Report(_, position) if self.resync.as_ref().is_some_and(|r| r.asked.is_some()) => {
+                    self.resynced(Some(position));
+                }
+                CursorInputPart::Report(bytes, _) => self.on_input(&bytes),
+            }
+        }
+        if !self.expecting_cursor_report() {
+            self.flush_cursor_partial();
+        }
+    }
+
+    fn flush_cursor_partial(&mut self) {
+        let bytes = self.cursor_input.flush_partial();
+        if !bytes.is_empty() {
+            self.on_input(&bytes);
+        }
+    }
+
+    fn expire_cursor_input(&mut self) {
+        if self.cursor_input.partial_until.is_some_and(|w| Instant::now() >= w) {
+            self.flush_cursor_partial();
+        }
     }
 
     fn write_out(&mut self, bytes: &[u8]) {
@@ -1300,14 +1383,7 @@ impl Session {
         }
         // Back from a pager that saw a resize: check the normal screen now.
         if pager && !self.parser.screen().alternate_screen() && std::mem::take(&mut self.normal_unsynced) {
-            self.resync = Some(Resync {
-                size: None,
-                ask_at: Instant::now(),
-                asked: None,
-                stale: false,
-                held: vec![],
-                partial: vec![],
-            });
+            self.resync = Some(Resync { size: None, ask_at: Instant::now(), asked: None, stale: false, held: vec![] });
         }
         self.update_foreign();
         self.last_output = Instant::now();
@@ -2241,14 +2317,8 @@ impl Session {
                 r.stale |= r.asked.is_some();
             }
             None => {
-                self.resync = Some(Resync {
-                    size: Some((rows, cols)),
-                    ask_at,
-                    asked: None,
-                    stale: false,
-                    held: vec![],
-                    partial: vec![],
-                });
+                self.resync =
+                    Some(Resync { size: Some((rows, cols)), ask_at, asked: None, stale: false, held: vec![] });
             }
         }
     }
@@ -2288,7 +2358,10 @@ impl Session {
                 r.asked = Some(now);
                 self.write_out(b"\x1b[6n");
             }
-            Some(at) if now >= at + CURSOR_REPORT_WAIT => self.resynced(None),
+            Some(at) if now >= at + CURSOR_REPORT_WAIT => {
+                self.flush_cursor_partial();
+                self.resynced(None);
+            }
             _ => {}
         }
     }
@@ -2297,14 +2370,9 @@ impl Session {
     /// popup on it and bash's prompt marker to match, then let the held output through.
     fn resynced(&mut self, report: Option<(u16, u16)>) {
         let Some(r) = self.resync.as_mut() else { return };
-        // No answer completed it: it was typed (a lone Esc), and goes on to the shell.
-        let typed = std::mem::take(&mut r.partial);
         if std::mem::take(&mut r.stale) {
             // For a size since replaced: ask again.
             r.asked = None;
-            if !typed.is_empty() {
-                self.on_input(&typed);
-            }
             return;
         }
         let r = self.resync.take().unwrap();
@@ -2328,9 +2396,6 @@ impl Session {
         self.mark_dirty();
         if !r.held.is_empty() {
             self.on_output(&r.held);
-        }
-        if !typed.is_empty() {
-            self.on_input(&typed);
         }
     }
 
@@ -2555,6 +2620,37 @@ mod tests {
     }
 
     #[test]
+    fn cursor_input_keeps_paste_state_across_timeouts_and_idle_reads() {
+        use CursorInputPart::{Keys, Report};
+        let mut cursor = CursorInput::default();
+        assert!(cursor.feed(b"\x1b[20".to_vec(), true).is_empty());
+        assert_eq!(cursor.flush_partial(), b"\x1b[20");
+        assert_eq!(cursor.feed(b"0~\x1b[9;9R".to_vec(), false), [Keys(b"0~\x1b[9;9R".to_vec())]);
+        assert_eq!(cursor.feed(b"\x1b[7;8R\x1b[20".to_vec(), true), [Keys(b"\x1b[7;8R\x1b[20".to_vec())]);
+        assert_eq!(
+            cursor.feed(b"1~\x1b[5;6R".to_vec(), true),
+            [Keys(b"1~".to_vec()), Report(b"\x1b[5;6R".to_vec(), (5, 6))]
+        );
+    }
+
+    #[test]
+    fn cursor_input_preserves_typeahead_and_splits_consecutive_reports() {
+        use CursorInputPart::{Keys, Report};
+        let mut cursor = CursorInput::default();
+        assert_eq!(cursor.feed(b"git \x1b[?1;2c\x1b[12;24".to_vec(), true), [Keys(b"git \x1b[?1;2c".to_vec())]);
+        assert_eq!(
+            cursor.feed(b"R\x1b[9;10Rch".to_vec(), true),
+            [Report(b"\x1b[12;24R".to_vec(), (12, 24)), Report(b"\x1b[9;10R".to_vec(), (9, 10)), Keys(b"ch".to_vec())]
+        );
+        for invalid in [b"\x1b[0;1R".as_slice(), b"\x1b[1;2;3R", b"\x1b[999999;2R", b"\x1b[2;3H", b"\x1b[A"] {
+            assert_eq!(cursor.feed(invalid.to_vec(), true), [Keys(invalid.to_vec())]);
+        }
+        assert_eq!(cursor.feed(b"\x1b[1;1R".to_vec(), false), [Keys(b"\x1b[1;1R".to_vec())]);
+        assert!(cursor.feed(b"\x1b".to_vec(), true).is_empty());
+        assert_eq!(cursor.flush_partial(), b"\x1b");
+    }
+
+    #[test]
     fn startup_cursor_report_preserves_typeahead_and_other_replies() {
         let mut input = b"git \x1b[?1;2c\x1b[12;24".to_vec();
         assert_eq!(take_cursor_report(&mut input), None);
@@ -2613,25 +2709,6 @@ mod tests {
         assert_eq!(follow_terminal(&mut parser, 9, 20, (8, 2)), -3);
         assert_eq!(parser.screen().contents_between(3, 0, 3, 20), "line4");
         assert_eq!(parser.screen().cursor_position(), (8, 2));
-    }
-
-    #[test]
-    fn input_of_only_cursor_reports() {
-        assert!(only_cursor_reports(b"\x1b[3;17R"));
-        assert!(only_cursor_reports(b"\x1b[3;17R\x1b[1;1R"));
-        assert!(!only_cursor_reports(b"\x1b[3;17Rx"));
-        assert!(!only_cursor_reports(b"ls"));
-        assert!(!only_cursor_reports(b""));
-    }
-
-    #[test]
-    fn cursor_reports_split_between_reads() {
-        assert_eq!(cursor_reports(b"a\x1b[3;4Rb\x1b[1;1R"), 2);
-        assert_eq!(cursor_reports(b"\x1b[A"), 0);
-        assert_eq!(report_start(b"git\x1b[12;"), 5);
-        assert_eq!(report_start(b"git\x1b"), 1);
-        assert_eq!(report_start(b"git\x1b[A"), 0);
-        assert_eq!(report_start(b"git"), 0);
     }
 
     #[test]
