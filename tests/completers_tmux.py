@@ -34,7 +34,7 @@ RC = {
 
 @unittest.skipUnless(shutil.which('tmux'), 'tmux is required')
 class CompletersTmux(unittest.TestCase):
-    def start(self, kind, completers='["shell"]', extra_env=None):
+    def start(self, kind, completers='["shell"]', extra_env=None, rc_extra=''):
         shell = SHELLS[kind]
         if not shell:
             self.skipTest(f'{kind} is unavailable')
@@ -45,7 +45,7 @@ class CompletersTmux(unittest.TestCase):
         runtime.mkdir(mode=0o700)
         name, text = RC[kind]
         (home / name).parent.mkdir(parents=True, exist_ok=True)
-        (home / name).write_text(text)
+        (home / name).write_text(text + rc_extra)
         # Ubuntu's /etc/zsh/zshrc runs compinit, which can stop to ask about folders' permissions.
         (home / '.zshenv').write_text('skip_global_compinit=1\n')
         (home / '.config/lig/config.toml').write_text(f'[behavior]\ncompleters = {completers}\nhelp_parsing = false\n')
@@ -89,6 +89,30 @@ class CompletersTmux(unittest.TestCase):
         self.assertEqual(self.prompt(self.screen()), 'comp> setopt auto_c', 'asking zsh changed the line')
         self.tmux('send-keys', '-t', 'test:0.0', 'Enter')
         self.wait('auto_cd not inserted', lambda s: self.prompt(s) == 'comp> setopt auto_cd')
+
+    def test_zsh_hooks_stay_quiet_in_a_child_shell(self):
+        """Issue #67: zsh-autosuggestions' completion strategy edits the line in a zpty child,
+        which inherits lig's hooks; its line isn't the one being typed."""
+        rc = (
+            "foo() { :; }; _foo() { compadd alpha beta }; compdef _foo foo\n"
+            "zmodload zsh/zpty\n"
+            # What the plugin does after a widget: complete the line in a child, for the suggestion.
+            "_suggest() { zpty -b lig_child 'BUFFER+=al; zle complete-word'; sleep .1; zpty -d lig_child; }\n"
+            "_suggest_insert() { zle .self-insert; _suggest }\n"
+            "zle -N self-insert _suggest_insert\n"
+            # It wraps every widget at the first prompt, lig's own one that asks zsh too.
+            "_suggest_wrap() {\n"
+            "  precmd_functions=(${precmd_functions:#_suggest_wrap})\n"
+            "  zle -A _lig_ask _suggest_orig_ask\n"
+            "  _suggest_ask() { zle _suggest_orig_ask; _suggest }\n"
+            "  zle -N _lig_ask _suggest_ask\n"
+            "}\n"
+            "precmd_functions+=(_suggest_wrap)\n"
+        )
+        self.start('zsh', rc_extra=rc)
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'foo ')
+        self.wait('no alpha and beta from zsh', lambda s: 'alpha' in self.popup(s) and 'beta' in self.popup(s))
+        self.assertNotIn('Asking zsh', self.popup(self.screen()))
 
     def test_fish_offers_what_its_tab_would(self):
         self.start('fish')

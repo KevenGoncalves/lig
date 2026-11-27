@@ -4,8 +4,13 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   # Where messages go: the terminal, or under lig mosh a file lig reads over ssh (mosh drops them).
   typeset -g _lig_out=${LIG_OUT:-$TTY}
   unset LIG_OUT
+  # Only this shell speaks to lig: a child that inherits its hooks has another pid, as the
+  # zpty one zsh-autosuggestions' completion strategy runs ($$ stays the parent's there).
+  builtin zmodload zsh/system 2>/dev/null
+  typeset -g _lig_pid=${sysparams[pid]}
 
   _lig_report() {
+    [[ ${sysparams[pid]} == $_lig_pid ]] || return 0
     builtin emulate -L zsh
     local msg
     # No popup during history browsing or zsh's own completion: those keys stay with zsh.
@@ -22,6 +27,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   }
   _lig_line_init() { _lig_last=; _lig_report }
   _lig_line_finish() {
+    [[ ${sysparams[pid]} == $_lig_pid ]] || return 0
     _lig_last=
     _lig_ran=$BUFFER
     builtin print -rn -- $'\e]6973;F\a' >>$_lig_out
@@ -63,6 +69,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent= _lig_ran= _lig_histfile=
   _lig_precmd() {
     local ret=$?
+    [[ ${sysparams[pid]} == $_lig_pid ]] || return ret
     builtin emulate -L zsh
     # The line that just ran, and how it ended (for lig's history).
     if [[ -n $_lig_ran ]]; then
@@ -149,6 +156,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   }
   _lig_quiet() { compstate[insert]=''; compstate[list]=''; }
   _lig_complete() {
+    [[ ${sysparams[pid]} == $_lig_pid ]] || return 0
     _lig_matches=()
     if (( $+functions[_main_complete] )); then
       local -a comppostfuncs=( _lig_quiet )
