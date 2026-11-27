@@ -240,6 +240,8 @@ mod native_tests {
         let tty = pair.master.tty_name().unwrap();
         let mut cmd = portable_pty::CommandBuilder::new("/bin/sleep");
         cmd.arg("10");
+        // Without a folder, portable-pty runs the child in $HOME, which builds (nix) may lack.
+        cmd.cwd(std::env::temp_dir());
         let mut child = pair.slave.spawn_command(cmd).unwrap();
         let present = has_tty(child.process_id().unwrap(), &tty);
         child.kill().unwrap();
