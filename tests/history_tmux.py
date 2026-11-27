@@ -3,6 +3,7 @@
 ran without error, issue #56), in zsh, bash, fish and nu,
 in a private tmux server. Run after cargo build --release: python3 tests/history_tmux.py."""
 import os
+import re
 import shutil
 import sys
 import subprocess
@@ -173,6 +174,19 @@ class HistoryTmux(unittest.TestCase):
                 # bash's `#<time>` lines date the commands; they aren't commands.
                 self.assertNotIn('#1700000000', entries())
                 self.doCleanups()
+
+    def test_typed_letters_are_bold_inside_a_command_too(self):
+        """Issue #63: `cl` matches `hipotclear` inside, and shows bold there as in `clear`."""
+        self.start('bash', lig_history='1\thipotclear\n2\tanonclear\n3\tclear\n')
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.tmux('send-keys', '-t', 'test:0.0', '-l', 'cl')
+        self.wait('no matches', lambda s: 'hipotclear' in s and 'anonclear' in s)
+        sgr = r'(?:\x1b\[[0-9;]*m)*'
+        styled = self.tmux('capture-pane', '-p', '-e', '-t', 'test:0.0')
+        for before in ['hipot', 'anon']:
+            m = re.search(re.escape(before) + f'({sgr})c{sgr}l', styled)
+            self.assertTrue(m, f'{before}cl not found:\n{styled!r}')
+            self.assertRegex(m.group(1), r'\x1b\[(?:[0-9;]*;)?1[;m]', f'{before}: cl not bold')
 
     def test_off_leaves_ctrl_r_to_the_shell(self):
         self.start('bash', '[behavior]\nhistory = false\n')

@@ -155,6 +155,34 @@ pub fn printable(s: &str) -> String {
 }
 
 /// Truncate to `w` columns (adding `…` when cut) and pad to exactly `w`.
+/// Which of `label`'s characters `query` matched, ignoring case: its start, else where it
+/// is inside, else (fuzzy) each typed character in order.
+fn matched(label: &str, query: &str) -> Vec<bool> {
+    let label: Vec<char> = label.chars().collect();
+    let query: Vec<char> = query.chars().collect();
+    let mut marked = vec![false; label.len()];
+    if query.is_empty() {
+        return marked;
+    }
+    let same = |a: char, b: char| a == b || a.to_lowercase().eq(b.to_lowercase());
+    let at = |i: usize| label[i..].len() >= query.len() && label[i..].iter().zip(&query).all(|(&a, &b)| same(a, b));
+    if let Some(start) = (0..label.len()).find(|&i| at(i)) {
+        marked[start..start + query.len()].fill(true);
+        return marked;
+    }
+    let mut from = 0;
+    for &q in query.iter().filter(|c| !c.is_whitespace()) {
+        match (from..label.len()).find(|&i| same(label[i], q)) {
+            Some(i) => {
+                marked[i] = true;
+                from = i + 1;
+            }
+            None => return vec![false; label.len()],
+        }
+    }
+    marked
+}
+
 fn fit(s: &str, w: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
@@ -330,19 +358,21 @@ pub fn render(ui: &Ui, l: &Layout, items: &[Suggestion], selected: usize, scroll
                 if s.kind == Kind::Info {
                     line.push_str(&format!("\x1b[3;{}m{label}\x1b[23;{fg}m", t.info_fg));
                 } else {
-                    // The typed prefix, highlighted.
-                    let hl = if !s.query.is_empty() && s.label.to_lowercase().starts_with(&s.query.to_lowercase()) {
-                        s.query.chars().count().min(label.chars().count())
-                    } else {
-                        0
-                    };
-                    let split = label.char_indices().nth(hl).map_or(label.len(), |(b, _)| b);
-                    let (a, b) = label.split_at(split);
-                    if hl > 0 {
-                        let mfg = if sel { fg } else { &t.match_fg };
-                        line.push_str(&format!("\x1b[1;{mfg}m{a}\x1b[22;{fg}m{b}"));
-                    } else {
-                        line.push_str(&label);
+                    // What was typed, highlighted where it matched; not the `…` of a cut label.
+                    let marked = matched(&s.label, &s.query);
+                    let original: Vec<char> = s.label.chars().collect();
+                    let mfg = if sel { fg } else { &t.match_fg };
+                    let mut on = false;
+                    for (i, c) in label.chars().enumerate() {
+                        let hl = marked.get(i) == Some(&true) && original.get(i) == Some(&c);
+                        if hl != on {
+                            on = hl;
+                            line.push_str(&if on { format!("\x1b[1;{mfg}m") } else { format!("\x1b[22;{fg}m") });
+                        }
+                        line.push(c);
+                    }
+                    if on {
+                        line.push_str(&format!("\x1b[22;{fg}m"));
                     }
                 }
                 if l.desc_w > 0 {
@@ -493,6 +523,21 @@ pub fn restore_cursor(out: &mut Vec<u8>, screen: &vt100::Screen) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn matches_are_marked_at_the_start_inside_or_in_order() {
+        let marks = |label, query| -> String {
+            matched(label, query).iter().map(|&m| if m { '^' } else { ' ' }).collect::<String>().trim_end().into()
+        };
+        assert_eq!(marks("clear", "cl"), "^^");
+        assert_eq!(marks("hipotclear", "cl"), "     ^^");
+        assert_eq!(marks("anonclear", "CL"), "    ^^");
+        assert_eq!(marks("git checkout", "gco"), "^   ^    ^");
+        assert_eq!(marks("git checkout", "g co"), "^   ^    ^");
+        assert_eq!(marks("ls", "lx"), "");
+        assert_eq!(marks("ls", ""), "");
+        assert_eq!(marks("café", "FÉ"), "  ^^");
+    }
+
     fn items(n: usize) -> Vec<Suggestion> {
         (0..n)
             .map(|i| Suggestion {
@@ -608,6 +653,29 @@ mod tests {
         assert_eq!(printable("echo \x1b[31mred\x1b[0m"), "echo ␛[31mred␛[0m");
         assert_eq!(printable("a\tb\nc\x7f\u{85}"), "a b c␡�");
         assert_eq!(printable("plain ⏎ text"), "plain ⏎ text");
+    }
+
+    #[test]
+    fn matched_letters_are_bold_also_inside_a_label() {
+        let mut it = items(2);
+        for (s, label) in it.iter_mut().zip(["clear", "hipotclear"]) {
+            s.label = label.into();
+            s.query = "cl".into();
+        }
+        let ui = Ui { icons: "none".into(), ..Ui::default() };
+        let l = layout(&ui, &it, (24, 100), (2, 10), 0).unwrap();
+        let lines = render(&ui, &l, &it, 0, 0);
+        // The text between each bold on and off.
+        let bold = |line: &str| -> Vec<String> {
+            line.split("\x1b[1;")
+                .skip(1)
+                .map(|s| s.split_once('m').unwrap().1.split("\x1b[22;").next().unwrap().to_string())
+                .collect()
+        };
+        let row = |label: &str| lines.iter().find(|l| strip(l).trim_matches(['│', ' ']).starts_with(label)).unwrap();
+        assert_eq!(bold(row("clear")), ["cl"]);
+        assert_eq!(bold(row("hipotclear")), ["cl"]);
+        assert!(row("hipotclear").contains("hipot\x1b[1;"));
     }
 
     #[test]
