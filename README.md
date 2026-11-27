@@ -450,6 +450,7 @@ Thanks to the contributors:
 - [@nadelacruz-00](https://github.com/nadelacruz-00)
 - [@oldmanniko-dev](https://github.com/oldmanniko-dev)
 - [@romainharlaut](https://github.com/romainharlaut)
+- [@rrittste](https://github.com/rrittste)
 - [@techwizrd](https://github.com/techwizrd)
 - [@thomasaarholt](https://github.com/thomasaarholt)
 - [@vishudhshah](https://github.com/vishudhshah)
