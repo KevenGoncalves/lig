@@ -221,7 +221,7 @@ Type as usual; the popup shows what fits.
 | Key | Action |
 | --- | --- |
 | `Tab` / `↓` | next suggestion |
-| `Shift-Tab` / `↑` | previous suggestion (on the first one: close the popup) |
+| `Shift-Tab` / `↑` | previous suggestion (on the first one: close the popup, or go to the last with `wrap_around`) |
 | `Enter` | accept the suggestion |
 | `Shift+Enter` | accept the suggestion and run the line |
 | `Esc` | close the popup |
@@ -283,6 +283,7 @@ enter_accepts = "auto"     # "always", "after-space", "never"
 enter_runs_commands = []   # Enter picks and runs in one press, e.g. ["z", "zi"]
 complete_commands = false  # pop up for command names too
 toggle_only = false        # true: open completions only with keys.toggle
+wrap_around = false        # true: Up on the first suggestion goes to the last, not closing
 options_after_dash = ["ls", "cp", "mv", "rm"]  # options only after -; "*" for all
 show_hidden_files = false  # list dot files without typing a dot first
 hide_variable_values = []  # also mask these $VARS' values: ["GH_*", "*_URL"], "*" for all
