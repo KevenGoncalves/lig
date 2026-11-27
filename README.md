@@ -437,6 +437,7 @@ the scenes in zsh in a private tmux server, with `lig ssh` logging in to a throw
 
 Thanks to the contributors:
 
+- [@AdrielVelazquez](https://github.com/AdrielVelazquez)
 - [@albertomalossi](https://github.com/albertomalossi)
 - [@ammachado](https://github.com/ammachado)
 - [@aslan403](https://github.com/aslan403)
