@@ -266,14 +266,25 @@ fn unescape(s: &str) -> String {
     out
 }
 
+/// `$ZDOTDIR/.zsh_history`, and `$HISTFILE` too when zsh keeps its history elsewhere.
+fn zsh_history_files(zdotdir: PathBuf, histfile: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut files = vec![zdotdir.join(".zsh_history")];
+    if let Some(histfile) = histfile.filter(|h| !files.contains(h)) {
+        files.push(histfile);
+    }
+    files
+}
+
 /// What zsh, bash, fish and nu remember, oldest first within each.
 fn import(home: &Path) -> Vec<(u64, String)> {
     let read = |p: &Path| std::fs::read(p).ok();
     let mut out = vec![];
     let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from).unwrap_or_else(|| home.to_path_buf());
-    let path = zdotdir.join(".zsh_history");
-    if let Some(bytes) = read(&path) {
-        out.extend(dated(zsh(&bytes), &path));
+    let histfile = std::env::var_os("HISTFILE").map(PathBuf::from).filter(|p| p.is_absolute());
+    for path in zsh_history_files(zdotdir, histfile) {
+        if let Some(bytes) = read(&path) {
+            out.extend(dated(zsh(&bytes), &path));
+        }
     }
     let path = home.join(".bash_history");
     if let Some(bytes) = read(&path) {
@@ -466,6 +477,15 @@ mod tests {
         );
         // fish writes `echo \n` (a backslash and an n) as `echo \\n`.
         assert_eq!(fish("- cmd: echo \\\\n\n"), [(0, "echo \\n".into())]);
+    }
+
+    #[test]
+    fn zsh_reads_histfile_as_well() {
+        let home = PathBuf::from("/home/me");
+        let custom = PathBuf::from("/home/me/.local/share/zsh/history");
+        assert_eq!(zsh_history_files(home.clone(), None), [home.join(".zsh_history")]);
+        assert_eq!(zsh_history_files(home.clone(), Some(custom.clone())), [home.join(".zsh_history"), custom]);
+        assert_eq!(zsh_history_files(home.clone(), Some(home.join(".zsh_history"))), [home.join(".zsh_history")]);
     }
 
     #[test]
