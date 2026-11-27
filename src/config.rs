@@ -394,6 +394,13 @@ mod parse_tests {
         assert!(toml::to_string_pretty(&Config::default()).unwrap().contains("toggle_only = false"));
         assert!(Config::parse("[behavior]\ntoggle_only = true\n").unwrap().behavior.toggle_only);
     }
+
+    #[test]
+    fn wrap_around_is_opt_in() {
+        assert!(!Config::default().behavior.wrap_around);
+        assert!(toml::to_string_pretty(&Config::default()).unwrap().contains("wrap_around = false"));
+        assert!(Config::parse("[behavior]\nwrap_around = true\n").unwrap().behavior.wrap_around);
+    }
 }
 
 /// SGR parameters for a color spec, as foreground (`38`) or background (`48`).

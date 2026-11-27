@@ -390,6 +390,28 @@ class WrappedTests(unittest.TestCase):
         finally:
             fish.close()
 
+    def test_wrap_around_goes_from_the_first_suggestion_to_the_last(self):
+        """With `behavior.wrap_around` (#68), Up on the first suggestion selects the last; without
+        it, Up there closes the popup and leaves the line as typed."""
+        spec = '{"name":"wrapme","args":{"name":"word","suggestions":["one","two","three"]}}'
+        # `buffer()` reads the line stripped: `wrapme ` as typed is `wrapme`.
+        cases = [(False, 1, 'wrapme'), (True, 1, 'wrapme three'), (True, 2, 'wrapme two')]
+        for wrap, ups, line in cases:
+            with self.subTest(wrap_around=wrap, ups=ups):
+                fish = Fish(wrapped=True, specs={'wrapme': spec},
+                            lig_config=f'[behavior]\nwrap_around = {str(wrap).lower()}\n')
+                try:
+                    start = len(fish.output)
+                    fish.send('wrapme ')
+                    fish.wait_popup('three', start)
+                    for _ in range(ups):
+                        fish.send(b'\x1b[A')
+                    if wrap:
+                        fish.send(b'\r')  # picks the selected one; it doesn't run the line
+                    fish.assert_buffer(line)
+                finally:
+                    fish.close()
+
     def test_missing_snapshot_reply_recovers_without_a_new_prompt(self):
         hook = r"""
 functions --erase __lig_report
