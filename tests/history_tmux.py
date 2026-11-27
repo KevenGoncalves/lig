@@ -188,6 +188,14 @@ class HistoryTmux(unittest.TestCase):
             self.assertTrue(m, f'{before}cl not found:\n{styled!r}')
             self.assertRegex(m.group(1), r'\x1b\[(?:[0-9;]*;)?1[;m]', f'{before}: cl not bold')
 
+    def test_max_width_shows_a_long_command_whole(self):
+        """Issue #65: with `width = "auto"`, `max_width` let only 44 columns of a command show."""
+        long = 'docker compose -f docker-compose.prod.yml up -d --build --remove-orphans web'
+        self.start('bash', '[ui]\nwidth = "auto"\nmax_width = 888\n', lig_history=f'1700000000\t{long}\n')
+        self.tmux('send-keys', '-t', 'test:0.0', 'C-r')
+        self.wait('no history popup', lambda s: 'docker compose' in s)
+        self.wait('command cut', lambda s: long in s)
+
     def test_off_leaves_ctrl_r_to_the_shell(self):
         self.start('bash', '[behavior]\nhistory = false\n')
         self.run_line('echo hist-ok')

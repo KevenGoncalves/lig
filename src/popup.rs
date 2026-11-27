@@ -211,6 +211,9 @@ const MIN_BELOW: u16 = 4;
 const BOTTOM_DESC_W: u16 = 56;
 /// A description column narrower than this isn't worth showing.
 const MIN_DESC: u16 = 8;
+/// The widest a suggestion's name makes the popup, keeping it compact; a history command
+/// (`Ctrl+R`) is read whole, so only `max_width` limits it.
+const NAME_FIT: usize = 44;
 
 /// Where the popup goes for this screen/cursor, or `None` if it can't fit.
 pub fn layout(ui: &Ui, items: &[Suggestion], size: (u16, u16), cursor: (u16, u16), token_width: u16) -> Option<Layout> {
@@ -244,7 +247,12 @@ pub fn layout_at(
     let bar = 1 - b;
     let chrome_w = 2 * b + style.pad_l + style.pad_r + icon_w + bar;
     // Capped before the cast to u16: a longer one would wrap around.
-    let name_need = items.iter().map(|s| s.label.width()).max().unwrap_or(1).clamp(4, 44) as u16;
+    let longest_name = items.iter().map(|s| s.label.width()).max().unwrap_or(1).min(usize::from(cols)) as u16;
+    let fit = |s: &Suggestion| match s.icon {
+        Some(crate::spec::Icon::History) => s.label.width(),
+        _ => s.label.width().min(NAME_FIT),
+    };
+    let name_need = items.iter().map(fit).max().unwrap_or(1).clamp(4, usize::from(cols)) as u16;
     let bottom = ui.descriptions && ui.description_position == "bottom";
     let longest_desc = items.iter().map(|s| s.description.width()).max().unwrap_or(0).min(usize::from(cols)) as u16;
     let desc_need = if ui.descriptions && !bottom { longest_desc.min(style.desc_max) } else { 0 };
@@ -263,12 +271,18 @@ pub fn layout_at(
     .clamp(smallest, cols);
     // The name gets space first; the description is dropped when it wouldn't be readable.
     let inner = width - chrome_w;
-    let mut name_w = name_need.min(inner);
+    let mut name_w = inner;
     let mut desc_w = 0;
-    if desc_need > 0 && inner >= name_w + style.gap + MIN_DESC.min(desc_need) {
+    // A long history command doesn't push out its time while it still gets a compact name's room.
+    let least_name = name_need.min(NAME_FIT as u16).min(inner);
+    let desc_room = inner.saturating_sub(least_name + style.gap);
+    if desc_need > 0 && desc_room >= MIN_DESC.min(desc_need) {
+        name_w = name_need.min(inner - style.gap - desc_need.min(desc_room));
+        // Room beyond what the description needs goes to a cut name first (a wide `width`
+        // shows more of a long command, not more blank after its time), then back to it.
+        let room = inner - name_w - style.gap;
+        name_w += (room - desc_need.min(room)).min(longest_name.saturating_sub(name_w));
         desc_w = inner - name_w - style.gap;
-    } else {
-        name_w = inner;
     }
 
     // A percent height includes the border; a row count doesn't.
@@ -522,6 +536,45 @@ pub fn restore_cursor(out: &mut Vec<u8>, screen: &vt100::Screen) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_commands_get_the_width_settings_allow() {
+        use crate::config::Size;
+        let long = "docker compose -f docker-compose.prod.yml up -d --build --remove-orphans web worker";
+        let one = |label: &str, history: bool| {
+            vec![Suggestion {
+                label: label.into(),
+                description: "2h ago".into(),
+                kind: Kind::Command,
+                icon: history.then_some(crate::spec::Icon::History),
+                insert: String::new(),
+                delete: 0,
+                back: 0,
+                query: String::new(),
+            }]
+        };
+        let at = |ui: &Ui, it: &[Suggestion]| layout(ui, it, (40, 200), (2, 10), 0).unwrap();
+        let (history, completion) = (one(long, true), one(long, false));
+        // Issue #65: `max_width` lets a long command show whole.
+        let ui = Ui { max_width: Size::Cells(888), ..Ui::default() };
+        assert_eq!(at(&ui, &history).name_w as usize, long.len());
+        // A completion keeps its compact name.
+        assert_eq!(at(&ui, &completion).name_w as usize, NAME_FIT);
+        // The default `max_width` (100) still bounds a command.
+        let l = at(&Ui::default(), &history);
+        assert_eq!(l.rect.width, 100);
+        assert_eq!((l.rect.width, l.desc_w), (100, 6));
+        assert!(l.name_w as usize > NAME_FIT && (l.name_w as usize) < long.len());
+        // A fixed width shows more of a long name, not more blank after the time.
+        let wide = Ui { width: Size::Cells(120), ..Ui::default() };
+        for it in [&history, &completion] {
+            let l = at(&wide, it);
+            assert_eq!((l.rect.width, l.name_w as usize), (120, long.len()));
+            assert!(l.desc_w >= 6);
+        }
+        // A short name leaves the rest to the description, as before.
+        assert_eq!(at(&wide, &one("git status", false)).name_w, 10);
+    }
 
     #[test]
     fn matches_are_marked_at_the_start_inside_or_in_order() {
