@@ -1,6 +1,6 @@
 # Wrap fish in lig unless lig itself started it; `fish` typed in another shell
-# inside lig gets its own lig, like a tmux pane.
-if status is-interactive; and test -z "$LIG_DISABLE"; and isatty stdin; and isatty stdout; and test "$TERM" != dumb; and test -z "$INSIDE_EMACS"; and test -x @LIG_BIN@
+# inside lig gets its own lig, like a tmux pane. Not Midnight Commander's subshell (MC_SID).
+if status is-interactive; and test -z "$LIG_DISABLE"; and isatty stdin; and isatty stdout; and test "$TERM" != dumb; and test -z "$INSIDE_EMACS"; and test -z "$MC_SID"; and test -x @LIG_BIN@
     # Parent pid: /proc on Linux (ps may be missing there), ps on macOS.
     set -l __lig_parent
     if test -r /proc/$fish_pid/stat

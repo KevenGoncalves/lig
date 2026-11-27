@@ -129,6 +129,38 @@ class ShellSmoke(unittest.TestCase):
         finally:
             self.assertEqual(term.close(17), 17)
 
+    def test_midnight_commanders_subshell_is_not_wrapped_again(self):
+        """Issue #66: mc's subshell has a terminal of its own and MC_SID set; a second lig there
+        made mc start slowly and broke its Ctrl+O shell. A shell on a new terminal without it,
+        like a tmux pane, still gets its own lig."""
+        spawn = shlex.quote('import pty, sys; pty.spawn(sys.argv[1:])')
+        shells = {'bash': shutil.which('bash'), 'zsh': os.environ.get('LIG_TEST_ZSH') or shutil.which('zsh'),
+                  'fish': shutil.which('fish')}
+        for name, shell in shells.items():
+            if not shell:
+                continue
+            with self.subTest(name):
+                term = Fish(wrapped=True, shell=shell)
+                starts = lambda: sum(p.read_text(errors='replace').count('startup shell=')
+                                     for p in term.home.rglob('lig.log'))
+                prompts = lambda: term.output.count(b'test> ')
+                try:
+                    self.assertEqual(starts(), 1)
+                    for env, expected in [('MC_SID=4242 ', 1), ('', 2)]:
+                        before = prompts()
+                        term.send(f'{env}{sys.executable} -c {spawn} {shell} -i\r')
+                        term.wait_for(lambda: prompts() > before)
+                        if expected == 2:
+                            term.wait_for(lambda: starts() == 2)
+                        else:
+                            time.sleep(.5)
+                        self.assertEqual(starts(), expected, f'{env or "no MC_SID"}: lig sessions')
+                        before = prompts()
+                        term.send('exit\r')
+                        term.wait_for(lambda: prompts() > before)
+                finally:
+                    self.assertEqual(term.close(17), 17)
+
     def test_theme_reloads_with_the_popup_open(self):
         """A new theme in config.toml shows in a running session; a broken file keeps the last one."""
         shell = shutil.which('bash')
