@@ -143,21 +143,29 @@ class ShellSmoke(unittest.TestCase):
                 term = Fish(wrapped=True, shell=shell)
                 starts = lambda: sum(p.read_text(errors='replace').count('startup shell=')
                                      for p in term.home.rglob('lig.log'))
-                prompts = lambda: term.output.count(b'test> ')
+                # Printed, not typed: `inner-""ready` echoes as `inner-ready`.
+                seen = lambda marker: term.plain().count(marker.encode())
                 try:
                     self.assertEqual(starts(), 1)
                     for env, expected in [('MC_SID=4242 ', 1), ('', 2)]:
-                        before = prompts()
-                        term.send(f'{env}{sys.executable} -c {spawn} {shell} -i\r')
-                        term.wait_for(lambda: prompts() > before)
+                        done = seen('inner-done')
+                        term.send(f'{env}{sys.executable} -c {spawn} {shell} -i; echo inner-""done\r')
+                        # The inner shell reads keys only once it has started (fish 4 asks the
+                        # terminal first): until then, what's typed can be lost.
+                        ready = seen('inner-ready')
+                        for _ in range(10):
+                            term.send('echo inner-""ready\r')
+                            try:
+                                term.wait_for(lambda: seen('inner-ready') > ready, timeout=2)
+                                break
+                            except AssertionError:
+                                pass
+                        self.assertGreater(seen('inner-ready'), ready, 'the inner shell never ran a command')
                         if expected == 2:
                             term.wait_for(lambda: starts() == 2)
-                        else:
-                            time.sleep(.5)
                         self.assertEqual(starts(), expected, f'{env or "no MC_SID"}: lig sessions')
-                        before = prompts()
                         term.send('exit\r')
-                        term.wait_for(lambda: prompts() > before)
+                        term.wait_for(lambda: seen('inner-done') > done)
                 finally:
                     self.assertEqual(term.close(17), 17)
 
