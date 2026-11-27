@@ -38,6 +38,8 @@ const SNAPSHOT_ATTEMPTS: u8 = 3;
 const INSERT_KEY: &str = "\x1b[9147~";
 /// Asks zsh or bash what its Tab would offer (see shell/post.zsh, shell/post.bash).
 const ZSH_COMPLETE_KEY: &[u8] = b"\x1b[9148~";
+/// How long zsh or bash has to answer that before it's asked once more.
+const SHELL_ANSWER_WAIT: Duration = Duration::from_secs(2);
 /// Ctrl+Alt+Shift+F12: the insert key of fish and PowerShell.
 const SNAPSHOT_INSERT_KEY: &str = "\x1b[24;8~";
 /// Ctrl+Alt+Shift+F11: asks PowerShell for its line (fish gets `SIGUSR1`).
@@ -651,6 +653,9 @@ pub fn run(shell: PathBuf, login: bool) -> Result<i32> {
         cwd_fallback: std::env::current_dir().unwrap_or_else(|_| "/".into()),
         bindings: Bindings::new(&cfg.keys),
         shell_asked: None,
+        shell_unanswered: vec![],
+        shell_asked_at: None,
+        shell_asked_again: None,
         history: cfg.behavior.history.then(crate::history::History::open),
         history_mode: false,
         history_folder: false,
@@ -1063,6 +1068,11 @@ struct Session {
     cfg: Config,
     /// The line the shell was last asked about (see [`ZSH_COMPLETE_KEY`]).
     shell_asked: Option<String>,
+    /// The lines asked about and not answered yet, oldest first, and when the last was asked.
+    shell_unanswered: Vec<String>,
+    shell_asked_at: Option<Instant>,
+    /// The line asked about a second time (see [`Session::ask_shell_again`]).
+    shell_asked_again: Option<String>,
     /// The commands that ran (`behavior.history`), and whether the popup shows them now.
     history: Option<crate::history::History>,
     history_mode: bool,
@@ -1170,6 +1180,10 @@ impl Session {
             }
             self.expire_cursor_input();
             self.resync_tick();
+            if self.shell_answer_due().is_some_and(|due| due <= Instant::now()) {
+                self.shell_asked_at = None;
+                self.ask_shell_again();
+            }
             if self.fish_refresh.as_ref().and_then(FishRefresh::wake).is_some_and(|due| due <= Instant::now()) {
                 self.fish_sequence += 1;
                 if self.fish_refresh.as_mut().unwrap().take_due(self.fish_sequence) {
@@ -1197,6 +1211,9 @@ impl Session {
             let mut deadline = (self.dirty && self.resync.is_none())
                 .then(|| (self.last_output + DEBOUNCE).min(self.dirty_since + MAX_DELAY));
             if let Some(w) = self.resync_wake() {
+                deadline = Some(deadline.map_or(w, |d| d.min(w)));
+            }
+            if let Some(w) = self.shell_answer_due() {
                 deadline = Some(deadline.map_or(w, |d| d.min(w)));
             }
             if let Some(p) = &self.startup_cursor {
@@ -1954,6 +1971,14 @@ impl Session {
                 self.hidden = true;
             }
             Msg::ShellCompletions { line, items } => {
+                match self.shell_unanswered.iter().position(|asked| *asked == line) {
+                    // Answers come in order: any asked before it are lost.
+                    Some(i) => drop(self.shell_unanswered.drain(..=i)),
+                    None => self.ask_shell_again(),
+                }
+                if self.shell_unanswered.is_empty() {
+                    self.shell_asked_at = None;
+                }
                 self.env.shell_answer = Some(std::sync::Arc::new((line, items)));
                 self.items_line.clear();
                 self.request();
@@ -2470,8 +2495,33 @@ impl Session {
         {
             return;
         }
+        self.shell_unanswered.push(line.clone());
+        if self.shell_unanswered.len() > 8 {
+            self.shell_unanswered.remove(0);
+        }
         self.shell_asked = Some(line);
+        self.shell_asked_at = Some(Instant::now());
         self.write_pty(ZSH_COMPLETE_KEY);
+    }
+
+    /// When to ask the shell again if its answer hasn't come.
+    fn shell_answer_due(&self) -> Option<Instant> {
+        self.shell_asked_at.filter(|_| !self.shell_unanswered.is_empty()).map(|at| at + SHELL_ANSWER_WAIT)
+    }
+
+    /// The shell's answer is late, or it answered for a line lig didn't ask about: ask once
+    /// more for the line on screen, so a lost answer doesn't leave the popup on "Asking zsh".
+    fn ask_shell_again(&mut self) {
+        let Some(line) = self.shell_asked.clone() else { return };
+        if line != self.line || self.shell_asked_again.as_deref() == Some(line.as_str()) {
+            return;
+        }
+        crate::log("asking the shell again");
+        self.shell_asked_again = Some(line.clone());
+        self.shell_asked = None;
+        self.ask_shell(line.clone());
+        // Not asked (no longer editing): still the line asked about, not one to ask about anew.
+        self.shell_asked.get_or_insert(line);
     }
 
     /// Show the commands that ran before, or leave them for the usual suggestions.

@@ -114,6 +114,31 @@ class CompletersTmux(unittest.TestCase):
         self.wait('no alpha and beta from zsh', lambda s: 'alpha' in self.popup(s) and 'beta' in self.popup(s))
         self.assertNotIn('Asking zsh', self.popup(self.screen()))
 
+    def test_zsh_is_asked_again_when_its_answer_is_lost_or_for_another_line(self):
+        """A lost answer, or one for another line, left the popup on "Asking zsh" for good."""
+        answers = {
+            'lost': "",
+            'another line': "builtin print -rn -- $'\\e]6973;Z;bar \\x1d\\a' >>$_lig_out",
+        }
+        for name, first in answers.items():
+            with self.subTest(name):
+                rc = (
+                    "foo() { :; }; _foo() { compadd alpha beta }; compdef _foo foo\n"
+                    # The first time lig asks, zsh answers `first` instead.
+                    "_flaky_wrap() {\n"
+                    "  precmd_functions=(${precmd_functions:#_flaky_wrap})\n"
+                    "  zle -A _lig_ask _flaky_orig_ask\n"
+                    f"  _flaky_ask() {{ if (( ! ${{+_flaky_done}} )); then _flaky_done=1; {first or ':'}; "
+                    "else zle _flaky_orig_ask; fi; }\n"
+                    "  zle -N _lig_ask _flaky_ask\n"
+                    "}\n"
+                    "precmd_functions+=(_flaky_wrap)\n"
+                )
+                self.start('zsh', rc_extra=rc)
+                self.tmux('send-keys', '-t', 'test:0.0', '-l', 'foo ')
+                self.wait('zsh not asked again', lambda s: 'alpha' in self.popup(s) and 'beta' in self.popup(s))
+                self.doCleanups()
+
     def test_fish_offers_what_its_tab_would(self):
         self.start('fish')
         self.tmux('send-keys', '-t', 'test:0.0', '-l', 'string esc')
