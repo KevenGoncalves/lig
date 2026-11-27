@@ -1,7 +1,8 @@
 //! The commands that ran (only those that exited 0 with `behavior.history_success_only`),
 //! shared by every lig session, newest first and each once; Ctrl+R shows them
 //! (`behavior.history`). The first time, the shells' own histories seed it (their exit
-//! codes are unknown, so those keep their failures).
+//! codes are unknown, so those keep their failures). A history file the shell reports
+//! elsewhere (`$HISTFILE`) is added once, below what lig recorded.
 //!
 //! The file has one `<unix time>[@<folder>]\t<command>` line per run, appended; a command's
 //! `\` and newlines are written `\\` and `\n`. The folder is where it ran, for the folder's
@@ -23,6 +24,15 @@ pub struct History {
     loaded: bool,
     /// Whose shell histories seed it.
     home: Option<PathBuf>,
+    /// The history file the shell said it keeps (`$HISTFILE`), not looked at yet.
+    reported: Option<(PathBuf, ShellHistory)>,
+}
+
+/// Which shell wrote a history file, for how to read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellHistory {
+    Zsh,
+    Bash,
 }
 
 /// A command, when it ran, and where (if known).
@@ -46,32 +56,76 @@ impl History {
             read_len: 0,
             loaded: false,
             home: dirs::home_dir(),
+            reported: None,
         }
     }
 
     #[cfg(test)]
     fn at(path: PathBuf) -> Self {
-        History { path, entries: vec![], read_len: 0, loaded: false, home: None }
+        History { path, entries: vec![], read_len: 0, loaded: false, home: None, reported: None }
     }
 
-    /// The first time, seed the file from the shells' histories.
-    fn seed(&self) {
-        if self.path.exists() {
+    /// The shell keeps its history in `path` (its hooks send `$HISTFILE`): read it with the
+    /// next command or search, unless the seed reads it anyway or a session did before.
+    pub fn report_file(&mut self, path: PathBuf, shell: ShellHistory) {
+        if path.is_absolute() && !path.to_string_lossy().contains('\n') {
+            self.reported = Some((path, shell));
+        }
+    }
+
+    /// The first time, seed the file from the shells' histories; then add a history file the
+    /// shell reported, once, before what lig recorded (which stays newer).
+    fn seed(&mut self) {
+        let fresh = !self.path.exists();
+        let reported = self.reported.take().filter(|(path, _)| path.is_file() && !self.read_before(path));
+        if !fresh && reported.is_none() {
             return;
         }
-        let mut seed = self.home.as_deref().map(import).unwrap_or_default();
-        seed.sort_by_key(|(time, _)| *time);
-        let text: String = seed.iter().map(|(time, command)| line(*time, command, None)).collect();
+        let mut runs = if fresh { self.home.as_deref().map(import).unwrap_or_default() } else { vec![] };
+        if let Some((path, shell)) = &reported {
+            runs.extend(read_shell_file(path, *shell));
+        }
+        runs.sort_by_key(|(time, _)| *time);
+        let mut text: Vec<u8> =
+            runs.iter().flat_map(|(time, command)| line(*time, command, None).into_bytes()).collect();
+        if !fresh {
+            match std::fs::read(&self.path) {
+                Ok(recorded) => text.extend(recorded),
+                Err(_) => return,
+            }
+        }
         if let Some(dir) = self.path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         use std::io::Write;
-        let _ = private_file(&self.path, false).and_then(|mut f| f.write_all(text.as_bytes()));
+        let tmp = self.path.with_extension("tmp");
+        let written = private_file(&tmp, false)
+            .and_then(|mut f| f.write_all(&text))
+            .and_then(|()| std::fs::rename(&tmp, &self.path));
+        if written.is_ok()
+            && let Some((path, _)) = reported
+        {
+            crate::log(&format!("history: added {}", path.display()));
+            let _ = private_file(&self.imports(), true).and_then(|mut f| writeln!(f, "{}", path.display()));
+        }
+    }
+
+    /// The history files added after the seed, one per line.
+    fn imports(&self) -> PathBuf {
+        self.path.with_file_name("history-imports")
+    }
+
+    /// `path` is a file the seed reads, or one a session added before.
+    fn read_before(&self, path: &Path) -> bool {
+        let real = std::fs::canonicalize(path).ok();
+        let same = |other: &Path| other == path || real.is_some() && std::fs::canonicalize(other).ok() == real;
+        let seeded = self.home.as_deref().is_some_and(|home| seed_files(home).iter().any(|(file, _)| same(file)));
+        seeded || std::fs::read_to_string(self.imports()).unwrap_or_default().lines().any(|l| same(Path::new(l)))
     }
 
     /// Read the file again if another session added to it.
     fn reload(&mut self) {
-        if !self.loaded {
+        if !self.loaded || self.reported.is_some() {
             self.seed();
             self.loaded = true;
         }
@@ -266,30 +320,28 @@ fn unescape(s: &str) -> String {
     out
 }
 
-/// `$ZDOTDIR/.zsh_history`, and `$HISTFILE` too when zsh keeps its history elsewhere.
-fn zsh_history_files(zdotdir: PathBuf, histfile: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut files = vec![zdotdir.join(".zsh_history")];
-    if let Some(histfile) = histfile.filter(|h| !files.contains(h)) {
-        files.push(histfile);
-    }
-    files
+/// The zsh and bash history files the seed reads: where they are unless `$HISTFILE` says
+/// otherwise, which only the shell knows (it isn't exported).
+fn seed_files(home: &Path) -> [(PathBuf, ShellHistory); 2] {
+    let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from).unwrap_or_else(|| home.to_path_buf());
+    [(zdotdir.join(".zsh_history"), ShellHistory::Zsh), (home.join(".bash_history"), ShellHistory::Bash)]
+}
+
+/// A zsh or bash history file's commands, oldest first.
+fn read_shell_file(path: &Path, shell: ShellHistory) -> Vec<(u64, String)> {
+    let Ok(bytes) = std::fs::read(path) else { return vec![] };
+    let runs = match shell {
+        ShellHistory::Zsh => zsh(&bytes),
+        ShellHistory::Bash => bash(&String::from_utf8_lossy(&bytes)),
+    };
+    dated(runs, path)
 }
 
 /// What zsh, bash, fish and nu remember, oldest first within each.
 fn import(home: &Path) -> Vec<(u64, String)> {
     let read = |p: &Path| std::fs::read(p).ok();
-    let mut out = vec![];
-    let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from).unwrap_or_else(|| home.to_path_buf());
-    let histfile = std::env::var_os("HISTFILE").map(PathBuf::from).filter(|p| p.is_absolute());
-    for path in zsh_history_files(zdotdir, histfile) {
-        if let Some(bytes) = read(&path) {
-            out.extend(dated(zsh(&bytes), &path));
-        }
-    }
-    let path = home.join(".bash_history");
-    if let Some(bytes) = read(&path) {
-        out.extend(dated(bash(&String::from_utf8_lossy(&bytes)), &path));
-    }
+    let mut out: Vec<(u64, String)> =
+        seed_files(home).iter().flat_map(|(path, shell)| read_shell_file(path, *shell)).collect();
     // fish keeps XDG's folders on macOS too.
     let data = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -480,12 +532,33 @@ mod tests {
     }
 
     #[test]
-    fn zsh_reads_histfile_as_well() {
-        let home = PathBuf::from("/home/me");
-        let custom = PathBuf::from("/home/me/.local/share/zsh/history");
-        assert_eq!(zsh_history_files(home.clone(), None), [home.join(".zsh_history")]);
-        assert_eq!(zsh_history_files(home.clone(), Some(custom.clone())), [home.join(".zsh_history"), custom]);
-        assert_eq!(zsh_history_files(home.clone(), Some(home.join(".zsh_history"))), [home.join(".zsh_history")]);
+    fn a_reported_history_file_is_added_once_below_ligs_own() {
+        let path = temp("reported");
+        std::fs::write(&path, "1700000300\tgit status\n").unwrap();
+        let dir = path.parent().unwrap();
+        let zsh_file = dir.join("zsh-history");
+        std::fs::write(&zsh_file, ": 1700000100:0;make\n: 1700000200:0;git status\n").unwrap();
+        let mut h = History::at(path.clone());
+        h.report_file(zsh_file.clone(), ShellHistory::Zsh);
+        h.record("cargo test", None);
+        assert_eq!(commands(h.search("", false, None)), ["cargo test", "git status", "make"]);
+        // Another session, told the same: nothing twice.
+        let mut other = History::at(path.clone());
+        other.report_file(zsh_file, ShellHistory::Zsh);
+        assert_eq!(commands(other.search("", false, None)), ["cargo test", "git status", "make"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 4);
+        // bash's own format, `#<time>` lines included, read as bash's.
+        let bash_file = dir.join("bash-history");
+        std::fs::write(&bash_file, "#1700000000\nls -la\n").unwrap();
+        other.report_file(bash_file, ShellHistory::Bash);
+        assert_eq!(commands(other.search("", false, None)), ["cargo test", "git status", "make", "ls -la"]);
+        // Not before a session starts lig's file, which the seed then makes from it.
+        let fresh = temp("reported-fresh");
+        let mut h = History::at(fresh.clone());
+        h.report_file(dir.join("zsh-history"), ShellHistory::Zsh);
+        assert_eq!(commands(h.search("", false, None)), ["git status", "make"]);
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(fresh.parent().unwrap()).unwrap();
     }
 
     #[test]

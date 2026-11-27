@@ -40,6 +40,11 @@ if [[ $- == *i* && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$(tty)" 
       fi
     fi
     printf '\e]6973;C;%s\a\e]6973;P;%s\a' "${PWD//[$'\a\e']/}" "${PATH//[$'\a\e']/}" >>"$__lig_out"
+    # Where bash keeps its history, for lig's to start from: HISTFILE isn't exported.
+    if [[ $HISTFILE == /* && $HISTFILE != "$__lig_histfile" ]]; then
+      __lig_histfile=$HISTFILE
+      printf '\e]6973;L;bash;%s\a' "${HISTFILE//[$'\a\e']/}" >>"$__lig_out"
+    fi
     local k a=
     for k in "${!BASH_ALIASES[@]}"; do a+="$k=${BASH_ALIASES[$k]}"$'\x1e'; done
     a=${a%$'\x1e'}

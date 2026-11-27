@@ -250,7 +250,8 @@ Type as usual; the popup shows what fits.
 - **History** (`Ctrl+R`) lists the commands you ran, in every Lig session, newest first
   and each once; typing narrows it (fuzzy), and `Enter` puts one on the line. `Alt+R` lists
   only those you ran in the current folder, marked `local` (and `Ctrl+R` switches back). It
-  starts with what zsh, bash, fish and nu remember; in `lig ssh` and `lig mosh` it's the
+  starts with what zsh, bash, fish and nu remember (zsh's and bash's `HISTFILE` too, wherever
+  it points); in `lig ssh` and `lig mosh` it's the
   server's history instead. A command typed with a leading space isn't kept;
   `history_success_only = true` keeps only those that ran without error, and
   `history = false` keeps nothing and leaves `Ctrl+R` to the shell.

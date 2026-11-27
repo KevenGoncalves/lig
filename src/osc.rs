@@ -13,6 +13,7 @@
 //!   `N;<name>\x1e<name>…`  the shell's function names
 //!   `K;<name>\x1e<name>…`  the shell's builtins
 //!   `V;<k=v>\x1e<k=v>…`    the shell's exported variables
+//!   `L;<zsh|bash>;<file>`  where the shell keeps its history (`$HISTFILE`)
 //!   `E;<status>;<command>` the command that just ran, and how it ended (history)
 //!   `Z;<line>\x1d<name>\t<shown>\x1e…`  what the shell's Tab offers for line (zsh, bash)
 //!   `X;<pid>;<socket>;<host>`  `lig ssh` logs in to host (see `remote.rs`)
@@ -60,6 +61,11 @@ pub enum Msg {
     Functions(Vec<String>),
     Builtins(Vec<String>),
     Vars(Vec<(String, String)>),
+    /// The shell's history file (`$HISTFILE`); `zsh`, else bash's.
+    HistoryFile {
+        zsh: bool,
+        path: String,
+    },
     /// `lig ssh` (process `pid`) logs in to `dest` with its connection at `control`; `mosh`:
     /// `lig mosh`, whose client draws the host's screen in the alternate screen.
     Remote {
@@ -183,6 +189,15 @@ fn parse(payload: &[u8]) -> Option<Msg> {
         }
         "P" => Some(Msg::Path(rest.to_string())),
         "C" => Some(Msg::Cwd(rest.to_string())),
+        "L" => {
+            let (shell, path) = rest.split_once(';')?;
+            let zsh = match shell {
+                "zsh" => true,
+                "bash" => false,
+                _ => return None,
+            };
+            Some(Msg::HistoryFile { zsh, path: path.to_string() })
+        }
         "A" => Some(Msg::Aliases(pairs(rest))),
         "N" => Some(Msg::Functions(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
         "K" => Some(Msg::Builtins(rest.split('\x1e').filter(|f| !f.is_empty()).map(str::to_string).collect())),
@@ -227,6 +242,15 @@ mod tests {
         );
         assert_eq!(parse(b"E;127;nope"), Some(Msg::Ran { status: 127, command: "nope".into() }));
         assert_eq!(parse(b"E;x;ls"), None);
+    }
+
+    #[test]
+    fn history_file_names_its_shell() {
+        let file = |zsh, path: &str| Some(Msg::HistoryFile { zsh, path: path.into() });
+        assert_eq!(parse(b"L;zsh;/home/me/.local/state/zsh/history"), file(true, "/home/me/.local/state/zsh/history"));
+        assert_eq!(parse(b"L;bash;/home/me/a;b"), file(false, "/home/me/a;b"));
+        assert_eq!(parse(b"L;fish;/home/me/x"), None);
+        assert_eq!(parse(b"L;/home/me/x"), None);
     }
 
     #[test]

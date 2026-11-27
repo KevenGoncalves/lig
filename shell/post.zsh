@@ -60,7 +60,7 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
   ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(_lig_insert)
 
   # Generators need the shell's cwd and PATH; aliases, functions and exported variables sent on change (split by \x1e).
-  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent= _lig_ran=
+  typeset -g _lig_aliases= _lig_functions= _lig_vars= _lig_builtins_sent= _lig_ran= _lig_histfile=
   _lig_precmd() {
     local ret=$?
     builtin emulate -L zsh
@@ -70,6 +70,11 @@ if [[ -o interactive && -z "$LIG_DISABLE" && -n "$LIG_TTY" && "$LIG_TTY" == "$TT
       _lig_ran=
     fi
     builtin print -rn -- $'\e]6973;C;'"${PWD//[$'\a\e']/}"$'\a'$'\e]6973;P;'"${PATH//[$'\a\e']/}"$'\a' >>$_lig_out
+    # Where zsh keeps its history, for lig's to start from: HISTFILE isn't exported.
+    if [[ -n $HISTFILE && ${HISTFILE:a} != $_lig_histfile ]]; then
+      _lig_histfile=${HISTFILE:a}
+      builtin print -rn -- $'\e]6973;L;zsh;'"${_lig_histfile//[$'\a\e']/}"$'\a' >>$_lig_out
+    fi
     local k
     local -a pairs
     for k in ${(k)aliases}; do pairs+=("$k=${aliases[$k]}"); done

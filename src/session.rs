@@ -2007,6 +2007,16 @@ impl Session {
             Msg::Functions(f) => self.env.functions = std::sync::Arc::new(f),
             Msg::Builtins(b) => self.env.builtins = std::sync::Arc::new(b),
             Msg::Vars(v) => self.env.vars = std::sync::Arc::new(v),
+            // A `lig ssh` host's file isn't on this machine.
+            Msg::HistoryFile { zsh, path } => {
+                if self.remote.is_none()
+                    && let Some(history) = self.history.as_mut()
+                {
+                    let shell =
+                        if zsh { crate::history::ShellHistory::Zsh } else { crate::history::ShellHistory::Bash };
+                    history.report_file(PathBuf::from(path), shell);
+                }
+            }
             Msg::Remote { pid, control, dest, mosh } => self.start_remote(pid, control, dest, mosh),
             Msg::RemoteEnd => self.end_remote(),
         }
